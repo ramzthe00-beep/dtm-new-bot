@@ -24,20 +24,24 @@ FIB_USE_786 = True
 ENABLE_HIDDEN = True
 
 def calculate_signals(df):
+    from pynecore.core import instance_state
+    state = instance_state.get_root("dtm_live")
+    if state is None:
+        state = instance_state.create_root("dtm_live", {"init": [], "series": []})[0]
     """Run PyneCore logic on DataFrame and return last bar signals."""
     close_vals = df["close"].to_numpy()
     high_vals = df["high"].to_numpy()
     low_vals = df["low"].to_numpy()
 
-    rsi_val = ta.rsi(close_vals, RSI_LEN)
-    macd_line, signal_line, hist_line = ta.macd(close_vals, MACD_FAST, MACD_SLOW, MACD_SIG)
-    atr14 = ta.atr(14)
+    rsi_val = ta.rsi(state, close_vals, RSI_LEN)
+    macd_line, signal_line, hist_line = ta.macd(state, close_vals, MACD_FAST, MACD_SLOW, MACD_SIG)
+    atr14 = ta.atr(state, 14)
 
-    pivot_high = ta.pivothigh(high_vals, LEFT_BARS, RIGHT_BARS)
-    pivot_low = ta.pivotlow(low_vals, LEFT_BARS, RIGHT_BARS)
+    pivot_high = ta.pivothigh(state, high_vals, LEFT_BARS, RIGHT_BARS)
+    pivot_low = ta.pivotlow(state, low_vals, LEFT_BARS, RIGHT_BARS)
 
-    rsi_at_ph = ta.valuewhen(~na(pivot_high), rsi_val[RIGHT_BARS], 0)
-    rsi_at_pl = ta.valuewhen(~na(pivot_low), rsi_val[RIGHT_BARS], 0)
+    rsi_at_ph = ta.valuewhen(state, ~na(pivot_high), rsi_val[RIGHT_BARS], 0)
+    rsi_at_pl = ta.valuewhen(state, ~na(pivot_low), rsi_val[RIGHT_BARS], 0)
     macd_at_ph = ta.valuewhen(~na(pivot_high), macd_line[RIGHT_BARS], 0)
     macd_at_pl = ta.valuewhen(~na(pivot_low), macd_line[RIGHT_BARS], 0)
     hist_at_ph = ta.valuewhen(~na(pivot_high), hist_line[RIGHT_BARS], 0)
