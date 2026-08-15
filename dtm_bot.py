@@ -17,6 +17,7 @@ import requests
 import pandas as pd
 import numpy as np
 from flask import Flask
+from strategy import calculate_signals
 
 # PyneCore imports
 from pynecore import pine_range
@@ -231,8 +232,12 @@ def run_trading_loop():
                 df = public.fetch_ohlcv(symbol, TIMEFRAME, HISTORY_BARS)
                 if df.empty:
                     continue
-                # This is where PyneCore would be called directly in a later step
-                logger.info(f"{symbol}: {len(df)} candles")
+                sig, entry = calculate_signals(df)
+                if sig and balance and balance > 0:
+                    allowed = LEVERAGE_MAP.get(symbol, 50)
+                    capital = min(balance * 0.98, TARGET_RISK)
+                    exchange.create_order(symbol, sig, capital, {"leverage": allowed})
+                logger.info(f"{symbol}: signal={sig}, entry={entry}, candles={len(df)}")
             time.sleep(60)
         except Exception as e:
             logger.error(f"[LOOP] {e}")
