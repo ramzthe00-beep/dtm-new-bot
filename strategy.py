@@ -113,8 +113,8 @@ def calculate_signals(df):
     new_ph = not pd.isna(ph.iloc[last_confirmed])
     new_pl = not pd.isna(pl.iloc[last_confirmed])
 
-    ph_prev = ph.loc[:last_confirmed-1].dropna()
-    pl_prev = pl.loc[:last_confirmed-1].dropna()
+    ph_prev = ph.iloc[:last_confirmed].dropna()
+    pl_prev = pl.iloc[:last_confirmed].dropna()
 
     if new_ph and len(ph_prev) >= 1:
         prev_ph_idx = ph_prev.index[-1]
