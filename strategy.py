@@ -83,9 +83,9 @@ def calculate_signals(df):
 
         ph_price_2 = float(pivot_high[-1])
         ph_bar_2 = current_bar - RIGHT_BARS
-        ph_rsi_2 = float(rsi_at_ph) if not pd_isna(rsi_at_ph) else None
-        ph_macd_2 = float(macd_at_ph) if not pd_isna(macd_at_ph) else None
-        ph_hist_2 = float(hist_at_ph) if not pd_isna(hist_at_ph) else None
+        ph_rsi_2 = float(rsi_at_ph) if not pd_isna(rsi_at_ph) else None if not pd_isna(rsi_at_ph) else None
+        ph_macd_2 = float(macd_at_ph) if not pd_isna(macd_at_ph) else None if not pd_isna(macd_at_ph) else None
+        ph_hist_2 = float(hist_at_ph) if not pd_isna(hist_at_ph) else None if not pd_isna(hist_at_ph) else None
 
     if new_pl:
         pl_price_1 = pl_price_2
@@ -96,9 +96,9 @@ def calculate_signals(df):
 
         pl_price_2 = float(pivot_low[-1])
         pl_bar_2 = current_bar - RIGHT_BARS
-        pl_rsi_2 = float(rsi_at_pl) if not pd_isna(rsi_at_pl) else None
-        pl_macd_2 = float(macd_at_pl) if not pd_isna(macd_at_pl) else None
-        pl_hist_2 = float(hist_at_pl) if not pd_isna(hist_at_pl) else None
+        pl_rsi_2 = float(rsi_at_pl) if not pd_isna(rsi_at_pl) else None if not pd_isna(rsi_at_pl) else None
+        pl_macd_2 = float(macd_at_pl) if not pd_isna(macd_at_pl) else None if not pd_isna(macd_at_pl) else None
+        pl_hist_2 = float(hist_at_pl) if not pd_isna(hist_at_pl) else None if not pd_isna(hist_at_pl) else None
 
     # Classic Bearish
     if new_ph and ph_bar_1 is not None:
