@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-DTM Signal Engine — ریاضی معادل PyneCore (بدون state)
+DTM Signal Engine — ریاضی معادل PyneCore (بدون وابستگی)
 """
 import pandas as pd
 import numpy as np
@@ -11,20 +11,10 @@ RSI_LEN = 14
 MACD_FAST = 12
 MACD_SLOW = 26
 MACD_SIG = 9
-TREND_LOOKBACK = 20
-TREND_SLOPE_MIN_PCT = 0.05
-FIB_TREND_SEARCH_BARS = 100
-FIB_TOLERANCE_PCT = 0.5
-FIB_USE_618 = True
-FIB_USE_786 = True
-ENABLE_HIDDEN = True
 
 def rma(s, length):
-    """RMA (Pine)"""
     out = pd.Series(np.nan, index=s.index)
     vals = s.to_numpy(dtype=float)
-    if len(vals) < length:
-        return out
     valid = ~np.isnan(vals)
     if valid.sum() < length:
         return out
@@ -42,7 +32,6 @@ def rma(s, length):
     return out
 
 def ema(s, length):
-    """EMA (Pine)"""
     out = pd.Series(np.nan, index=s.index)
     vals = s.to_numpy(dtype=float)
     valid = ~np.isnan(vals)
@@ -91,8 +80,8 @@ def pivot_high(high, left=LEFT_BARS, right=RIGHT_BARS):
     n = len(high)
     for i in range(left, n - right):
         x = high.iloc[i]
-        if high.iloc[i - left:i].max() < x and high.iloc[i + 1:i + right + 1].max() < x:
-            out.iloc[i + right] = x
+        if high.iloc[i-left:i].max() < x and high.iloc[i+1:i+right+1].max() < x:
+            out.iloc[i+right] = x
     return out
 
 def pivot_low(low, left=LEFT_BARS, right=RIGHT_BARS):
@@ -100,14 +89,14 @@ def pivot_low(low, left=LEFT_BARS, right=RIGHT_BARS):
     n = len(low)
     for i in range(left, n - right):
         x = low.iloc[i]
-        if low.iloc[i - left:i].min() > x and low.iloc[i + 1:i + right + 1].min() > x:
-            out.iloc[i + right] = x
+        if low.iloc[i-left:i].min() > x and low.iloc[i+1:i+right+1].min() > x:
+            out.iloc[i+right] = x
     return out
 
 def calculate_signals(df):
-    close = df["close"]
-    high = df["high"]
-    low = df["low"]
+    close = df['close']
+    high = df['high']
+    low = df['low']
 
     rsi_val = rsi(close)
     macd_line, signal_line, hist_line = macd(close)
@@ -116,7 +105,6 @@ def calculate_signals(df):
     ph = pivot_high(high)
     pl = pivot_low(low)
 
-    # آخرین کندل تأییدشده
     n = len(df)
     last_confirmed = n - 1 - RIGHT_BARS
     if last_confirmed < 0:
@@ -125,21 +113,51 @@ def calculate_signals(df):
     new_ph = not pd.isna(ph.iloc[last_confirmed])
     new_pl = not pd.isna(pl.iloc[last_confirmed])
 
-    if new_ph:
-        # یافتن پیوت قبلی
-        ph_prev = ph.loc[:last_confirmed-1].dropna()
-        if not ph_prev.empty:
-            prev_idx = ph_prev.index[-1]
-            if close.iloc[-1] > ph.iloc[last_confirmed] and rsi_val.iloc[-1] < rsi_val.loc[prev_idx]:
-                # ساده‌شده: در این مرحله فقط احتمال سیگنال
-                pass
+    ph_prev = ph.loc[:last_confirmed-1].dropna()
+    pl_prev = pl.loc[:last_confirmed-1].dropna()
 
-    if new_pl:
-        pl_prev = pl.loc[:last_confirmed-1].dropna()
-        if not pl_prev.empty:
-            prev_idx = pl_prev.index[-1]
-            if close.iloc[-1] < pl.iloc[last_confirmed] and rsi_val.iloc[-1] > rsi_val.loc[prev_idx]:
-                pass
+    if new_ph and len(ph_prev) >= 1:
+        prev_ph_idx = ph_prev.index[-1]
+        curr_ph_price = ph.iloc[last_confirmed]
+        prev_ph_price = ph.loc[prev_ph_idx]
 
-    # این نسخه به‌عنوان placeholder است و بعداً تکمیل می‌شود
+        price_higher_high = curr_ph_price > prev_ph_price
+        rsi_lower = rsi_val.iloc[last_confirmed] < rsi_val.loc[prev_ph_idx]
+        macd_lower = macd_line.iloc[last_confirmed] < macd_line.loc[prev_ph_idx]
+        hist_lower = hist_line.iloc[last_confirmed] < hist_line.loc[prev_ph_idx]
+        both_green = hist_line.iloc[last_confirmed] > 0 and hist_line.loc[prev_ph_idx] > 0
+
+        color_changed = False
+        start = df.index.get_loc(prev_ph_idx) + 1
+        end = df.index.get_loc(ph.index[last_confirmed])
+        for i in range(start, end):
+            if hist_line.iloc[i] < 0:
+                color_changed = True
+                break
+
+        if price_higher_high and rsi_lower and macd_lower and hist_lower and both_green and color_changed:
+            return "SELL", float(close.iloc[-1])
+
+    if new_pl and len(pl_prev) >= 1:
+        prev_pl_idx = pl_prev.index[-1]
+        curr_pl_price = pl.iloc[last_confirmed]
+        prev_pl_price = pl.loc[prev_pl_idx]
+
+        price_lower_low = curr_pl_price < prev_pl_price
+        rsi_higher = rsi_val.iloc[last_confirmed] > rsi_val.loc[prev_pl_idx]
+        macd_higher = macd_line.iloc[last_confirmed] > macd_line.loc[prev_pl_idx]
+        hist_higher = hist_line.iloc[last_confirmed] > hist_line.loc[prev_pl_idx]
+        both_red = hist_line.iloc[last_confirmed] < 0 and hist_line.loc[prev_pl_idx] < 0
+
+        color_changed = False
+        start = df.index.get_loc(prev_pl_idx) + 1
+        end = df.index.get_loc(pl.index[last_confirmed])
+        for i in range(start, end):
+            if hist_line.iloc[i] > 0:
+                color_changed = True
+                break
+
+        if price_lower_low and rsi_higher and macd_higher and hist_higher and both_red and color_changed:
+            return "BUY", float(close.iloc[-1])
+
     return None, None
