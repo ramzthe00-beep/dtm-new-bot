@@ -1,1 +1,2 @@
-web: python3 dtm_bot.py
+web: python3 web.py
+worker: python3 bot.py
