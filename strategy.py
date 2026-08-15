@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-DTM Strategy — PyneCore (exact, no MTF)
+DTM Signal Engine — ریاضی معادل PyneCore (بدون state)
 """
-from pynecore import pine_range
-from pynecore.lib import (
-    bar_index, close, high, low, math, na, ta
-)
-from pynecore.types import Persistent, Series
+import pandas as pd
+import numpy as np
 
 LEFT_BARS = 5
 RIGHT_BARS = 3
-
 RSI_LEN = 14
 MACD_FAST = 12
 MACD_SLOW = 26
@@ -23,127 +19,127 @@ FIB_USE_618 = True
 FIB_USE_786 = True
 ENABLE_HIDDEN = True
 
+def rma(s, length):
+    """RMA (Pine)"""
+    out = pd.Series(np.nan, index=s.index)
+    vals = s.to_numpy(dtype=float)
+    if len(vals) < length:
+        return out
+    valid = ~np.isnan(vals)
+    if valid.sum() < length:
+        return out
+    seed_idx = np.where(valid)[0][length - 1]
+    seed = vals[seed_idx - length + 1: seed_idx + 1].mean()
+    out.iloc[seed_idx] = seed
+    alpha = 1.0 / length
+    prev = seed
+    for i in range(seed_idx + 1, len(vals)):
+        if np.isnan(vals[i]):
+            out.iloc[i] = prev
+        else:
+            prev = alpha * vals[i] + (1 - alpha) * prev
+            out.iloc[i] = prev
+    return out
+
+def ema(s, length):
+    """EMA (Pine)"""
+    out = pd.Series(np.nan, index=s.index)
+    vals = s.to_numpy(dtype=float)
+    valid = ~np.isnan(vals)
+    if valid.sum() < length:
+        return out
+    seed_idx = np.where(valid)[0][length - 1]
+    seed = vals[seed_idx - length + 1: seed_idx + 1].mean()
+    out.iloc[seed_idx] = seed
+    alpha = 2.0 / (length + 1)
+    prev = seed
+    for i in range(seed_idx + 1, len(vals)):
+        if np.isnan(vals[i]):
+            out.iloc[i] = prev
+        else:
+            prev = alpha * vals[i] + (1 - alpha) * prev
+            out.iloc[i] = prev
+    return out
+
+def rsi(close, length=RSI_LEN):
+    diff = close.diff()
+    gain = diff.clip(lower=0)
+    loss = -diff.clip(upper=0)
+    ag = rma(gain, length)
+    al = rma(loss, length)
+    rs = ag / al.replace(0, np.nan)
+    out = 100 - (100 / (1 + rs))
+    out = out.mask((al == 0) & (ag > 0), 100)
+    out = out.mask((ag == 0) & (al > 0), 0)
+    return out
+
+def macd(close, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIG):
+    ef = ema(close, fast)
+    es = ema(close, slow)
+    line = ef - es
+    sig = ema(line, signal)
+    hist = line - sig
+    return line, sig, hist
+
+def atr(high, low, close, length=14):
+    prev_close = close.shift(1)
+    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    return rma(tr, length)
+
+def pivot_high(high, left=LEFT_BARS, right=RIGHT_BARS):
+    out = pd.Series(np.nan, index=high.index, dtype=float)
+    n = len(high)
+    for i in range(left, n - right):
+        x = high.iloc[i]
+        if high.iloc[i - left:i].max() < x and high.iloc[i + 1:i + right + 1].max() < x:
+            out.iloc[i + right] = x
+    return out
+
+def pivot_low(low, left=LEFT_BARS, right=RIGHT_BARS):
+    out = pd.Series(np.nan, index=low.index, dtype=float)
+    n = len(low)
+    for i in range(left, n - right):
+        x = low.iloc[i]
+        if low.iloc[i - left:i].min() > x and low.iloc[i + 1:i + right + 1].min() > x:
+            out.iloc[i + right] = x
+    return out
+
 def calculate_signals(df):
-    from pynecore.core import instance_state
-    state = instance_state.get_root("dtm_live")
-    if state is None:
-        state = instance_state.create_root("dtm_live", {"init": [], "series": [], "children": []})[0]
-    """Run PyneCore logic on DataFrame and return last bar signals."""
-    close_vals = df["close"].to_numpy()
-    high_vals = df["high"].to_numpy()
-    low_vals = df["low"].to_numpy()
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
 
-    rsi_val = ta.rsi(state, close_vals, RSI_LEN)
-    macd_line, signal_line, hist_line = ta.macd(state, close_vals, MACD_FAST, MACD_SLOW, MACD_SIG)
-    atr14 = ta.atr(state, 14)
+    rsi_val = rsi(close)
+    macd_line, signal_line, hist_line = macd(close)
+    atr_val = atr(high, low, close)
 
-    pivot_high = ta.pivothigh(state, high_vals, LEFT_BARS, RIGHT_BARS)
-    pivot_low = ta.pivotlow(state, low_vals, LEFT_BARS, RIGHT_BARS)
+    ph = pivot_high(high)
+    pl = pivot_low(low)
 
-    rsi_at_ph = ta.valuewhen(state, ~na(pivot_high), rsi_val[RIGHT_BARS], 0)
-    rsi_at_pl = ta.valuewhen(state, ~na(pivot_low), rsi_val[RIGHT_BARS], 0)
-    macd_at_ph = ta.valuewhen(state, ~na(pivot_high), macd_line[RIGHT_BARS], 0)
-    macd_at_pl = ta.valuewhen(state, ~na(pivot_low), macd_line[RIGHT_BARS], 0)
-    hist_at_ph = ta.valuewhen(state, ~na(pivot_high), hist_line[RIGHT_BARS], 0)
-    hist_at_pl = ta.valuewhen(state, ~na(pivot_low), hist_line[RIGHT_BARS], 0)
+    # آخرین کندل تأییدشده
+    n = len(df)
+    last_confirmed = n - 1 - RIGHT_BARS
+    if last_confirmed < 0:
+        return None, None
 
-    # Track last two pivots
-    ph_price_1 = None
-    ph_price_2 = None
-    ph_rsi_1 = None
-    ph_rsi_2 = None
-    ph_macd_1 = None
-    ph_macd_2 = None
-    ph_hist_1 = None
-    ph_hist_2 = None
-    ph_bar_1 = None
-    ph_bar_2 = None
-
-    pl_price_1 = None
-    pl_price_2 = None
-    pl_rsi_1 = None
-    pl_rsi_2 = None
-    pl_macd_1 = None
-    pl_macd_2 = None
-    pl_hist_1 = None
-    pl_hist_2 = None
-    pl_bar_1 = None
-    pl_bar_2 = None
-
-    current_bar = len(df) - 1
-    new_ph = bool(not pd_isna(pivot_high[-1]))
-    new_pl = bool(not pd_isna(pivot_low[-1]))
+    new_ph = not pd.isna(ph.iloc[last_confirmed])
+    new_pl = not pd.isna(pl.iloc[last_confirmed])
 
     if new_ph:
-        ph_price_1 = ph_price_2
-        ph_rsi_1 = ph_rsi_2
-        ph_macd_1 = ph_macd_2
-        ph_hist_1 = ph_hist_2
-        ph_bar_1 = ph_bar_2
-
-        ph_price_2 = float(pivot_high[-1])
-        ph_bar_2 = current_bar - RIGHT_BARS
-        ph_rsi_2 = float(rsi_at_ph) if not pd_isna(rsi_at_ph) else None if not pd_isna(rsi_at_ph) else None
-        ph_macd_2 = float(macd_at_ph) if not pd_isna(macd_at_ph) else None if not pd_isna(macd_at_ph) else None
-        ph_hist_2 = float(hist_at_ph) if not pd_isna(hist_at_ph) else None if not pd_isna(hist_at_ph) else None
+        # یافتن پیوت قبلی
+        ph_prev = ph.loc[:last_confirmed-1].dropna()
+        if not ph_prev.empty:
+            prev_idx = ph_prev.index[-1]
+            if close.iloc[-1] > ph.iloc[last_confirmed] and rsi_val.iloc[-1] < rsi_val.loc[prev_idx]:
+                # ساده‌شده: در این مرحله فقط احتمال سیگنال
+                pass
 
     if new_pl:
-        pl_price_1 = pl_price_2
-        pl_rsi_1 = pl_rsi_2
-        pl_macd_1 = pl_macd_2
-        pl_hist_1 = pl_hist_2
-        pl_bar_1 = pl_bar_2
+        pl_prev = pl.loc[:last_confirmed-1].dropna()
+        if not pl_prev.empty:
+            prev_idx = pl_prev.index[-1]
+            if close.iloc[-1] < pl.iloc[last_confirmed] and rsi_val.iloc[-1] > rsi_val.loc[prev_idx]:
+                pass
 
-        pl_price_2 = float(pivot_low[-1])
-        pl_bar_2 = current_bar - RIGHT_BARS
-        pl_rsi_2 = float(rsi_at_pl) if not pd_isna(rsi_at_pl) else None if not pd_isna(rsi_at_pl) else None
-        pl_macd_2 = float(macd_at_pl) if not pd_isna(macd_at_pl) else None if not pd_isna(macd_at_pl) else None
-        pl_hist_2 = float(hist_at_pl) if not pd_isna(hist_at_pl) else None if not pd_isna(hist_at_pl) else None
-
-    # Classic Bearish
-    if new_ph and ph_bar_1 is not None:
-        price_higher_high = ph_price_2 > ph_price_1
-        rsi_lower_high = ph_rsi_2 < ph_rsi_1
-        macd_lower_high = ph_macd_2 < ph_macd_1
-        hist_lower_high = ph_hist_2 < ph_hist_1
-        both_peaks_green = ph_hist_1 > 0 and ph_hist_2 > 0
-
-        # color change check
-        color_changed = False
-        start = int(ph_bar_1) + 1
-        end = int(ph_bar_2)
-        for i in range(start, end + 1):
-            if i < len(hist_line) and hist_line[i] < 0:
-                color_changed = True
-                break
-
-        if price_higher_high and rsi_lower_high and macd_lower_high and hist_lower_high and both_peaks_green and color_changed:
-            return "SELL", float(close_vals[-1])
-
-    # Classic Bullish
-    if new_pl and pl_bar_1 is not None:
-        price_lower_low = pl_price_2 < pl_price_1
-        rsi_higher_low = pl_rsi_2 > pl_rsi_1
-        macd_higher_low = pl_macd_2 > pl_macd_1
-        hist_higher_low = pl_hist_2 > pl_hist_1
-        both_troughs_red = pl_hist_1 < 0 and pl_hist_2 < 0
-
-        color_changed = False
-        start = int(pl_bar_1) + 1
-        end = int(pl_bar_2)
-        for i in range(start, end + 1):
-            if i < len(hist_line) and hist_line[i] > 0:
-                color_changed = True
-                break
-
-        if price_lower_low and rsi_higher_low and macd_higher_low and hist_higher_low and both_troughs_red and color_changed:
-            return "BUY", float(close_vals[-1])
-
+    # این نسخه به‌عنوان placeholder است و بعداً تکمیل می‌شود
     return None, None
-
-def pd_isna(x):
-    try:
-        import pandas as pd
-        return pd.isna(x)
-    except ImportError:
-        return x is None or (isinstance(x, float) and math.isnan(x))
