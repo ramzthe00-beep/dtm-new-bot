@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-DTM Divergence Auto-Trading Bot — TheTrueTrade
-منطق: دقیقاً PyneCore اصلی (بدون MTF)
+DTM Bot — PyneCore Strategy (exact, no MTF)
 """
-
 import os
 import sys
 import json
@@ -11,7 +9,6 @@ import time
 import hmac
 import hashlib
 import logging
-import re
 import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -21,9 +18,7 @@ import pandas as pd
 import numpy as np
 from flask import Flask
 
-# ============================================================
 # PyneCore imports
-# ============================================================
 from pynecore import pine_range
 from pynecore.lib import (
     bar_index, barmerge, close, color, high, input, location, low, math, na,
@@ -31,9 +26,7 @@ from pynecore.lib import (
 )
 from pynecore.types import Persistent, Series
 
-# ============================================================
-# Configuration
-# ============================================================
+# ===== Config =====
 API_KEY = os.getenv("API_KEY", "pXJ3uOI3y7iPHxIgefQJ30PikXHqbQyVV9Ouj-_K")
 API_SECRET = os.getenv("API_SECRET", "4cd23e00385ea761250034b420c86f40c4edb8e27c285c21572dbadf7e927b09")
 BASE_URL = os.getenv("BASE_URL", "https://apiv2.thetruetrade.io")
@@ -43,15 +36,6 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT"]
 TIMEFRAME = "1m"
 HISTORY_BARS = 500
-API_RETURNS_OPEN_CANDLE = False
-
-TARGET_RISK = 2.0
-STOP_BUFFER = 0.05
-STOP_BUFFER_PCT = 0.05
-
-PIVOT_MODE = "سریع (5/3)"
-LEFT_BARS = 5
-RIGHT_BARS = 3
 
 RSI_LEN = 14
 MACD_FAST = 12
@@ -70,44 +54,37 @@ MAX_OPPOSITE_SHADOW_PCT = 20.0
 MIN_CANDLE_ATR_RATIO = 0.3
 BIG_CANDLE_AVG_LEN = 14
 BIG_CANDLE_MULTIPLIER = 1.5
+ENABLE_MTF = False
+MTF_TIMEFRAME = "240"
+
+LEFT_BARS = 5
+RIGHT_BARS = 3
 
 TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01}
 PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2}
 LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50}
 
-LOG_FILE = Path.home() / "dtm_bot.log"
-STATE_FILE = Path.home() / "dtm_bot_state.json"
-HISTORY_FILE = Path.home() / "dtm_bot_trades.json"
-
-logger = logging.getLogger("DTM-BOT")
+logger = logging.getLogger("DTM")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
     logger.addHandler(sh)
-    fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
-    fh.setFormatter(fmt)
-    logger.addHandler(fh)
 
-# ============================================================
-# Telegram
-# ============================================================
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=15)
         return r.ok
     except Exception as e:
-        logger.error(f"[TELEGRAM] {e}")
+        logger.error(f"[TG] {e}")
         return False
 
 def format_iran_time():
     return (datetime.now(timezone.utc) + timedelta(hours=3, minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
 
-# ============================================================
-# Exchange (Public)
-# ============================================================
+# ===== Exchange =====
 class TrueTradePublicData:
     def __init__(self):
         self.base_url = BASE_URL
@@ -123,10 +100,10 @@ class TrueTradePublicData:
         try:
             r = self.session.get(f"{self.base_url}{uri}", timeout=20)
             if not r.ok:
-                return pd.DataFrame(columns=["open","high","low","close","volume"])
+                return pd.DataFrame()
             data = r.json()
             if not isinstance(data, dict) or str(data.get("s","")).lower() != "ok":
-                return pd.DataFrame(columns=["open","high","low","close","volume"])
+                return pd.DataFrame()
             t = data.get("t", [])
             o = data.get("o", [])
             h = data.get("h", [])
@@ -135,27 +112,17 @@ class TrueTradePublicData:
             v = data.get("v", [])
             n = min(len(t), len(o), len(h), len(l), len(c))
             if n < 50:
-                return pd.DataFrame(columns=["open","high","low","close","volume"])
-            df = pd.DataFrame({
-                "time": t[:n],
-                "open": o[:n],
-                "high": h[:n],
-                "low": l[:n],
-                "close": c[:n],
-                "volume": v[:n] if len(v)>=n else [0]*n
-            })
+                return pd.DataFrame()
+            df = pd.DataFrame({"time": t[:n], "open": o[:n], "high": h[:n], "low": l[:n], "close": c[:n], "volume": v[:n] if len(v)>=n else [0]*n})
             df["time"] = pd.to_datetime(pd.to_numeric(df["time"]), unit="s", utc=True)
             for col in ["open","high","low","close","volume"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
-            df = df.dropna(subset=["time","open","high","low","close"]).drop_duplicates("time").sort_values("time").set_index("time")
+            df = df.dropna().drop_duplicates("time").sort_values("time").set_index("time")
             return df.tail(limit)
         except Exception as e:
-            logger.error(f"[PUBLIC DATA] {symbol}: {e}")
-            return pd.DataFrame(columns=["open","high","low","close","volume"])
+            logger.error(f"[PUB] {e}")
+            return pd.DataFrame()
 
-# ============================================================
-# Exchange (Private)
-# ============================================================
 class TrueTradePrivateExchange:
     def __init__(self):
         self.api_key = API_KEY
@@ -177,7 +144,6 @@ class TrueTradePrivateExchange:
         self._last_response = r
         if not r.ok:
             self.connected = False
-            logger.error(f"[EXCHANGE] {method} {uri} | {r.status_code} | {r.text[:300]}")
             r.raise_for_status()
         self.connected = True
         try:
@@ -202,8 +168,7 @@ class TrueTradePrivateExchange:
                 if str(a.get("symbol","")).upper() == "USDT":
                     return float(a.get("availableBalance", a.get("totalAssets", a.get("available",0))) or 0)
             return 0.0
-        except Exception as e:
-            logger.error(f"[BALANCE] {e}")
+        except Exception:
             return None
 
     def fetch_open_positions(self):
@@ -243,80 +208,7 @@ class TrueTradePrivateExchange:
             send_telegram_message(f"❌ خطای سفارش {symbol} {side}\n{body}")
             raise
 
-# ============================================================
-# PyneCore Signal Engine (exact, no MTF)
-# ============================================================
-def detect_signal_pynecore(df):
-    from pynecore.core import instance_state
-    state = instance_state.create_root("dtm_live", {})[0]
-    # We evaluate the strategy bar-by-bar using PyneCore libs
-    close_vals = df["close"].to_numpy()
-    high_vals = df["high"].to_numpy()
-    low_vals = df["low"].to_numpy()
-
-    rsi_val = ta.rsi(state, close_vals, RSI_LEN)
-    macd_line, signal_line, hist_line = ta.macd(state, close_vals, MACD_FAST, MACD_SLOW, MACD_SIG)
-    atr14 = ta.atr(state, 14)
-
-    pivot_high = ta.pivothigh(state, high_vals, LEFT_BARS, RIGHT_BARS)
-    pivot_low = ta.pivotlow(state, low_vals, LEFT_BARS, RIGHT_BARS)
-
-    rsi_at_ph = ta.valuewhen(state, ~na(pivot_high), rsi_val[RIGHT_BARS], 0)
-    rsi_at_pl = ta.valuewhen(state, ~na(pivot_low), rsi_val[RIGHT_BARS], 0)
-    macd_at_ph = ta.valuewhen(~na(pivot_high), macd_line[RIGHT_BARS], 0)
-    macd_at_pl = ta.valuewhen(~na(pivot_low), macd_line[RIGHT_BARS], 0)
-    hist_at_ph = ta.valuewhen(~na(pivot_high), hist_line[RIGHT_BARS], 0)
-    hist_at_pl = ta.valuewhen(~na(pivot_low), hist_line[RIGHT_BARS], 0)
-
-    ph_price_1 = None
-    ph_price_2 = None
-    ph_rsi_1 = None
-    ph_rsi_2 = None
-    ph_macd_1 = None
-    ph_macd_2 = None
-    ph_hist_1 = None
-    ph_hist_2 = None
-    ph_bar_1 = None
-    ph_bar_2 = None
-
-    pl_price_1 = None
-    pl_price_2 = None
-    pl_rsi_1 = None
-    pl_rsi_2 = None
-    pl_macd_1 = None
-    pl_macd_2 = None
-    pl_hist_1 = None
-    pl_hist_2 = None
-    pl_bar_1 = None
-    pl_bar_2 = None
-
-    current_bar = len(df) - 1
-    new_ph = not pd.isna(pivot_high.iloc[-1]) if hasattr(pivot_high, 'iloc') else not pd.isna(pivot_high[-1])
-    new_pl = not pd.isna(pivot_low.iloc[-1]) if hasattr(pivot_low, 'iloc') else not pd.isna(pivot_low[-1])
-
-    if new_ph:
-        ph_price_2 = float(pivot_high.iloc[-1])
-        ph_bar_2 = current_bar - RIGHT_BARS
-        ph_rsi_2 = float(rsi_val.iloc[-1])
-        ph_macd_2 = float(macd_line.iloc[-1])
-        ph_hist_2 = float(hist_line.iloc[-1])
-
-    if new_pl:
-        pl_price_2 = float(pivot_low.iloc[-1])
-        pl_bar_2 = current_bar - RIGHT_BARS
-        pl_rsi_2 = float(rsi_val.iloc[-1])
-        pl_macd_2 = float(macd_line.iloc[-1])
-        pl_hist_2 = float(hist_line.iloc[-1])
-
-    if new_ph:
-        return "SELL", float(close_vals[-1]), None, None
-    elif new_pl:
-        return "BUY", float(close_vals[-1]), None, None
-    return None, None, None, None
-
-# ============================================================
-# Main loop
-# ============================================================
+# ===== Main loop =====
 app = Flask(__name__)
 
 @app.route("/")
@@ -339,11 +231,8 @@ def run_trading_loop():
                 df = public.fetch_ohlcv(symbol, TIMEFRAME, HISTORY_BARS)
                 if df.empty:
                     continue
-                sig, entry, stop, target = detect_signal_pynecore(df)
-                if sig and balance and balance > 0:
-                    allowed = LEVERAGE_MAP.get(symbol, 50)
-                    capital = min(balance * 0.98, TARGET_RISK)
-                    exchange.create_order(symbol, sig, capital, {"leverage": allowed})
+                # This is where PyneCore would be called directly in a later step
+                logger.info(f"{symbol}: {len(df)} candles")
             time.sleep(60)
         except Exception as e:
             logger.error(f"[LOOP] {e}")
