@@ -27,7 +27,7 @@ def calculate_signals(df):
     from pynecore.core import instance_state
     state = instance_state.get_root("dtm_live")
     if state is None:
-        state = instance_state.create_root("dtm_live", {"init": [], "series": []})[0]
+        state = instance_state.create_root("dtm_live", {"init": [], "series": [], "children": []})[0]
     """Run PyneCore logic on DataFrame and return last bar signals."""
     close_vals = df["close"].to_numpy()
     high_vals = df["high"].to_numpy()
