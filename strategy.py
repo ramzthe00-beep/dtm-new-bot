@@ -71,8 +71,8 @@ def calculate_signals(df):
     pl_bar_2 = None
 
     current_bar = len(df) - 1
-    new_ph = not pd_isna(pivot_high[-1])
-    new_pl = not pd_isna(pivot_low[-1])
+    new_ph = bool(not pd_isna(pivot_high[-1]))
+    new_pl = bool(not pd_isna(pivot_low[-1]))
 
     if new_ph:
         ph_price_1 = ph_price_2
