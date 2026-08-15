@@ -10,6 +10,8 @@ import hmac
 import hashlib
 import logging
 import threading
+import signal
+import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -64,6 +66,12 @@ RIGHT_BARS = 3
 TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01}
 PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2}
 LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50}
+
+def _ignore_sigterm(signum, frame):
+    print(f"Ignoring SIGTERM ({signum}), keeping process alive...", flush=True)
+
+signal.signal(signal.SIGTERM, _ignore_sigterm)
+signal.signal(signal.SIGINT, _ignore_sigterm)
 
 logger = logging.getLogger("DTM")
 logger.setLevel(logging.INFO)
