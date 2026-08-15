@@ -76,22 +76,48 @@ def atr(high, low, close, length=14):
     return rma(tr, length)
 
 def pivot_high(high, left=LEFT_BARS, right=RIGHT_BARS):
+    """
+    Pine ta.pivothigh(high, left, right) semantics.
+
+    The pivot is CONFIRMED on bar i + right, but its value belongs
+    to the original pivot bar i.  We therefore store the value on
+    the confirmation bar, exactly like Pine's returned series.
+    """
     out = pd.Series(np.nan, index=high.index, dtype=float)
     n = len(high)
+
     for i in range(left, n - right):
         x = high.iloc[i]
-        if high.iloc[i-left:i].max() < x and high.iloc[i+1:i+right+1].max() < x:
-            out.iloc[i+right] = x
+
+        left_max = high.iloc[i-left:i].max()
+        right_max = high.iloc[i+1:i+right+1].max()
+
+        if left_max < x and right_max < x:
+            out.iloc[i + right] = x
+
     return out
 
+
 def pivot_low(low, left=LEFT_BARS, right=RIGHT_BARS):
+    """
+    Pine ta.pivotlow(low, left, right) semantics.
+    Returned value appears on the confirmation bar i + right,
+    while the actual pivot price belongs to bar i.
+    """
     out = pd.Series(np.nan, index=low.index, dtype=float)
     n = len(low)
+
     for i in range(left, n - right):
         x = low.iloc[i]
-        if low.iloc[i-left:i].min() > x and low.iloc[i+1:i+right+1].min() > x:
-            out.iloc[i+right] = x
+
+        left_min = low.iloc[i-left:i].min()
+        right_min = low.iloc[i+1:i+right+1].min()
+
+        if left_min > x and right_min > x:
+            out.iloc[i + right] = x
+
     return out
+
 
 def calculate_signals(df):
     close = df['close']
@@ -106,58 +132,140 @@ def calculate_signals(df):
     pl = pivot_low(low)
 
     n = len(df)
-    last_confirmed = n - 1 - RIGHT_BARS
-    if last_confirmed < 0:
+
+    if n <= RIGHT_BARS:
         return None, None
 
-    new_ph = not pd.isna(ph.iloc[last_confirmed])
-    new_pl = not pd.isna(pl.iloc[last_confirmed])
+    # Pine-equivalent pivot confirmation:
+    # pivot_high/low() stores the pivot at i + RIGHT_BARS.
+    # Therefore the pivot value already lives on the confirmation bar.
+    # Do NOT apply a second RIGHT_BARS shift here.
+    confirmation_idx = n - 1
 
-    ph_prev = ph.iloc[:last_confirmed].dropna()
-    pl_prev = pl.iloc[:last_confirmed].dropna()
+    new_ph = not pd.isna(ph.iloc[confirmation_idx])
+    new_pl = not pd.isna(pl.iloc[confirmation_idx])
 
-    if new_ph and len(ph_prev) >= 1:
-        prev_ph_idx = ph_prev.index[-1]
-        curr_ph_price = ph.iloc[last_confirmed]
-        prev_ph_price = ph.loc[prev_ph_idx]
+    # ---------------------------------------------------------
+    # PIVOT HIGH / BEARISH DIVERGENCE
+    # ---------------------------------------------------------
+    if new_ph:
+        ph_prev = ph.iloc[:confirmation_idx].dropna()
 
-        price_higher_high = curr_ph_price > prev_ph_price
-        rsi_lower = rsi_val.iloc[last_confirmed] < rsi_val.loc[prev_ph_idx]
-        macd_lower = macd_line.iloc[last_confirmed] < macd_line.loc[prev_ph_idx]
-        hist_lower = hist_line.iloc[last_confirmed] < hist_line.loc[prev_ph_idx]
-        both_green = hist_line.iloc[last_confirmed] > 0 and hist_line.loc[prev_ph_idx] > 0
+        if len(ph_prev) >= 1:
+            prev_confirmation_idx = ph_prev.index[-1]
 
-        color_changed = False
-        start = df.index.get_loc(prev_ph_idx) + 1
-        end = df.index.get_loc(ph.index[last_confirmed])
-        for i in range(start, end):
-            if hist_line.iloc[i] < 0:
-                color_changed = True
-                break
+            curr_ph_price = float(ph.iloc[confirmation_idx])
+            prev_ph_price = float(ph.loc[prev_confirmation_idx])
 
-        if price_higher_high and rsi_lower and macd_lower and hist_lower and both_green and color_changed:
-            return "SELL", float(close.iloc[-1])
+            # The actual pivot bar is RIGHT_BARS bars BEFORE
+            # the confirmation bar.
+            curr_pivot_pos = confirmation_idx - RIGHT_BARS
+            prev_confirmation_pos = df.index.get_loc(prev_confirmation_idx)
+            prev_pivot_pos = prev_confirmation_pos - RIGHT_BARS
 
-    if new_pl and len(pl_prev) >= 1:
-        prev_pl_idx = pl_prev.index[-1]
-        curr_pl_price = pl.iloc[last_confirmed]
-        prev_pl_price = pl.loc[prev_pl_idx]
+            if curr_pivot_pos >= 0 and prev_pivot_pos >= 0:
 
-        price_lower_low = curr_pl_price < prev_pl_price
-        rsi_higher = rsi_val.iloc[last_confirmed] > rsi_val.loc[prev_pl_idx]
-        macd_higher = macd_line.iloc[last_confirmed] > macd_line.loc[prev_pl_idx]
-        hist_higher = hist_line.iloc[last_confirmed] > hist_line.loc[prev_pl_idx]
-        both_red = hist_line.iloc[last_confirmed] < 0 and hist_line.loc[prev_pl_idx] < 0
+                price_higher_high = curr_ph_price > prev_ph_price
 
-        color_changed = False
-        start = df.index.get_loc(prev_pl_idx) + 1
-        end = df.index.get_loc(pl.index[last_confirmed])
-        for i in range(start, end):
-            if hist_line.iloc[i] > 0:
-                color_changed = True
-                break
+                rsi_lower = (
+                    rsi_val.iloc[curr_pivot_pos]
+                    < rsi_val.iloc[prev_pivot_pos]
+                )
 
-        if price_lower_low and rsi_higher and macd_higher and hist_higher and both_red and color_changed:
-            return "BUY", float(close.iloc[-1])
+                macd_lower = (
+                    macd_line.iloc[curr_pivot_pos]
+                    < macd_line.iloc[prev_pivot_pos]
+                )
+
+                hist_lower = (
+                    hist_line.iloc[curr_pivot_pos]
+                    < hist_line.iloc[prev_pivot_pos]
+                )
+
+                both_green = (
+                    hist_line.iloc[curr_pivot_pos] > 0
+                    and hist_line.iloc[prev_pivot_pos] > 0
+                )
+
+                color_changed = False
+
+                start = prev_pivot_pos + 1
+                end = curr_pivot_pos
+
+                for j in range(start, end):
+                    if hist_line.iloc[j] < 0:
+                        color_changed = True
+                        break
+
+                if (
+                    price_higher_high
+                    and rsi_lower
+                    and macd_lower
+                    and hist_lower
+                    and both_green
+                    and color_changed
+                ):
+                    return "SELL", float(close.iloc[-1])
+
+    # ---------------------------------------------------------
+    # PIVOT LOW / BULLISH DIVERGENCE
+    # ---------------------------------------------------------
+    if new_pl:
+        pl_prev = pl.iloc[:confirmation_idx].dropna()
+
+        if len(pl_prev) >= 1:
+            prev_confirmation_idx = pl_prev.index[-1]
+
+            curr_pl_price = float(pl.iloc[confirmation_idx])
+            prev_pl_price = float(pl.loc[prev_confirmation_idx])
+
+            # Actual pivot bars.
+            curr_pivot_pos = confirmation_idx - RIGHT_BARS
+            prev_confirmation_pos = df.index.get_loc(prev_confirmation_idx)
+            prev_pivot_pos = prev_confirmation_pos - RIGHT_BARS
+
+            if curr_pivot_pos >= 0 and prev_pivot_pos >= 0:
+
+                price_lower_low = curr_pl_price < prev_pl_price
+
+                rsi_higher = (
+                    rsi_val.iloc[curr_pivot_pos]
+                    > rsi_val.iloc[prev_pivot_pos]
+                )
+
+                macd_higher = (
+                    macd_line.iloc[curr_pivot_pos]
+                    > macd_line.iloc[prev_pivot_pos]
+                )
+
+                hist_higher = (
+                    hist_line.iloc[curr_pivot_pos]
+                    > hist_line.iloc[prev_pivot_pos]
+                )
+
+                both_red = (
+                    hist_line.iloc[curr_pivot_pos] < 0
+                    and hist_line.iloc[prev_pivot_pos] < 0
+                )
+
+                color_changed = False
+
+                start = prev_pivot_pos + 1
+                end = curr_pivot_pos
+
+                for j in range(start, end):
+                    if hist_line.iloc[j] > 0:
+                        color_changed = True
+                        break
+
+                if (
+                    price_lower_low
+                    and rsi_higher
+                    and macd_higher
+                    and hist_higher
+                    and both_red
+                    and color_changed
+                ):
+                    return "BUY", float(close.iloc[-1])
 
     return None, None
