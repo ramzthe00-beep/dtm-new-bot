@@ -29,7 +29,7 @@ from pynecore.lib import (
 from pynecore.types import Persistent, Series
 from pynecore.core.script_runner import ScriptRunner
 from pynecore.core.ohlcv import OHLCV
-from pynecore.core.syminfo import SymInfo, SymInfoInterval, SymInfoSession
+from pynecore.core.syminfo import SymInfo
 
 # ===== Config =====
 API_KEY = os.getenv("API_KEY", "pXJ3uOI3y7iPHxIgefQJ30PikXHqbQyVV9Ouj-_K")
@@ -384,51 +384,16 @@ def run_trading_loop():
                     f"{len(self.buffer)}"
                 )
 
-            _basecurrency = self.symbol.replace("USDT", "")
-
-            _opening_hours = [
-                SymInfoInterval(
-                    day=0,
-                    start=time(0, 0),
-                    end=time(23, 59, 59),
-                )
-            ]
-
-            _session_starts = [
-                SymInfoSession(
-                    day=0,
-                    time=time(0, 0),
-                )
-            ]
-
-            _session_ends = [
-                SymInfoSession(
-                    day=0,
-                    time=time(23, 59, 59),
-                )
-            ]
-
-            _mintick = float(TICK_SIZES.get(self.symbol, 0.01))
-            _pricescale = max(1, int(round(1.0 / _mintick)))
-
             syminfo = SymInfo(
+                ticker=self.symbol,
                 prefix="",
                 description=self.symbol,
-                ticker=self.symbol,
-                currency="USDT",
-                basecurrency=_basecurrency,
-                period="15",
                 type="crypto",
-                volumetype="base",
-                mintick=_mintick,
-                pricescale=_pricescale,
-                minmove=1,
-                pointvalue=1.0,
-                mincontract=0.0,
-                opening_hours=_opening_hours,
-                session_starts=_session_starts,
-                session_ends=_session_ends,
+                session="24x7",
                 timezone="UTC",
+                currency="USDT",
+                basecurrency=self.symbol.replace("USDT", ""),
+                mintick=float(TICK_SIZES.get(self.symbol, 0.01)),
             )
 
             strategy_path = (

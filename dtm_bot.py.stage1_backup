@@ -19,7 +19,6 @@ import requests
 import pandas as pd
 import numpy as np
 from flask import Flask
-from strategy import calculate_signals
 
 # PyneCore imports
 from pynecore import pine_range
@@ -28,6 +27,9 @@ from pynecore.lib import (
     open, plotshape, request, script, shape, size, strategy, syminfo, ta
 )
 from pynecore.types import Persistent, Series
+from pynecore.core.script_runner import ScriptRunner
+from pynecore.core.ohlcv import OHLCV
+from pynecore.core.syminfo import SymInfo
 
 # ===== Config =====
 API_KEY = os.getenv("API_KEY", "pXJ3uOI3y7iPHxIgefQJ30PikXHqbQyVV9Ouj-_K")
@@ -295,12 +297,89 @@ def run_trading_loop():
                 df = public.fetch_ohlcv(symbol, TIMEFRAME, HISTORY_BARS)
                 if df.empty:
                     continue
-                sig, entry = calculate_signals(df)
+                # ============================================================
+                # STAGE 1 — OFFICIAL PYNECORE LIVE EXECUTION
+                #
+                # The live candle stream is now passed through the official
+                # PyneCore ScriptRunner instead of calling calculate_signals(df)
+                # directly.
+                #
+                # NOTE:
+                #   Rolling buffer / warmup / closed-candle dedup / pivot fixes
+                #   are intentionally NOT implemented in this stage.
+                # ============================================================
+
+                if len(df) < 50:
+                    logger.warning(
+                        f"{symbol}: insufficient OHLCV for PyneCore: {len(df)}"
+                    )
+                    continue
+
+                def _ohlcv_iter():
+                    for idx, row in enumerate(df.itertuples()):
+                        ts = int(row.Index.timestamp() * 1000)
+
+                        yield OHLCV(
+                            timestamp=ts,
+                            open=float(row.open),
+                            high=float(row.high),
+                            low=float(row.low),
+                            close=float(row.close),
+                            volume=float(row.volume),
+                        )
+
+                # Build minimal symbol information required by ScriptRunner.
+                syminfo = SymInfo(
+                    ticker=symbol,
+                    prefix="",
+                    description=symbol,
+                    type="crypto",
+                    session="24x7",
+                    timezone="UTC",
+                    currency="USDT",
+                    basecurrency=symbol.replace("USDT", ""),
+                    mintick=float(TICK_SIZES.get(symbol, 0.01)),
+                )
+
+                runner = ScriptRunner(
+                    Path(__file__).resolve().parent / "strategy.py",
+                    _ohlcv_iter(),
+                    syminfo,
+                    last_bar_index=len(df) - 1,
+                )
+
+                sig = None
+                entry = None
+
+                for result in runner.run_iter():
+                    if len(result) >= 2:
+                        bar, values = result[0], result[1]
+
+                        # Keep the complete PyneCore output available for
+                        # subsequent stages. Do not infer signals here yet.
+                        if isinstance(values, dict):
+                            for key, value in values.items():
+                                key_l = str(key).lower()
+                                if key_l in ("signal", "sig"):
+                                    sig = value
+                                elif key_l in ("entry", "entry_price"):
+                                    entry = value
+
                 if sig and balance and balance > 0:
                     allowed = LEVERAGE_MAP.get(symbol, 50)
                     capital = min(balance * 0.98, TARGET_RISK)
-                    exchange.create_order(symbol, sig, capital, {"leverage": allowed})
-                logger.info(f"{symbol}: signal={sig}, entry={entry}, candles={len(df)}")
+                    exchange.create_order(
+                        symbol,
+                        sig,
+                        capital,
+                        {"leverage": allowed},
+                    )
+
+                logger.info(
+                    f"{symbol}: "
+                    f"pynecore=ScriptRunner/run_iter, "
+                    f"signal={sig}, entry={entry}, candles={len(df)}"
+                )
             time.sleep(60)
         except Exception as e:
             logger.error(f"[LOOP] {e}")

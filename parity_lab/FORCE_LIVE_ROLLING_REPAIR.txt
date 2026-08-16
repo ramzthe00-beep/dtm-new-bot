@@ -1,0 +1,574 @@
+REPAIR TARGET: ~/dtm-new-bot
+
+APPLY CHANGES DIRECTLY TO THE PROJECT.
+DO NOT ONLY REPORT PROBLEMS.
+DO NOT ASK FOR CONFIRMATION.
+INSPECT THE CURRENT CODE FIRST, THEN PATCH IT, THEN RUN TESTS.
+
+==================================================
+PRIMARY REQUIREMENT
+==================================================
+
+This is a LIVE TradingView-style strategy.
+
+DO NOT build the strategy around 5000 historical candles.
+
+Use a rolling live window with maximum 400 candles.
+
+Create:
+
+LIVE_WINDOW_BARS = 400
+
+The runtime must maintain:
+
+    new candle -> append/update -> remove oldest candle
+
+The dataframe/history must NEVER grow beyond 400 bars.
+
+Initial startup may load enough candles to initialize indicators,
+but after startup the runtime must operate as a rolling live window.
+
+Do NOT increase history to 5000.
+Do NOT use unlimited history.
+Do NOT repeatedly download 500 candles every minute.
+
+==================================================
+1. REMOVE PIVOT DOUBLE SHIFT
+==================================================
+
+Current Pine configuration:
+
+LEFT_BARS = 5
+RIGHT_BARS = 3
+
+Fast pivot mode is the default.
+
+Pine semantics:
+
+ta.pivothigh(high, 5, 3)
+ta.pivotlow(low, 5, 3)
+
+A pivot becomes known on the confirmation bar.
+
+The actual pivot candle is:
+
+confirmation_bar - RIGHT_BARS
+
+Apply RIGHT_BARS exactly ONCE.
+
+Never shift a pivot index twice.
+
+Never do:
+
+pivot_index = confirmation - rightBars
+AND later
+pivot_index -= rightBars
+
+The final pivot index must be exactly:
+
+confirmation_index - RIGHT_BARS
+
+==================================================
+2. PIVOT STATE ORDER
+==================================================
+
+For pivot highs:
+
+ph_*_2 = older pivot
+ph_*_1 = newer pivot
+
+For pivot lows:
+
+pl_*_2 = older pivot
+pl_*_1 = newer pivot
+
+When a new pivot arrives:
+
+old _1 -> _2
+new pivot -> _1
+
+Do NOT reverse this order.
+
+Do NOT shift state again after loading persisted state.
+
+==================================================
+3. INDICATORS MUST BE READ AT ACTUAL PIVOT
+==================================================
+
+Pine uses:
+
+rsiVal[rightBars]
+macdLine[rightBars]
+histLine[rightBars]
+
+when the pivot is confirmed.
+
+Therefore RSI/MACD/HIST values stored for a pivot MUST correspond
+to the actual pivot candle.
+
+Do NOT read them from the confirmation candle.
+
+Required:
+
+pivot_bar = confirmation_bar - RIGHT_BARS
+
+indicator_at_pivot = indicator[pivot_bar]
+
+No additional shift.
+
+==================================================
+4. DIVERGENCE
+==================================================
+
+Preserve the existing Pine semantics exactly.
+
+Classic Bearish:
+price higher high
+AND RSI lower high
+AND MACD line lower high
+AND MACD histogram lower high
+
+Classic Bullish:
+price lower low
+AND RSI higher low
+AND MACD line higher low
+AND MACD histogram higher low
+
+Hidden Bullish:
+price higher low
+AND RSI lower low
+AND MACD line lower low
+AND MACD histogram lower low
+
+Hidden Bearish:
+price lower high
+AND RSI higher high
+AND MACD line higher high
+AND MACD histogram higher high
+
+Do not invent additional conditions.
+
+==================================================
+5. INDICATOR PARAMETERS
+==================================================
+
+Keep exactly:
+
+RSI = 14
+
+MACD:
+fast = 12
+slow = 26
+signal = 9
+
+ATR = 14
+
+Trend lookback = 20
+minimum slope = 0.05
+
+Ensure Pine-compatible behavior for:
+
+ta.rma
+ta.ema
+ta.rsi
+ta.macd
+ta.atr
+
+Do not replace Pine semantics with incompatible pandas defaults.
+
+Preserve NA/warmup behavior.
+
+==================================================
+6. FIBONACCI
+==================================================
+
+Keep:
+
+0.618 enabled
+0.786 enabled
+tolerance = 0.5%
+search bars = 100
+
+Do not change Fibonacci semantics.
+
+==================================================
+7. PRICE ACTION
+==================================================
+
+Keep exactly:
+
+SHADOW_TO_BODY_RATIO = 2.0
+MAX_OPPOSITE_SHADOW_PCT = 20.0
+MIN_CANDLE_ATR_RATIO = 0.3
+
+BIG_CANDLE_AVG_LEN = 14
+BIG_CANDLE_MULTIPLIER = 1.5
+
+Evaluate on the same candle used by the Pine logic.
+
+Do not move the calculation accidentally to the confirmation candle.
+
+==================================================
+8. MINIMUM CONFIRMATIONS
+==================================================
+
+Default:
+
+"۳ تعییدیه (حداقل مجاز)"
+
+For this mode, base3 is sufficient.
+
+Preserve the existing Pine behavior for:
+
+3 confirmations
+3 + Fibonacci
+3 + Price Action
+5 full confirmations
+
+Do not add extra Python-only filters.
+
+==================================================
+9. MTF MUST REMAIN DISABLED
+==================================================
+
+THIS IS EXPLICITLY EXCLUDED FROM THE REPAIR.
+
+DO NOT ENABLE MTF.
+
+Keep:
+
+ENABLE_MTF = False
+
+The 4H timeframe must NOT affect signals.
+
+Do not introduce a higher timeframe filter.
+
+Do not use request.security for signal filtering when MTF is disabled.
+
+MTF effect must remain ZERO.
+
+==================================================
+10. LIVE CANDLE HANDLING
+==================================================
+
+Inspect the exchange API behavior.
+
+If the API returns the currently open candle:
+
+- update the existing timestamp
+- do not append another copy
+- do not confirm a pivot from an unclosed candle
+- do not generate duplicate signals
+
+If a new closed candle appears:
+
+- append it
+- remove the oldest candle if length > 400
+- evaluate the strategy
+
+Timestamp MUST be unique.
+
+If timestamp already exists:
+
+UPDATE the row.
+
+Do NOT append a duplicate.
+
+==================================================
+11. NO RE-DOWNLOADING FULL HISTORY
+==================================================
+
+Current code uses:
+
+fetch_ohlcv(... limit=HISTORY_BARS)
+
+and HISTORY_BARS = 500.
+
+Replace the architecture with:
+
+LIVE_WINDOW_BARS = 400
+
+Startup:
+load initial rolling window.
+
+After startup:
+incrementally update the rolling dataset.
+
+Do not repeatedly rebuild the complete 500-bar dataset every 60 seconds.
+
+If the API cannot provide a true one-candle endpoint, implement the
+most efficient incremental update possible while ensuring the local
+rolling dataframe remains <= 400.
+
+==================================================
+12. SIGNAL TIMING
+==================================================
+
+IMPORTANT:
+
+PIVOT LOCATION != SIGNAL EXECUTION BAR
+
+The chart may use:
+
+plotshape(... offset=-rightBars)
+
+but the signal is detected on the confirmation bar.
+
+Do NOT execute the trade at:
+
+pivot_bar
+
+Execute on the live confirmation bar.
+
+The plot offset is visual only.
+
+==================================================
+13. PYNECORE
+==================================================
+
+Use the currently installed PyneCore API.
+
+Installed ScriptRunner signature is:
+
+ScriptRunner(
+    script_path,
+    ohlcv_iter,
+    syminfo,
+    ...
+)
+
+Do NOT assume an old PyneCore API.
+
+Use the installed ScriptRunner correctly.
+
+Do not create a fake runner API.
+
+Do not duplicate strategy logic unnecessarily between:
+
+strategy.py
+
+and
+
+dtm_bot.py
+
+strategy.py remains the Pine-compiled source of truth.
+
+==================================================
+14. STATE PERSISTENCE
+==================================================
+
+Pivot state must survive rolling-window eviction correctly.
+
+Removing an old candle from the dataframe must NOT change the
+identity/order of already-confirmed pivots.
+
+Persist only the required state.
+
+State must be symbol-specific:
+
+LTCUSDT
+DOGEUSDT
+ETHUSDT
+
+No symbol may share pivot state with another symbol.
+
+Prevent:
+
+double load
+double shift
+duplicate pivot
+duplicate signal
+
+on restart.
+
+If an old state schema is incompatible, safely reset it.
+
+==================================================
+15. LIVE LOOP
+==================================================
+
+TIMEFRAME remains:
+
+1m
+
+The loop may run every ~60 seconds.
+
+But DO NOT assume every loop means a new candle.
+
+Compare timestamps.
+
+If no new candle:
+do not generate another signal.
+
+If current candle is still open:
+update it.
+
+If a new candle exists:
+process it exactly once.
+
+==================================================
+16. ORDER EXECUTION
+==================================================
+
+Keep signal generation independent from order execution.
+
+Correct flow:
+
+DATA
+ ->
+PINE/PYNECORE CALCULATION
+ ->
+SIGNAL
+ ->
+RISK/CAPITAL
+ ->
+ORDER
+
+Do not allow exchange order code to modify signal calculation.
+
+==================================================
+17. SECRETS
+==================================================
+
+Remove hard-coded:
+
+API_KEY
+API_SECRET
+TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID
+
+Use environment variables only.
+
+Do not print secrets in logs.
+
+==================================================
+18. DEBUG / PARITY LOGGING
+==================================================
+
+Add optional DEBUG logging.
+
+For every newly processed candle, allow logging:
+
+symbol
+timestamp
+close
+
+pivotHigh
+pivotLow
+
+confirmation_bar
+actual_pivot_bar
+
+RSI
+MACD line
+MACD histogram
+ATR
+
+current pivot
+previous pivot
+previous-previous pivot
+
+classic bullish
+classic bearish
+hidden bullish
+hidden bearish
+
+fib result
+price action result
+base3
+final signal
+
+Debug must be switchable.
+
+==================================================
+19. REQUIRED TESTS
+==================================================
+
+After modifications automatically run tests.
+
+TEST 1:
+RIGHT_BARS=3 causes exactly one shift.
+
+TEST 2:
+pivot_bar == confirmation_bar - 3
+
+TEST 3:
+RSI/MACD/HIST values correspond to actual pivot candle.
+
+TEST 4:
+rolling dataframe never exceeds 400 rows.
+
+TEST 5:
+oldest candle is removed when new candle arrives.
+
+TEST 6:
+duplicate timestamp updates existing candle instead of appending.
+
+TEST 7:
+same candle cannot generate duplicate signal.
+
+TEST 8:
+MTF has zero effect.
+
+TEST 9:
+restart does not double-shift pivot state.
+
+TEST 10:
+symbol states are independent.
+
+TEST 11:
+PyneCore ScriptRunner uses the installed API.
+
+TEST 12:
+signal is generated on confirmation bar, not pivot bar.
+
+==================================================
+20. FINAL ACCEPTANCE
+==================================================
+
+Do not declare success unless all applicable tests pass.
+
+Required final values:
+
+MAX_ROLLING_BARS <= 400
+
+PIVOT_SHIFT = RIGHT_BARS exactly once
+
+RIGHT_BARS = 3
+
+MTF_EFFECT = 0
+
+SIGNAL_BAR = CONFIRMATION_BAR
+
+PIVOT_BAR = CONFIRMATION_BAR - 3
+
+The project must remain LIVE-oriented.
+
+Do not turn it into a historical 5000-bar backtest engine.
+
+==================================================
+EXECUTION RULE
+==================================================
+
+Inspect the actual files first.
+
+Patch the actual files.
+
+Run syntax checks.
+
+Run available parity tests.
+
+Run the project tests.
+
+If a test fails:
+diagnose -> patch -> rerun.
+
+Do not merely write a report.
+
+Do not stop after identifying a problem.
+
+Continue repairing until the acceptance criteria are satisfied.
+
+==================================================
+END REPAIR SPECIFICATION
+==================================================

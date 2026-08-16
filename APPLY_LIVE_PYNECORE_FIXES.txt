@@ -1,0 +1,611 @@
+TASK: APPLY THE FOLLOWING CODE REPAIRS DIRECTLY TO THE CURRENT PROJECT.
+
+PROJECT:
+~/dtm-new-bot
+
+PRIMARY OBJECTIVE:
+Make the live Python/Termux execution match the TradingView/Pine/PyneCore strategy semantics as closely as possible.
+
+IMPORTANT:
+Do NOT redesign the strategy.
+Do NOT rewrite strategy.py.
+Do NOT add new trading logic.
+Do NOT change the Pine strategy rules.
+Do NOT enable or add a higher-timeframe filter.
+Do NOT use MTF data for signal filtering.
+Do NOT introduce artificial historical backtesting behavior.
+
+============================================================
+1. LIVE ROLLING DATA MODEL — CRITICAL
+============================================================
+
+TradingView is running the strategy LIVE.
+
+The live execution must NOT behave as if TradingView loads 5000 historical candles or continuously downloads a large historical dataset.
+
+The runtime should maintain only a small rolling OHLCV window sufficient for the strategy's calculations.
+
+Target rolling window:
+- approximately 300–400 candles
+- use 400 as the preferred maximum working window unless the existing implementation requires slightly more for indicator warm-up
+- never architect the live loop around HISTORY_BARS=5000
+- remove the assumption that the strategy needs thousands of historical bars
+
+Every time a NEW CLOSED candle becomes available:
+
+1. append the new candle
+2. maintain chronological ordering
+3. remove the oldest candle(s) when the rolling window exceeds the configured maximum
+4. calculate the strategy on the resulting rolling dataset
+5. do NOT repeatedly reconstruct an artificial historical TradingView backtest
+
+The behavior must be equivalent to:
+
+rolling_window = rolling_window[-400:]
+
+The oldest candle must disappear as new candles enter.
+
+============================================================
+2. DO NOT CONFUSE INITIAL WARM-UP WITH HISTORICAL BACKTEST
+============================================================
+
+The rolling window exists only to provide enough context for:
+
+- RSI
+- MACD
+- ATR
+- pivots
+- divergence
+- Fibonacci calculations
+- candle confirmation
+- trend calculation
+- Pine/PyneCore state
+
+It must NOT be treated as a 5000-bar backtest.
+
+The live process must preserve its existing in-memory/persistent strategy state where required.
+
+Do not reset pivot state simply because the rolling window removes an old candle.
+
+============================================================
+3. PIVOT SEMANTICS — CRITICAL
+============================================================
+
+The Pine strategy uses:
+
+leftBars = 5
+rightBars = 3
+
+because the default pivot mode is:
+
+"سریع (5/3)"
+
+Preserve this exactly.
+
+Do not convert it to 5/5.
+
+A pivot is only confirmed after rightBars candles have appeared.
+
+Therefore:
+
+pivot confirmation timing must remain identical to Pine:
+
+ta.pivothigh(high, 5, 3)
+ta.pivotlow(low, 5, 3)
+
+The pivot's actual location is:
+
+current_bar_index - rightBars
+
+Do NOT shift the pivot twice.
+
+Do NOT apply another manual -3 shift after PyneCore has already handled Pine's pivot semantics.
+
+============================================================
+4. REMOVE DOUBLE-SHIFT / PIVOT STATE BUG
+============================================================
+
+Audit all pivot persistence and state handling.
+
+The following sequence must NOT happen:
+
+Pine pivot location
+    -> load previous pivot state
+    -> manually shift
+    -> PyneCore shift
+    -> another manual shift
+
+There must be exactly ONE logical pivot offset corresponding to Pine's rightBars behavior.
+
+The stored pivot bar index must represent the actual Pine pivot bar.
+
+The confirmation event happens on the current bar.
+
+Do not confuse:
+- confirmation bar
+with
+- pivot bar.
+
+============================================================
+5. PERSISTENT PIVOT STATE
+============================================================
+
+The Pine code contains persistent variables such as:
+
+ph_price_2
+ph_price_1
+ph_bar_2
+ph_bar_1
+ph_rsi_2
+ph_rsi_1
+ph_macdline_2
+ph_macdline_1
+ph_hist_2
+ph_hist_1
+
+and corresponding pivot-low state.
+
+Preserve the same chronological meaning:
+
+_2 = older pivot
+_1 = most recent previous pivot
+
+When a new confirmed pivot appears:
+
+older <- previous
+previous <- new confirmed pivot
+
+Do NOT reverse these.
+
+Do NOT compare the current pivot against itself.
+
+Do NOT update persistent state before calculating the divergence condition if that changes Pine's evaluation order.
+
+Match Pine's bar-by-bar execution order.
+
+============================================================
+6. INDICATOR SEMANTICS
+============================================================
+
+Preserve Pine/PyneCore calculations exactly.
+
+Do not replace Pine calculations with approximate pandas shortcuts.
+
+Important calculations include:
+
+ta.rsi()
+ta.macd()
+ta.atr()
+ta.pivothigh()
+ta.pivotlow()
+ta.valuewhen()
+
+Preserve:
+- NA behavior
+- initialization/warm-up behavior
+- series indexing
+- previous-bar references
+- current-bar evaluation order
+
+Do not use zero-filling for missing indicator values unless Pine itself produces zero.
+
+Do not silently forward-fill indicator values.
+
+============================================================
+7. SIGNAL EVALUATION
+============================================================
+
+The strategy source is:
+
+strategy.py
+
+It is PyneComp-generated Pine v6 code.
+
+Do not duplicate its strategy logic in dtm_bot.py.
+
+Do not create a second independent implementation of divergence logic.
+
+The live bot should use the PyneCore/PyneComp strategy semantics as the source of truth.
+
+Audit the current code for this issue:
+
+from strategy import calculate_signals
+
+If calculate_signals() is an independent Python reimplementation that bypasses the compiled PyneCore strategy, remove that bypass from the live signal path.
+
+The live signal path must execute the actual compiled strategy/PyneCore-compatible strategy implementation.
+
+Use the installed PyneCore ScriptRunner API correctly.
+
+Current ScriptRunner signature is:
+
+ScriptRunner(
+    script_path,
+    ohlcv_iter,
+    syminfo,
+    ...
+)
+
+Available methods include:
+
+run()
+run_iter()
+script()
+script_module()
+list_data_requirements()
+last_bar_index
+last_bar_time
+last_price
+trades_writer
+strat_writer
+plot_writer
+viz_writer
+
+Use the installed API rather than assuming an older PyneCore API.
+
+============================================================
+8. PYNECORE EXECUTION
+============================================================
+
+The current installed PyneCore package reports:
+
+ScriptRunner signature:
+(script_path: pathlib.Path,
+ ohlcv_iter,
+ syminfo,
+ *,
+ ...
+)
+
+Therefore adapt the live runner to the actual installed API.
+
+Do not invent unsupported PyneCore methods.
+
+Do not rely on:
+
+ScriptRunner()
+
+with no arguments.
+
+Provide the required:
+- script path
+- OHLCV iterable
+- correct syminfo
+
+The OHLCV iterable must represent the current rolling live dataset.
+
+============================================================
+9. CLOSED CANDLE ONLY
+============================================================
+
+Signals must be evaluated on CLOSED candles.
+
+Do not generate a new trade signal repeatedly during the formation of the same candle.
+
+Track the last processed candle timestamp.
+
+Pseudo-behavior:
+
+if candle_timestamp == last_processed_timestamp:
+    do not process another signal
+
+when a new CLOSED candle appears:
+    process exactly once
+
+This is critical because the live loop currently runs approximately every 60 seconds.
+
+Do not create duplicate orders from the same candle.
+
+============================================================
+10. LIVE DATA FETCHING
+============================================================
+
+The current public API code uses:
+
+fetch_ohlcv(symbol, timeframe, limit)
+
+and currently contains:
+
+HISTORY_BARS = 500
+
+Change the architecture so that this value is NOT treated as a historical backtest requirement.
+
+Use a rolling live buffer.
+
+Prefer a small bootstrap fetch only when the process starts.
+
+After initialization:
+- fetch/update only what is necessary
+- append new closed candles
+- discard the oldest candles
+- keep approximately 300–400 candles
+
+Do not repeatedly rebuild an unrelated 500-candle historical dataset every minute if the API provides a better incremental update mechanism.
+
+If the API only provides historical OHLCV responses, still maintain the local rolling buffer and detect the newest closed candle so that each candle is processed exactly once.
+
+============================================================
+11. TIMEFRAME
+============================================================
+
+Keep:
+
+TIMEFRAME = "1m"
+
+Do NOT change the timeframe.
+
+Do NOT add:
+- 5m aggregation
+- 15m aggregation
+- 1h filter
+- 4h filter
+
+unless such data is explicitly required by the existing strategy itself.
+
+============================================================
+12. HIGHER-TIMEFRAME FILTER — DO NOT ENABLE
+============================================================
+
+This is explicitly excluded from this repair.
+
+Keep:
+
+ENABLE_MTF = False
+
+Do NOT change it to True.
+
+Do NOT add an MTF confirmation layer.
+
+Do NOT request 240-minute data for signal filtering.
+
+The strategy must remain single-timeframe for this repair.
+
+============================================================
+13. STRATEGY INPUTS
+============================================================
+
+Preserve the current Pine/PyneCore defaults:
+
+RSI = 14
+MACD Fast = 12
+MACD Slow = 26
+MACD Signal = 9
+
+Trend Lookback = 20
+Minimum Trend Slope = 0.05
+
+Fib 0.618 = enabled
+Fib 0.786 = enabled
+Fib tolerance = 0.5
+Fib search bars = 100
+
+Shadow/body ratio = 2.0
+Maximum opposite shadow = 20.0
+Minimum candle ATR ratio = 0.3
+
+Big candle average = 14
+Big candle multiplier = 1.5
+
+Pivot:
+leftBars = 5
+rightBars = 3
+
+Hidden divergence:
+enabled
+
+Minimum confirmation:
+"۳ تعییدیه (حداقل مجاز)"
+
+Do not alter these strategy parameters.
+
+============================================================
+14. SIGNAL TYPES
+============================================================
+
+Preserve all four Pine signal types:
+
+finalClassicBearish
+finalClassicBullish
+finalHiddenBullish
+finalHiddenBearish
+
+Do not collapse them into a simplified RSI/MACD signal.
+
+Do not remove:
+- RSI divergence
+- MACD line divergence
+- MACD histogram divergence
+- hidden divergence
+- Fibonacci confirmation
+- price-action confirmation
+- trend logic
+
+============================================================
+15. LIVE SIGNAL OUTPUT
+============================================================
+
+The live bot must clearly identify:
+
+symbol
+candle timestamp
+signal type
+entry/reference price
+pivot bar timestamp/index if available
+pivot price
+current bar timestamp
+rolling buffer size
+
+Example logging format:
+
+[DTM]
+symbol=LTCUSDT
+candle=...
+buffer=400
+signal=CLASSIC_BULLISH
+pivot_bar=...
+pivot_price=...
+current_price=...
+
+Do not log a signal repeatedly on every loop iteration.
+
+============================================================
+16. ORDER SAFETY
+============================================================
+
+Before submitting an order:
+
+- verify the signal belongs to a newly processed closed candle
+- verify no identical signal/order was already executed for that candle
+- preserve existing balance/leverage behavior
+- do not alter exchange API semantics unnecessarily
+
+Do not modify unrelated order-management code.
+
+============================================================
+17. SECRETS
+============================================================
+
+Do NOT expose or hard-code API keys, API secrets, Telegram bot tokens, or other credentials.
+
+The current dtm_bot.py contains credential fallbacks.
+
+Replace credential literals with environment-variable-only behavior.
+
+Use:
+
+os.getenv("API_KEY")
+os.getenv("API_SECRET")
+os.getenv("TELEGRAM_BOT_TOKEN")
+os.getenv("TELEGRAM_CHAT_ID")
+
+Do not print credentials.
+
+============================================================
+18. DO NOT MODIFY UNRELATED FEATURES
+============================================================
+
+Do not change:
+- Flask health endpoints
+- exchange signing logic
+- Telegram functionality except where required for errors
+- symbol list
+- leverage map
+- price precision
+- tick sizes
+- order API format
+
+unless a direct compatibility issue is found.
+
+============================================================
+19. REQUIRED VALIDATION AFTER PATCHING
+============================================================
+
+After modifications, run:
+
+python -m py_compile dtm_bot.py strategy.py
+
+Then verify imports:
+
+python - <<'PY'
+import dtm_bot
+import strategy
+import pynecore
+from pynecore.core.script_runner import ScriptRunner
+import inspect
+
+print("PYNECORE:", getattr(pynecore, "__version__", "unknown"))
+print("PYNECORE_PATH:", pynecore.__file__)
+print("RUNNER:", ScriptRunner)
+print("SIGNATURE:", inspect.signature(ScriptRunner))
+print("IMPORT_OK")
+PY
+
+Then inspect the project for forbidden behavior:
+
+grep -RniE \
+'HISTORY_BARS\s*=\s*5000|rightBars\s*=\s*5|ENABLE_MTF\s*=\s*True|calculate_signals\s*\(' \
+dtm_bot.py strategy.py
+
+The final output must clearly show whether any forbidden pattern remains.
+
+============================================================
+20. REQUIRED LIVE-BUFFER TEST
+============================================================
+
+Create/run a small deterministic test proving:
+
+initial buffer <= 400
+after adding one new candle:
+    size does not exceed 400
+    oldest candle is removed when necessary
+    newest candle is retained
+
+Also verify that the same candle timestamp cannot generate two executions.
+
+============================================================
+21. DO NOT CHANGE strategy.py LOGIC
+============================================================
+
+strategy.py is the compiled Pine source of truth.
+
+Only modify strategy.py if absolutely required for a PyneCore runtime/API compatibility problem.
+
+Do NOT manually rewrite its generated Pine logic.
+
+============================================================
+22. FINAL ACCEPTANCE CRITERIA
+============================================================
+
+The repair is accepted only if ALL are true:
+
+[ ] Live execution uses the actual PyneCore-compatible strategy path.
+[ ] No independent duplicate divergence engine bypasses strategy.py.
+[ ] Rolling live data is approximately 300–400 candles.
+[ ] Oldest candle is discarded when a new candle enters.
+[ ] No 5000-bar historical architecture remains.
+[ ] Pivot mode remains 5/3.
+[ ] No double-shift exists.
+[ ] Pivot confirmation bar and pivot location are distinguished correctly.
+[ ] Persistent pivot ordering matches Pine.
+[ ] RSI/MACD/ATR/Pivot semantics remain Pine-compatible.
+[ ] Signals are processed once per closed candle.
+[ ] Duplicate orders from the same candle are prevented.
+[ ] ENABLE_MTF remains False.
+[ ] No higher-timeframe filter is added.
+[ ] Existing strategy parameters remain unchanged.
+[ ] No credentials remain hard-coded.
+[ ] dtm_bot.py and strategy.py compile successfully.
+[ ] PyneCore ScriptRunner is called using the installed API.
+[ ] No unsupported PyneCore API is assumed.
+[ ] The live loop remains operational.
+
+============================================================
+23. IMPORTANT IMPLEMENTATION RULE
+============================================================
+
+Do not stop after identifying problems.
+
+Actually edit the required files.
+
+After editing, run the validation commands.
+
+If a test fails, fix the implementation and rerun the test.
+
+Do not report "fixed" unless the corresponding code and validation actually confirm it.
+
+At the end print:
+
+===== LIVE PYNECORE REPAIR RESULT =====
+FILES MODIFIED:
+...
+PY_COMPILE: PASS/FAIL
+PYNECORE_IMPORT: PASS/FAIL
+SCRIPT_RUNNER: PASS/FAIL
+ROLLING_BUFFER: PASS/FAIL
+PIVOT_5_3: PASS/FAIL
+DOUBLE_SHIFT: PASS/FAIL
+CLOSED_CANDLE_DEDUP: PASS/FAIL
+MTF_DISABLED: PASS/FAIL
+HISTORY_5000_REMOVED: PASS/FAIL
+HARDCODED_SECRETS_REMOVED: PASS/FAIL
+FINAL STATUS: PASS/FAIL

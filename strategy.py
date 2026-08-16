@@ -295,10 +295,20 @@ def main(
     finalHiddenBullish = passesMinRequirement(hiddenBullishBase3, fibScoreBullish, priceActionBullishAtPivot) and mtfFilterOkForBullish
     finalHiddenBearish = passesMinRequirement(hiddenBearishBase3, fibScoreBearish, priceActionBearishAtPivot) and mtfFilterOkForBearish
 
+
     plotshape(finalClassicBearish, title='CD-', style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text='CD-', offset=-rightBars)
     plotshape(finalClassicBullish, title='CD+', style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text='CD+', offset=-rightBars)
     plotshape(finalHiddenBullish, title='HD+', style=shape.triangleup, location=location.belowbar, color=color.blue, size=size.small, text='HD+', offset=-rightBars)
     plotshape(finalHiddenBearish, title='HD-', style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.small, text='HD-', offset=-rightBars)
+    return {
+        "signal": ("LONG" if (finalClassicBullish or finalHiddenBullish) else "SHORT" if (finalClassicBearish or finalHiddenBearish) else None),
+        "entry": close,
+        "CD+": finalClassicBullish,
+        "CD-": finalClassicBearish,
+        "HD+": finalHiddenBullish,
+        "HD-": finalHiddenBearish,
+    }
+
 
 
 if __name__ == "__main__":
