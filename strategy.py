@@ -300,13 +300,129 @@ def main(
     plotshape(finalClassicBullish, title='CD+', style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text='CD+', offset=-rightBars)
     plotshape(finalHiddenBullish, title='HD+', style=shape.triangleup, location=location.belowbar, color=color.blue, size=size.small, text='HD+', offset=-rightBars)
     plotshape(finalHiddenBearish, title='HD-', style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.small, text='HD-', offset=-rightBars)
+    # ============================================================
+    # DTM SIGNAL SNAPSHOT
+    # Existing strategy calculations above are untouched.
+    # This dictionary only exposes values ALREADY calculated here.
+    # ============================================================
     return {
         "signal": ("LONG" if (finalClassicBullish or finalHiddenBullish) else "SHORT" if (finalClassicBearish or finalHiddenBearish) else None),
         "entry": close,
+
         "CD+": finalClassicBullish,
         "CD-": finalClassicBearish,
         "HD+": finalHiddenBullish,
         "HD-": finalHiddenBearish,
+
+        # Indicators
+        "rsi": rsiVal,
+        "rsi_len": rsiLen,
+        "macd_fast": macdFast,
+        "macd_slow": macdSlow,
+        "macd_signal_len": macdSig,
+        "macd_line": macdLine,
+        "macd_signal_line": signalLine,
+        "macd_histogram": histLine,
+        "atr": atr14,
+        "atr_len": 14,
+
+        # Trend
+        "trend_lookback": trendLookback,
+        "trend_slope_min_pct": trendSlopeMinPct,
+        "trend_bearish_ok": trendOkForBearish,
+        "trend_bullish_ok": trendOkForBullish,
+
+        # Pivots
+        "left_bars": leftBars,
+        "right_bars": rightBars,
+        "pivot_high": pivotHighPrice,
+        "pivot_low": pivotLowPrice,
+        "pivot_high_price": ph_price_2,
+        "pivot_low_price": pl_price_2,
+        "pivot_high_index": ph_bar_2,
+        "pivot_low_index": pl_bar_2,
+        "previous_pivot_high_price": ph_price_1,
+        "previous_pivot_low_price": pl_price_1,
+        "previous_pivot_high_index": ph_bar_1,
+        "previous_pivot_low_index": pl_bar_1,
+
+        # Divergence components
+        "classic_bullish_base": classicBullishBase3,
+        "classic_bearish_base": classicBearishBase3,
+        "hidden_bullish_base": hiddenBullishBase3,
+        "hidden_bearish_base": hiddenBearishBase3,
+
+        "classic_bullish_rsi": classicBullishCond1_RSI,
+        "classic_bullish_macd": classicBullishCond2_MACDl,
+        "classic_bullish_hist": classicBullishCond3_MACDh,
+        "classic_bearish_rsi": classicBearishCond1_RSI,
+        "classic_bearish_macd": classicBearishCond2_MACDl,
+        "classic_bearish_hist": classicBearishCond3_MACDh,
+
+        "hidden_bullish_rsi": hiddenBullishCond1_RSI,
+        "hidden_bullish_macd": hiddenBullishCond2_MACDl,
+        "hidden_bullish_hist": hiddenBullishCond3_MACDh,
+        "hidden_bearish_rsi": hiddenBearishCond1_RSI,
+        "hidden_bearish_macd": hiddenBearishCond2_MACDl,
+        "hidden_bearish_hist": hiddenBearishCond3_MACDh,
+
+        "rsi_lower_high": rsiLowerHighOnPeaks,
+        "rsi_higher_low": rsiHigherLowOnTroughs,
+        "rsi_lower_low": rsiLowerLowOnTroughs,
+        "rsi_higher_high": rsiHigherHighOnPeaks,
+
+        "macd_lower_high": macdLineLowerHighOnPeaks,
+        "macd_higher_low": macdLineHigherLowOnTroughs,
+        "macd_lower_low": macdLineLowerLowOnTroughs,
+        "macd_higher_high": macdLineHigherHighOnPeaks,
+
+        # Fibonacci
+        "fib_use_618": fibUse618,
+        "fib_use_786": fibUse786,
+        "fib_tolerance_pct": fibTolerancePct,
+        "fib_search_bars": fibTrendSearchBars,
+        "fib_bearish": fibScoreBearish,
+        "fib_bullish": fibScoreBullish,
+
+        # Price action
+        "candle_range": candleRange,
+        "candle_body": candleBody,
+        "upper_shadow": upperShadow,
+        "lower_shadow": lowerShadow,
+        "avg_body": avgBody,
+        "size_ok": sizeOk,
+        "bullish_wick": bullishWick,
+        "bearish_wick": bearishWick,
+        "big_green_candle": bigGreenCandle,
+        "big_red_candle": bigRedCandle,
+        "price_action_bullish": priceActionBullish,
+        "price_action_bearish": priceActionBearish,
+
+        # Volume is not calculated by this strategy.
+        "volume_analysis": False,
+
+        # MTF is explicitly disabled by the current configuration.
+        "mtf_enabled": enableMTF,
+        "mtf_timeframe": mtfTimeframe,
+        "mtf_bearish_ok": mtfFilterOkForBearish,
+        "mtf_bullish_ok": mtfFilterOkForBullish,
+
+        # Confirmation / decision trace
+        "min_confirmations": minConfirmations,
+        "minimum_requirement_bullish": passesMinRequirement(
+            classicBullishBase3 or hiddenBullishBase3,
+            fibScoreBullish,
+            priceActionBullishAtPivot,
+        ),
+        "minimum_requirement_bearish": passesMinRequirement(
+            classicBearishBase3 or hiddenBearishBase3,
+            fibScoreBearish,
+            priceActionBearishAtPivot,
+        ),
+        "final_classic_bullish": finalClassicBullish,
+        "final_classic_bearish": finalClassicBearish,
+        "final_hidden_bullish": finalHiddenBullish,
+        "final_hidden_bearish": finalHiddenBearish,
     }
 
 

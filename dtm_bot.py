@@ -96,6 +96,354 @@ def send_telegram_message(text):
 def format_iran_time():
     return (datetime.now(timezone.utc) + timedelta(hours=3, minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
 
+
+# ============================================================
+# DTM ADDITIVE SIGNAL REPORTING
+# Existing Telegram messages are intentionally untouched.
+# These helpers never call create_order() and never run strategy
+# calculations. They consume one immutable PyneCore snapshot.
+# ============================================================
+
+_SIGNAL_REPORT_SENT = set()
+_SIGNAL_REPORT_LOCK = threading.Lock()
+
+
+def _report_clean(value):
+    """Safe representation for Telegram plain-text mode."""
+    if value is None:
+        return "N/A"
+    try:
+        if isinstance(value, (float, np.floating)):
+            if not np.isfinite(float(value)):
+                return "N/A"
+            return f"{float(value):.12g}"
+        if isinstance(value, (int, np.integer)):
+            return str(int(value))
+        if isinstance(value, (bool, np.bool_)):
+            return "TRUE" if bool(value) else "FALSE"
+    except Exception:
+        pass
+
+    text = str(value)
+    if text.lower() in ("nan", "none", "nat"):
+        return "N/A"
+
+    # New messages deliberately use Telegram plain text:
+    # no Markdown/HTML entity parsing can fail.
+    return text
+
+
+def _report_bool(value):
+    if value is None:
+        return "N/A"
+    try:
+        return "TRUE" if bool(value) else "FALSE"
+    except Exception:
+        return "N/A"
+
+
+def _report_value(snapshot, key):
+    return _report_clean(snapshot.get(key))
+
+
+def _signal_report_key(symbol, timeframe, signal, candle_ts):
+    return (
+        str(symbol).upper(),
+        str(timeframe),
+        str(signal).upper(),
+        int(candle_ts) if candle_ts is not None else None,
+    )
+
+
+def _build_trade_signal_message(symbol, timeframe, snapshot, bar):
+    signal = _report_value(snapshot, "signal")
+    entry = _report_value(snapshot, "entry")
+
+    return "\n".join([
+        "🚨 DTM TRADE SIGNAL",
+        "━━━━━━━━━━━━━━━━━━",
+        f"{'🟢 LONG' if signal == 'LONG' else '🔴 SHORT'}",
+        f"💎 SYMBOL: {_report_clean(symbol)}",
+        f"⏱ TIMEFRAME: {_report_clean(timeframe)}",
+        f"🕐 SIGNAL TIME: {_report_clean(format_iran_time())}",
+        "━━━━━━━━━━━━━━━━━━",
+        "💰 TRADE PLAN",
+        "━━━━━━━━━━━━━━━━━━",
+        f"📍 ENTRY: {entry}",
+        "🛑 STOP LOSS: N/A",
+        "🎯 TP1: N/A",
+        "🎯 TP2: N/A",
+        "🎯 TP3: N/A",
+        "⚖️ RISK / REWARD: N/A",
+        "⚠️ RISK: N/A",
+        "━━━━━━━━━━━━━━━━━━",
+        "⭐ SIGNAL QUALITY",
+        "━━━━━━━━━━━━━━━━━━",
+        f"⭐ SCORE: N/A",
+        f"📈 TREND: {'BULLISH' if bool(snapshot.get('trend_bullish_ok')) else 'BEARISH' if bool(snapshot.get('trend_bearish_ok')) else 'N/A'}",
+        f"🔥 MOMENTUM: N/A",
+        "━━━━━━━━━━━━━━━━━━",
+        f"🧠 FINAL SIGNAL: {signal}",
+    ])
+
+
+def _build_calculation_report(symbol, timeframe, snapshot, bar):
+    signal = _report_value(snapshot, "signal")
+    ts = getattr(bar, "timestamp", None)
+
+    def v(k):
+        return _report_value(snapshot, k)
+
+    def b(k):
+        return _report_bool(snapshot.get(k))
+
+    open_v = getattr(bar, "open", None)
+    high_v = getattr(bar, "high", None)
+    low_v = getattr(bar, "low", None)
+    close_v = getattr(bar, "close", None)
+    volume_v = getattr(bar, "volume", None)
+
+    bullish_base = bool(snapshot.get("classic_bullish_base")) or bool(snapshot.get("hidden_bullish_base"))
+    bearish_base = bool(snapshot.get("classic_bearish_base")) or bool(snapshot.get("hidden_bearish_base"))
+
+    lines = [
+        "🔬 DTM SIGNAL CALCULATION REPORT",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📌 SIGNAL IDENTITY",
+        f"Symbol: {_report_clean(symbol)}",
+        f"Timeframe: {_report_clean(timeframe)}",
+        f"Signal: {signal}",
+        f"Signal timestamp: {_report_clean(ts)}",
+        f"Candle timestamp: {_report_clean(ts)}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "🕯 RAW CANDLE DATA",
+        f"Open: {_report_clean(open_v)}",
+        f"High: {_report_clean(high_v)}",
+        f"Low: {_report_clean(low_v)}",
+        f"Close: {_report_clean(close_v)}",
+        f"Volume: {_report_clean(volume_v)}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📊 INDICATOR CALCULATIONS",
+        f"RSI: {v('rsi')}",
+        f"RSI Length: {v('rsi_len')}",
+        f"RSI condition: N/A",
+        f"MACD Fast: {v('macd_fast')}",
+        f"MACD Slow: {v('macd_slow')}",
+        f"MACD Signal: {v('macd_signal_len')}",
+        f"MACD Line: {v('macd_line')}",
+        f"MACD Signal Line: {v('macd_signal_line')}",
+        f"MACD Histogram: {v('macd_histogram')}",
+        f"MACD condition: N/A",
+        f"ATR: {v('atr')}",
+        f"ATR Length: {v('atr_len')}",
+        f"ATR Value: {v('atr')}",
+        "Momentum: N/A",
+        "Momentum Percent: N/A",
+        "Momentum condition: N/A",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📈 TREND CALCULATION",
+        f"Trend Lookback: {v('trend_lookback')}",
+        "Trend Slope: N/A",
+        "Trend Slope %: N/A",
+        f"Minimum Trend Slope: {v('trend_slope_min_pct')}",
+        f"Trend Direction: {'UP' if bool(snapshot.get('trend_bearish_ok')) else 'DOWN' if bool(snapshot.get('trend_bullish_ok')) else 'N/A'}",
+        "Price vs Trend: N/A",
+        f"Trend Condition: {'TRUE' if bullish_base and signal == 'LONG' else 'TRUE' if bearish_base and signal == 'SHORT' else 'N/A'}",
+        f"Trend Filter Result: {'TRUE' if (snapshot.get('trend_bullish_ok') if signal == 'LONG' else snapshot.get('trend_bearish_ok')) else 'FALSE'}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "🔄 PIVOT CALCULATION",
+        f"Left Bars: {v('left_bars')}",
+        f"Right Bars: {v('right_bars')}",
+        f"Pivot High: {v('pivot_high')}",
+        f"Pivot High Price: {v('pivot_high_price')}",
+        f"Pivot High Index: {v('pivot_high_index')}",
+        f"Pivot Low: {v('pivot_low')}",
+        f"Pivot Low Price: {v('pivot_low_price')}",
+        f"Pivot Low Index: {v('pivot_low_index')}",
+        "Pivot Search Range: N/A",
+        "Bars Between Pivots: N/A",
+        "Pivot Validity: N/A",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "🔀 DIVERGENCE CALCULATION",
+        f"RSI Divergence: {'TRUE' if (snapshot.get('classic_bullish_rsi') or snapshot.get('classic_bearish_rsi') or snapshot.get('hidden_bullish_rsi') or snapshot.get('hidden_bearish_rsi')) else 'FALSE'}",
+        f"MACD Divergence: {'TRUE' if (snapshot.get('classic_bullish_macd') or snapshot.get('classic_bearish_macd') or snapshot.get('hidden_bullish_macd') or snapshot.get('hidden_bearish_macd')) else 'FALSE'}",
+        f"Classic Bullish: {b('classic_bullish_base')}",
+        f"Classic Bearish: {b('classic_bearish_base')}",
+        f"Hidden Bullish: {b('hidden_bullish_base')}",
+        f"Hidden Bearish: {b('hidden_bearish_base')}",
+        f"Previous Pivot High: {v('previous_pivot_high_price')}",
+        f"Current Pivot High: {v('pivot_high_price')}",
+        f"Previous Pivot Low: {v('previous_pivot_low_price')}",
+        f"Current Pivot Low: {v('pivot_low_price')}",
+        "Previous Indicator Value: N/A",
+        "Current Indicator Value: N/A",
+        "Price Relationship: N/A",
+        "Indicator Relationship: N/A",
+        f"Divergence Result: {'TRUE' if bullish_base or bearish_base else 'FALSE'}",
+        f"Final Divergence Type: {'CLASSIC BULLISH' if snapshot.get('classic_bullish_base') else 'HIDDEN BULLISH' if snapshot.get('hidden_bullish_base') else 'CLASSIC BEARISH' if snapshot.get('classic_bearish_base') else 'HIDDEN BEARISH' if snapshot.get('hidden_bearish_base') else 'NONE'}",
+        f"Divergence Confirmed: {'TRUE' if bullish_base or bearish_base else 'FALSE'}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📐 FIBONACCI CALCULATION",
+        f"Fib 0.618 Enabled: {b('fib_use_618')}",
+        f"Fib 0.786 Enabled: {b('fib_use_786')}",
+        "Swing High: N/A",
+        "Swing Low: N/A",
+        "Range: N/A",
+        "0.618 Level: N/A",
+        "0.786 Level: N/A",
+        "Distance to 0.618: N/A",
+        "Distance to 0.786: N/A",
+        f"Tolerance: {v('fib_tolerance_pct')}",
+        f"Tolerance %: {v('fib_tolerance_pct')}",
+        f"0.618 Valid: N/A",
+        f"0.786 Valid: N/A",
+        f"Bullish Fib Score: {b('fib_bullish')}",
+        f"Bearish Fib Score: {b('fib_bearish')}",
+        f"Final Fibonacci Result: {'TRUE' if (snapshot.get('fib_bullish') if signal == 'LONG' else snapshot.get('fib_bearish')) else 'FALSE'}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "🕯 PRICE ACTION / CANDLE ANALYSIS",
+        f"Candle Body: {v('candle_body')}",
+        f"Upper Shadow: {v('upper_shadow')}",
+        f"Lower Shadow: {v('lower_shadow')}",
+        "Body Percentage: N/A",
+        "Shadow/Body Ratio: N/A",
+        f"Bullish Candle: {b('price_action_bullish')}",
+        f"Bearish Candle: {b('price_action_bearish')}",
+        f"Pin Bar: {b('bullish_wick')}",
+        "Hammer: N/A",
+        "Shooting Star: N/A",
+        "Marubozu: N/A",
+        "Other Pattern: N/A",
+        f"Minimum Candle ATR Ratio: {v('size_ok')}",
+        f"Big Candle Average: {v('avg_body')}",
+        "Big Candle Multiplier: N/A",
+        f"Big Candle Result: {'TRUE' if snapshot.get('big_green_candle') or snapshot.get('big_red_candle') else 'FALSE'}",
+        f"Price Action Confirmation: {'TRUE' if snapshot.get('price_action_bullish') or snapshot.get('price_action_bearish') else 'FALSE'}",
+        "Price Action Score: N/A",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📊 VOLUME ANALYSIS",
+        f"Current Volume: {_report_clean(volume_v)}",
+        "Average Volume: N/A",
+        "Volume Ratio: N/A",
+        "Volume Threshold: N/A",
+        "Volume Bullish: N/A",
+        "Volume Bearish: N/A",
+        "Volume Confirmation: N/A",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "🌐 MTF FILTER",
+    ]
+
+    if not snapshot.get("mtf_enabled"):
+        lines += ["MTF: NOT USED"]
+    else:
+        lines += [
+            f"Higher Timeframe: {v('mtf_timeframe')}",
+            "HTF Signal: N/A",
+            "HTF Trend: N/A",
+            "HTF RSI: N/A",
+            "HTF MACD: N/A",
+            "HTF Divergence: N/A",
+            f"MTF Filter Result: {'TRUE' if (snapshot.get('mtf_bullish_ok') if signal == 'LONG' else snapshot.get('mtf_bearish_ok')) else 'FALSE'}",
+        ]
+
+    lines += [
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "⭐ CONFIRMATION / SCORE TRACE",
+        f"Classic Bullish Base: {b('classic_bullish_base')}",
+        f"Classic Bearish Base: {b('classic_bearish_base')}",
+        f"Hidden Bullish Base: {b('hidden_bullish_base')}",
+        f"Hidden Bearish Base: {b('hidden_bearish_base')}",
+        "RSI Confirmation: N/A",
+        "MACD Confirmation: N/A",
+        f"Trend Confirmation: {'TRUE' if (snapshot.get('trend_bullish_ok') if signal == 'LONG' else snapshot.get('trend_bearish_ok')) else 'FALSE'}",
+        f"Fibonacci Confirmation: {'TRUE' if (snapshot.get('fib_bullish') if signal == 'LONG' else snapshot.get('fib_bearish')) else 'FALSE'}",
+        f"Price Action Confirmation: {'TRUE' if (snapshot.get('price_action_bullish') if signal == 'LONG' else snapshot.get('price_action_bearish')) else 'FALSE'}",
+        "Volume Confirmation: N/A",
+        "Pivot Confirmation: N/A",
+        f"Divergence Confirmation: {'TRUE' if bullish_base or bearish_base else 'FALSE'}",
+        f"MTF Confirmation: {'TRUE' if not snapshot.get('mtf_enabled') else 'N/A'}",
+        "Bullish Score: N/A",
+        "Bearish Score: N/A",
+        f"Minimum Requirement: {v('min_confirmations')}",
+        f"Minimum Requirement Result: {'TRUE' if (snapshot.get('minimum_requirement_bullish') if signal == 'LONG' else snapshot.get('minimum_requirement_bearish')) else 'FALSE'}",
+        f"Final Bullish: {b('final_classic_bullish') if not snapshot.get('final_hidden_bullish') else 'TRUE'}",
+        f"Final Bearish: {b('final_classic_bearish') if not snapshot.get('final_hidden_bearish') else 'TRUE'}",
+        "Final Score: N/A",
+        f"Final Signal: {signal}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "🧠 EXACT DECISION TRACE",
+        f"Trend Condition = {'TRUE' if (snapshot.get('trend_bullish_ok') if signal == 'LONG' else snapshot.get('trend_bearish_ok')) else 'FALSE'}",
+        "RSI Condition = N/A",
+        "MACD Condition = N/A",
+        f"Divergence Condition = {'TRUE' if bullish_base or bearish_base else 'FALSE'}",
+        f"Fibonacci Condition = {'TRUE' if (snapshot.get('fib_bullish') if signal == 'LONG' else snapshot.get('fib_bearish')) else 'FALSE'}",
+        f"Price Action Condition = {'TRUE' if (snapshot.get('price_action_bullish') if signal == 'LONG' else snapshot.get('price_action_bearish')) else 'FALSE'}",
+        "Volume Condition = N/A",
+        f"MTF Condition = {'TRUE' if not snapshot.get('mtf_enabled') else 'N/A'}",
+        f"Minimum Requirement = {'TRUE' if (snapshot.get('minimum_requirement_bullish') if signal == 'LONG' else snapshot.get('minimum_requirement_bearish')) else 'FALSE'}",
+        f"Final Bullish = {b('final_classic_bullish') or b('final_hidden_bullish')}",
+        f"Final Bearish = {b('final_classic_bearish') or b('final_hidden_bearish')}",
+        f"FINAL SIGNAL = {signal}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "📋 FINAL SNAPSHOT",
+        f"Signal: {signal}",
+        f"Entry: {v('entry')}",
+        "Stop Loss: N/A",
+        "TP1: N/A",
+        "TP2: N/A",
+        "TP3: N/A",
+        "Score: N/A",
+        "Risk: N/A",
+        "Risk/Reward: N/A",
+        f"Trend: {'TRUE' if (snapshot.get('trend_bullish_ok') if signal == 'LONG' else snapshot.get('trend_bearish_ok')) else 'FALSE'}",
+        "RSI: N/A",
+        "MACD: N/A",
+        f"Divergence: {'TRUE' if bullish_base or bearish_base else 'FALSE'}",
+        f"Fibonacci: {'TRUE' if (snapshot.get('fib_bullish') if signal == 'LONG' else snapshot.get('fib_bearish')) else 'FALSE'}",
+        "Pivot: N/A",
+        f"Price Action: {'TRUE' if (snapshot.get('price_action_bullish') if signal == 'LONG' else snapshot.get('price_action_bearish')) else 'FALSE'}",
+        "Volume: N/A",
+        f"MTF: {'NOT USED' if not snapshot.get('mtf_enabled') else 'N/A'}",
+        f"FINAL DECISION: {signal}",
+    ]
+    return "\n".join(lines)
+
+
+def send_dtm_signal_reports(symbol, timeframe, snapshot, bar):
+    """Send the two additive reports exactly once per signal identity."""
+    signal_value = snapshot.get("signal")
+    if signal_value not in ("LONG", "SHORT"):
+        return False
+
+    candle_ts = getattr(bar, "timestamp", None)
+    key = _signal_report_key(symbol, timeframe, signal_value, candle_ts)
+
+    with _SIGNAL_REPORT_LOCK:
+        if key in _SIGNAL_REPORT_SENT:
+            return False
+        _SIGNAL_REPORT_SENT.add(key)
+
+    try:
+        # Both messages are built from THIS SAME snapshot.
+        msg1 = _build_trade_signal_message(symbol, timeframe, snapshot, bar)
+        msg2 = _build_calculation_report(symbol, timeframe, snapshot, bar)
+
+        # Plain text only: no Telegram entity parsing.
+        ok1 = send_telegram_message(msg1)
+        ok2 = send_telegram_message(msg2)
+
+        if not (ok1 and ok2):
+            logger.error(
+                "[DTM REPORT] Telegram report failed | "
+                "symbol=%s signal=%s candle=%s",
+                symbol, signal_value, candle_ts
+            )
+        return bool(ok1 and ok2)
+
+    except Exception:
+        logger.exception("[DTM REPORT] unexpected reporting failure")
+        return False
+
 # ===== Exchange =====
 class TrueTradePublicData:
     def __init__(self):
@@ -503,6 +851,7 @@ def run_trading_loop():
 
                         sig = None
                         entry = None
+                        signal_snapshot = dict(values) if isinstance(values, dict) else {}
 
                         if isinstance(values, dict):
                             for key, value in values.items():
@@ -517,10 +866,14 @@ def run_trading_loop():
                                 ):
                                     entry = value
 
+                        # Preserve the exact PyneCore result in one snapshot.
+                        # Reporting does not recalculate strategy values.
                         if sig is not None:
+                            signal_snapshot["signal"] = sig
                             self.last_signal = sig
 
                         if entry is not None:
+                            signal_snapshot["entry"] = entry
                             self.last_entry = entry
 
                         logger.info(
@@ -530,6 +883,18 @@ def run_trading_loop():
                             f"signal={sig} | "
                             f"entry={entry}"
                         )
+
+                        # ADDITIVE ONLY:
+                        # This sends the two new reporting messages.
+                        # It does NOT call create_order(), does NOT alter
+                        # strategy state, and does NOT alter existing messages.
+                        if sig in ("LONG", "SHORT"):
+                            send_dtm_signal_reports(
+                                self.symbol,
+                                TIMEFRAME,
+                                signal_snapshot,
+                                bar,
+                            )
 
                 except Exception as exc:
                     logger.exception(

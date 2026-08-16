@@ -1,0 +1,661 @@
+DTM-NEW-BOT — IMPLEMENT ADDITIVE TELEGRAM SIGNAL REPORTING
+
+ROLE:
+Act as a senior Python/Pine/PyneCore trading-system engineer.
+Inspect the existing DTM-New-Bot codebase and IMPLEMENT the requested feature.
+Do not merely describe changes. Modify the files, test them, commit them, and push them to GitHub if and only if all tests pass.
+
+==================================================
+PRIMARY OBJECTIVE
+==================================================
+
+Add TWO NEW Telegram messages for every valid LONG/SHORT signal.
+
+These messages are ADDITIVE ONLY.
+
+DO NOT modify, replace, remove, merge, reorder, or redesign ANY existing Telegram messages.
+
+The existing Telegram behavior must remain intact.
+
+==================================================
+ABSOLUTE PRESERVATION REQUIREMENT
+==================================================
+
+Before changing anything, inspect:
+
+- strategy.py
+- dtm_bot.py
+- all Telegram-related code
+- all signal-generation code
+- all order-execution code
+
+Identify every existing Telegram message and every call to send_telegram_message().
+
+Existing messages MUST remain unchanged, including:
+
+- order submission messages
+- order success messages
+- order error messages
+- any existing operational/status messages
+
+Do NOT change their wording, formatting, timing, parse mode, or behavior.
+
+Do NOT modify create_order().
+
+Do NOT modify exchange order execution.
+
+Do NOT modify risk-management behavior.
+
+Do NOT modify the actual trading strategy.
+
+==================================================
+NEW MESSAGE #1 — TRADE SIGNAL
+==================================================
+
+Add a separate Telegram message with an attractive professional layout:
+
+🚨 DTM TRADE SIGNAL
+━━━━━━━━━━━━━━━━━━
+
+🟢 LONG / 🔴 SHORT
+
+💎 SYMBOL: ...
+⏱ TIMEFRAME: ...
+🕐 SIGNAL TIME: ...
+
+━━━━━━━━━━━━━━━━━━
+💰 TRADE PLAN
+━━━━━━━━━━━━━━━━━━
+
+📍 ENTRY: ...
+🛑 STOP LOSS: ...
+🎯 TP1: ...
+🎯 TP2: ...
+🎯 TP3: ...
+
+⚖️ RISK / REWARD: ...
+⚠️ RISK: ...
+
+━━━━━━━━━━━━━━━━━━
+⭐ SIGNAL QUALITY
+━━━━━━━━━━━━━━━━━━
+
+⭐ SCORE: ...
+📈 TREND: ...
+🔥 MOMENTUM: ...
+
+━━━━━━━━━━━━━━━━━━
+
+🧠 FINAL SIGNAL: LONG/SHORT
+
+This must be a NEW Telegram message.
+Do not replace an existing message.
+
+==================================================
+NEW MESSAGE #2 — FULL CALCULATION REPORT
+==================================================
+
+Immediately after the Trade Signal message, send a SECOND, completely separate Telegram message.
+
+This message is NOT just a summary.
+
+It must be a detailed calculation/debug snapshot of the REAL values used by the strategy/PyneCore when the signal was generated.
+
+Purpose:
+
+The user will later compare this Telegram snapshot against:
+
+- Pine Script
+- PyneCore
+- Python
+- independent calculations
+- historical logs
+
+Therefore preserve as much REAL calculation information as is actually available.
+
+DO NOT invent values.
+DO NOT create alternative calculations just to populate fields.
+
+Use the exact values already calculated by the strategy/runtime.
+
+==================================================
+CALCULATION REPORT FORMAT
+==================================================
+
+🔬 DTM SIGNAL CALCULATION REPORT
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📌 SIGNAL IDENTITY
+
+Symbol:
+Timeframe:
+Signal:
+Signal timestamp:
+Candle timestamp:
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🕯 RAW CANDLE DATA
+
+Open:
+High:
+Low:
+Close:
+Volume:
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 INDICATOR CALCULATIONS
+
+RSI:
+RSI Length:
+RSI condition:
+
+MACD Fast:
+MACD Slow:
+MACD Signal:
+
+MACD Line:
+MACD Signal Line:
+MACD Histogram:
+
+MACD condition:
+
+ATR:
+ATR Length:
+ATR Value:
+
+Momentum:
+Momentum Percent:
+Momentum condition:
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📈 TREND CALCULATION
+
+Trend Lookback:
+Trend Slope:
+Trend Slope %:
+Minimum Trend Slope:
+Trend Direction:
+
+Price vs Trend:
+Trend Condition:
+Trend Filter Result:
+
+If Linear Regression / ta.linreg / equivalent values are available, expose the actual values.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔄 PIVOT CALCULATION
+
+Left Bars:
+Right Bars:
+
+Pivot High:
+Pivot High Price:
+Pivot High Index:
+
+Pivot Low:
+Pivot Low Price:
+Pivot Low Index:
+
+Pivot Search Range:
+Bars Between Pivots:
+Pivot Validity:
+
+Expose all actual pivot-related values available from the strategy.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔀 DIVERGENCE CALCULATION
+
+RSI Divergence:
+MACD Divergence:
+
+Classic Bullish:
+Classic Bearish:
+Hidden Bullish:
+Hidden Bearish:
+
+Where available, expose:
+
+Previous Pivot:
+Current Pivot:
+Previous Indicator Value:
+Current Indicator Value:
+Price Relationship:
+Indicator Relationship:
+Divergence Result:
+
+Final Divergence Type:
+Divergence Confirmed:
+
+Do NOT calculate a new divergence in dtm_bot.py.
+Expose the actual strategy result.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📐 FIBONACCI CALCULATION
+
+Fib 0.618 Enabled:
+Fib 0.786 Enabled:
+
+Swing High:
+Swing Low:
+Range:
+
+0.618 Level:
+0.786 Level:
+
+Distance to 0.618:
+Distance to 0.786:
+
+Tolerance:
+Tolerance %:
+
+0.618 Valid:
+0.786 Valid:
+
+Bullish Fib Score:
+Bearish Fib Score:
+
+Final Fibonacci Result:
+
+Use actual strategy values only.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🕯 PRICE ACTION / CANDLE ANALYSIS
+
+Candle Body:
+Upper Shadow:
+Lower Shadow:
+
+Body Percentage:
+Shadow/Body Ratio:
+
+Bullish Candle:
+Bearish Candle:
+
+Pin Bar:
+Hammer:
+Shooting Star:
+Marubozu:
+
+Other Pattern:
+
+Minimum Candle ATR Ratio:
+Big Candle Average:
+Big Candle Multiplier:
+Big Candle Result:
+
+Price Action Confirmation:
+Price Action Score:
+
+Only expose values actually available.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 VOLUME ANALYSIS
+
+Current Volume:
+Average Volume:
+Volume Ratio:
+Volume Threshold:
+
+Volume Bullish:
+Volume Bearish:
+Volume Confirmation:
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🌐 MTF FILTER
+
+If MTF is actually implemented and available, expose:
+
+Higher Timeframe:
+HTF Signal:
+HTF Trend:
+HTF RSI:
+HTF MACD:
+HTF Divergence:
+MTF Filter Result:
+
+If MTF is not used by the current strategy, show:
+
+MTF: NOT USED
+
+Do not invent an MTF calculation.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+⭐ CONFIRMATION / SCORE TRACE
+
+Expose the actual confirmation components used by the strategy.
+
+Classic Bullish Base:
+Classic Bearish Base:
+
+Hidden Bullish Base:
+Hidden Bearish Base:
+
+RSI Confirmation:
+MACD Confirmation:
+Trend Confirmation:
+Fibonacci Confirmation:
+Price Action Confirmation:
+Volume Confirmation:
+Pivot Confirmation:
+Divergence Confirmation:
+MTF Confirmation:
+
+Bullish Score:
+Bearish Score:
+
+Minimum Requirement:
+Minimum Requirement Result:
+
+Final Bullish:
+Final Bearish:
+
+Final Score:
+Final Signal:
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🧠 EXACT DECISION TRACE
+
+This section is critical.
+
+Show the actual decision path that produced the final signal.
+
+For every important condition, show:
+
+CONDITION NAME = TRUE/FALSE
+
+and, where available, the actual numeric values.
+
+Example:
+
+Trend Condition = TRUE
+RSI Condition = TRUE
+MACD Condition = FALSE
+Divergence Condition = TRUE
+Fibonacci Condition = TRUE
+Price Action Condition = TRUE
+Volume Condition = FALSE
+MTF Condition = TRUE
+Minimum Requirement = TRUE
+Final Bullish = TRUE
+Final Bearish = FALSE
+FINAL SIGNAL = LONG
+
+Do not invent conditions that do not exist.
+
+Expose the actual decision variables from the strategy.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📋 FINAL SNAPSHOT
+
+Signal:
+Entry:
+Stop Loss:
+TP1:
+TP2:
+TP3:
+
+Score:
+Risk:
+Risk/Reward:
+
+Trend:
+RSI:
+MACD:
+Divergence:
+Fibonacci:
+Pivot:
+Price Action:
+Volume:
+MTF:
+
+FINAL DECISION:
+
+==================================================
+DATA INTEGRITY
+==================================================
+
+All values in both new messages must come from the SAME signal snapshot.
+
+The two messages must represent the SAME:
+
+- symbol
+- timeframe
+- candle
+- timestamp
+- signal
+- entry
+- calculations
+
+Do not independently recalculate values in the Telegram layer.
+
+If a value is unavailable:
+
+Use N/A
+
+Never fabricate a value.
+
+Do not use stale values from another candle.
+
+Preserve numeric precision sufficient for later comparison/debugging.
+
+==================================================
+SIGNAL DUPLICATE PROTECTION
+==================================================
+
+For each valid signal, the two new messages must be sent only once.
+
+Use a deterministic signal identity based on available data such as:
+
+symbol + timeframe + signal + candle timestamp
+
+Do NOT let the new reporting system trigger another order.
+
+Do NOT let the reporting system execute strategy logic again.
+
+Do NOT call create_order() from the reporting system.
+
+==================================================
+TELEGRAM SAFETY
+==================================================
+
+The new messages must never fail because of Telegram entity parsing.
+
+Handle dynamic values safely.
+
+Protect against characters such as:
+
+_
+*
+[
+]
+(
+)
+`
+<
+>
+&
+and other Telegram formatting characters.
+
+Use a dedicated formatter for the new messages if necessary.
+
+Do NOT change the formatting behavior of existing Telegram messages.
+
+If the existing Telegram implementation has no parse_mode, do not globally change it.
+
+==================================================
+STRATEGY SAFETY
+==================================================
+
+The following must remain logically unchanged:
+
+RSI calculation
+MACD calculation
+ATR calculation
+Pivot calculation
+Divergence calculation
+Fibonacci calculation
+Trend calculation
+Price Action calculation
+Volume calculation
+MTF calculation
+Scoring
+Minimum requirements
+Final LONG/SHORT decision
+
+If information needs to be exposed from strategy.py, expose existing calculated values without changing their calculations.
+
+Do not duplicate calculations in dtm_bot.py.
+
+==================================================
+ORDER SAFETY
+==================================================
+
+create_order() MUST remain unchanged.
+
+Exchange API behavior MUST remain unchanged.
+
+Order submission MUST remain unchanged.
+
+Stop Loss calculation MUST remain unchanged.
+
+Take Profit calculation MUST remain unchanged.
+
+Risk management MUST remain unchanged.
+
+Leverage MUST remain unchanged.
+
+==================================================
+IMPLEMENTATION REQUIREMENT
+==================================================
+
+Do not simply add a cosmetic message containing only signal and entry.
+
+The second message must expose the actual calculation state available at signal time.
+
+Inspect the complete strategy.py before implementation.
+
+Determine the real variable names used by the strategy.
+
+Map those existing variables into the calculation report.
+
+Do not guess variable names.
+
+Do not invent calculations.
+
+==================================================
+TESTING
+==================================================
+
+Before modification:
+
+git status
+git diff
+
+Create a safe checkpoint if appropriate.
+
+After modification run:
+
+1. Python syntax checks.
+2. Existing project tests.
+3. LONG signal message test.
+4. SHORT signal message test.
+5. Missing/None values test.
+6. NaN values test.
+7. Telegram special-character test.
+8. Duplicate signal test.
+9. Same candle test.
+10. Different candle test.
+11. Verify existing Telegram messages remain unchanged.
+12. Verify new Trade Signal message is generated.
+13. Verify new Calculation Report is generated.
+14. Verify both new messages use the same snapshot.
+15. Verify reporting does not trigger an order.
+16. Verify create_order() is unchanged.
+17. Verify strategy logic is unchanged.
+18. Review complete git diff.
+
+If live Telegram testing is unsafe, use mocked Telegram requests or dry-run tests.
+
+Do not expose secrets in logs or test output.
+
+==================================================
+GIT REQUIREMENTS
+==================================================
+
+Only after ALL tests pass:
+
+git status
+git diff
+
+Stage ONLY files required for this feature.
+
+Commit:
+
+Add detailed DTM signal calculation reports
+
+Then:
+
+git push origin main
+
+If ANY test fails:
+
+STOP.
+
+Do not commit.
+Do not push.
+
+If unrelated files are modified:
+
+Do not include them in the commit.
+
+==================================================
+FINAL REPORT
+==================================================
+
+After implementation, report:
+
+1. Files changed
+2. Existing Telegram messages preserved: YES/NO
+3. New Trade Signal message: PASS/FAIL
+4. New Calculation Report: PASS/FAIL
+5. LONG test: PASS/FAIL
+6. SHORT test: PASS/FAIL
+7. None/NaN test: PASS/FAIL
+8. Telegram formatting test: PASS/FAIL
+9. Duplicate protection: PASS/FAIL
+10. Same-snapshot verification: PASS/FAIL
+11. Strategy logic changed: YES/NO
+12. Order execution changed: YES/NO
+13. create_order changed: YES/NO
+14. Calculation fields exposed
+15. Git commit hash
+16. git push result
+17. final git status
+
+FINAL ABSOLUTE RULE:
+
+EXISTING TELEGRAM MESSAGES = UNCHANGED
+
+NEW TRADE SIGNAL MESSAGE = ADD
+
+NEW CALCULATION REPORT = ADD
+
+STRATEGY LOGIC = UNCHANGED
+
+ORDER EXECUTION = UNCHANGED
+
+RISK MANAGEMENT = UNCHANGED
+
+The calculation report exists specifically to make future parity/debug comparisons possible between Pine, PyneCore, Python and independent calculations.
