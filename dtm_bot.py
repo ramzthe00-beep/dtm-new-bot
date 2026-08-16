@@ -148,17 +148,72 @@ class TrueTradePrivateExchange:
     def _request(self, method, uri, data=None):
         ts = str(int(time.time()*1000))
         sig = self._sign(method, uri, ts)
-        headers = {"X-API-Key": self.api_key, "X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"}
-        r = self.session.request(method, f"{self.base_url}{uri}", headers=headers, json=data, timeout=15)
-        self._last_response = r
-        if not r.ok:
-            self.connected = False
-            r.raise_for_status()
-        self.connected = True
+
+        headers = {
+            "X-API-Key": self.api_key,
+            "X-Timestamp": ts,
+            "X-Signature": sig,
+            "Content-Type": "application/json"
+        }
+
+        url = f"{self.base_url}{uri}"
+
+        # ===== FULL EXCHANGE REQUEST LOG =====
+        logger.info(
+            "[EXCHANGE REQUEST] %s %s | DATA=%s",
+            method.upper(),
+            url,
+            data
+        )
+
         try:
-            return r.json()
-        except ValueError:
-            return {"raw": r.text}
+            r = self.session.request(
+                method,
+                url,
+                headers=headers,
+                json=data,
+                timeout=15
+            )
+
+            self._last_response = r
+
+            # ===== FULL EXCHANGE RESPONSE LOG =====
+            logger.info(
+                "[EXCHANGE RESPONSE] %s %s | HTTP=%s | BODY=%s",
+                method.upper(),
+                uri,
+                r.status_code,
+                r.text
+            )
+
+            if not r.ok:
+                self.connected = False
+
+                logger.error(
+                    "[EXCHANGE ERROR] %s %s | HTTP=%s | BODY=%s",
+                    method.upper(),
+                    uri,
+                    r.status_code,
+                    r.text
+                )
+
+                r.raise_for_status()
+
+            self.connected = True
+
+            try:
+                return r.json()
+            except ValueError:
+                return {"raw": r.text}
+
+        except Exception as e:
+            logger.error(
+                "[EXCHANGE REQUEST EXCEPTION] %s %s | ERROR=%s",
+                method.upper(),
+                uri,
+                repr(e)
+            )
+            raise
 
     def test_connection(self):
         try:
