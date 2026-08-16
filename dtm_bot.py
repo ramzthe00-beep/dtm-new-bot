@@ -514,7 +514,7 @@ class TrueTradePrivateExchange:
             "[EXCHANGE REQUEST] %s %s | DATA=%s",
             method.upper(),
             url,
-            data
+            json.dumps(data, ensure_ascii=False) if data else None
         )
 
         try:
@@ -603,32 +603,43 @@ class TrueTradePrivateExchange:
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         
         # تبدیل side به فرمت مورد نیاز API
-        # اگر side قبلاً LONG یا SHORT است، همان را استفاده کن
-        side_upper = side.upper()
+        side_upper = str(side).upper().strip()
+        
+        # لاگ مقدار ورودی برای دیباگ
+        logger.info(f"[CREATE ORDER] Symbol: {symbol}, Input side: '{side}', Capital: {capital}")
+        
         if side_upper in ("BUY", "LONG"):
             api_side = "LONG"
         elif side_upper in ("SELL", "SHORT"):
             api_side = "SHORT"
         else:
-            api_side = side_upper  # اگر قبلاً LONG یا SHORT است
+            api_side = side_upper
+            
+        logger.info(f"[CREATE ORDER] API side: '{api_side}'")
+        
+        # استفاده از اهرم مناسب برای هر نماد
+        leverage = params.get("leverage", LEVERAGE_MAP.get(symbol.upper(), 1))
         
         # ساختار صحیح بر اساس کتابچه
         od = {
-            "symbol": symbol.upper(),
-            "side": api_side,  # LONG یا SHORT
-            "tradeType": "MARKET",  # MARKET یا LIMIT
-            "leverage": params.get("leverage", 1),
-            "cost": f"{capital:.{prec}f}",  # cost به معنی collateral در quote asset
+            "symbol": str(symbol).upper(),
+            "side": api_side,
+            "tradeType": "MARKET",
+            "leverage": int(leverage),
+            "cost": f"{float(capital):.{prec}f}",
             "walletType": "debit"
         }
         
+        # لاگ کامل بدنه درخواست
+        logger.info(f"[CREATE ORDER] Request body: {json.dumps(od, ensure_ascii=False, indent=2)}")
+        
         # افزودن حد ضرر و حد سود اگر موجود باشند
-        if "stopLoss" in params:
+        if "stopLoss" in params and params["stopLoss"]:
             od["stopLoss"] = f"{self._round_price(params['stopLoss'], symbol):.{prec}f}"
-        if "takeProfit" in params:
+        if "takeProfit" in params and params["takeProfit"]:
             od["takeProfit"] = f"{self._round_price(params['takeProfit'], symbol):.{prec}f}"
             
-        send_telegram_message(f"📤 ثبت سفارش — {symbol} {api_side} | اهرم: {od['leverage']}")
+        send_telegram_message(f"📤 ثبت سفارش — {symbol} {api_side} | اهرم: {od['leverage']} | سرمایه: {od['cost']} USDT")
         
         try:
             # امضای صحیح: timestamp + METHOD + URI (بدون body)
@@ -653,9 +664,9 @@ class TrueTradePrivateExchange:
                             error_messages.append(f"{field}: {message}")
                         error_text = "\n".join(error_messages)
                     else:
-                        error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:300]}"
+                        error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:500]}"
                 except ValueError:
-                    error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:300]}"
+                    error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:500]}"
             else:
                 error_text = str(e)
                 
