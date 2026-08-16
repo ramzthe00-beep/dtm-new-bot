@@ -1,0 +1,290 @@
+============================================================
+NEXT CRITICAL TASK — POST-PIVOT FORENSIC PARITY AUDIT
+============================================================
+
+CONTEXT:
+The Pivot structural audit has already PASSed.
+
+Previous confirmed results:
+
+1. FINAL_PIVOT_FORENSIC_AUDIT = PASS
+   No known structural Pivot / RIGHT_BARS /
+   confirmation double-shift defect detected.
+
+2. POST_PIVOT_STRUCTURAL_AUDIT = PASS
+   No immediate structural divergence-indexing defect detected.
+
+Therefore:
+DO NOT modify Pivot logic again unless new evidence proves it is wrong.
+
+THE QUESTION THAT MUST NOW BE ANSWERED:
+
+"After Pivot is confirmed correct, WHAT IS THE MOST IMPORTANT
+AND IMMEDIATE SOURCE OF Pine vs Python signal divergence?"
+
+This is NOT a request for a generic recommendation.
+Perform a forensic code/data audit and IDENTIFY THE ACTUAL
+FIRST DIVERGENCE POINT.
+
+============================================================
+AUDIT ORDER — MUST FOLLOW THIS EXACT ORDER
+============================================================
+
+STEP 1 — PIVOT OUTPUT CONSUMPTION
+---------------------------------
+Trace the exact flow:
+
+Pine pivot confirmation
+        ↓
+Python pivot_high / pivot_low
+        ↓
+previous pivot selection
+        ↓
+current pivot selection
+        ↓
+pivot price
+        ↓
+pivot index
+        ↓
+RSI value at pivot
+        ↓
+MACD line at pivot
+        ↓
+MACD histogram at pivot
+        ↓
+divergence condition
+
+Verify that every index refers to the SAME candle as Pine.
+
+DO NOT assume that because Pivot detection is correct,
+its downstream consumption is correct.
+
+============================================================
+
+STEP 2 — DIVERGENCE CONDITIONS
+------------------------------
+Compare Pine and Python condition-by-condition.
+
+For BOTH bearish and bullish divergence, audit:
+
+- price higher-high / lower-low
+- RSI lower-high / higher-low
+- MACD lower-high / higher-low
+- MACD histogram comparison
+- histogram sign requirement
+- previous pivot selection
+- current pivot selection
+- pivot ordering
+- minimum/maximum distance between pivots
+- any lookback restriction
+- any NaN handling
+- any equality handling
+
+Report the FIRST CONDITION where Pine and Python can differ.
+
+============================================================
+
+STEP 3 — INDICATOR VALUES AT PIVOT
+----------------------------------
+This is CRITICAL.
+
+Do NOT only compare divergence booleans.
+
+Compare the actual numerical values at identical Pine pivot bars:
+
+RSI
+MACD line
+MACD signal
+MACD histogram
+ATR if used by divergence
+any other indicator used in divergence
+
+For every mismatch report:
+
+bar index
+timestamp
+Pine value if available
+Python value
+absolute difference
+relative difference
+first mismatch location
+
+Determine whether the mismatch originates from:
+
+- RMA initialization
+- EMA initialization
+- NaN propagation
+- warm-up period
+- historical window
+- indexing
+- candle alignment
+- calculation formula
+
+============================================================
+
+STEP 4 — OHLC DATA ALIGNMENT
+----------------------------
+Verify Pine and Python are processing the EXACT same candles.
+
+Check:
+
+timestamp
+open
+high
+low
+close
+volume
+
+Check:
+
+- timezone
+- candle ordering
+- missing candles
+- duplicated candles
+- current/open candle handling
+- historical bar count
+- start/end alignment
+
+Find the FIRST candle where the datasets differ.
+
+============================================================
+
+STEP 5 — PINE SERIES SEMANTICS
+------------------------------
+Audit all places where Pine's series semantics may differ
+from Python/pandas semantics.
+
+Specifically inspect:
+
+na
+nz
+[1]
+[2]
+historical indexing
+rolling windows
+ta.rma
+ta.ema
+ta.rsi
+ta.macd
+ta.atr
+ta.highest
+ta.lowest
+conditional series
+state persistence
+
+Look for Python code that appears mathematically reasonable
+but is NOT Pine-equivalent.
+
+============================================================
+
+STEP 6 — STATE / PERSISTENCE
+----------------------------
+Inspect whether persisted state can alter the result.
+
+Check:
+
+pivot_state.json
+previous pivot
+last pivot
+historical pivot arrays
+startup state
+restart behavior
+warm-up behavior
+
+Determine whether the bot can start with a different state
+than a fresh Pine execution.
+
+============================================================
+
+STEP 7 — SIGNAL GENERATION
+--------------------------
+After divergence is calculated, trace:
+
+divergence
+    ↓
+filters
+    ↓
+score
+    ↓
+candle confirmation
+    ↓
+trend filter
+    ↓
+Fibonacci
+    ↓
+volume
+    ↓
+MTF filter if active
+    ↓
+final signal
+
+Identify the FIRST point where Pine and Python can produce
+different results.
+
+============================================================
+MANDATORY OUTPUT
+============================================================
+
+Do NOT simply say:
+
+"Data-level parity is required."
+
+Instead produce:
+
+A) FIRST ACTUAL DIVERGENCE POINT
+B) EXACT FILE
+C) EXACT FUNCTION
+D) EXACT LINE
+E) WHY IT DIFFERS FROM PINE
+F) HOW IT SHOULD BE FIXED
+G) WHETHER THE FIX IS SAFE
+H) WHETHER IT CAN AFFECT LIVE TRADING
+I) PRIORITY: CRITICAL / HIGH / MEDIUM / LOW
+
+============================================================
+IMPORTANT SAFETY RULE
+============================================================
+
+DO NOT automatically modify strategy.py.
+
+DO NOT modify:
+- API
+- exchange code
+- Telegram
+- order execution
+- risk management
+
+unless the forensic evidence proves the issue is there.
+
+Do NOT make speculative fixes.
+
+============================================================
+FINAL DECISION
+============================================================
+
+At the end answer exactly:
+
+"THE NEXT MOST IMPORTANT FIX IS: __________"
+
+Then provide the evidence supporting that conclusion.
+
+If no single issue can yet be proven, say:
+
+"NO SINGLE ROOT CAUSE PROVEN"
+
+and identify the exact DATA-LEVEL TEST that must be run
+next to prove it.
+
+============================================================
+REQUIRED REPORT
+============================================================
+
+Write the complete result to:
+
+parity_lab/NEXT_CRITICAL_POST_PIVOT_FORENSIC_AUDIT_<timestamp>.txt
+
+Also print a concise final summary to the terminal.
+
+============================================================
+END
+============================================================

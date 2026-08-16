@@ -1,0 +1,416 @@
+MISSION: ACTUALLY REPAIR THE DTM PROJECT. ANALYSIS-ONLY IS NOT ACCEPTED.
+
+PRIMARY EVIDENCE:
+parity_lab/COMPLETE_DTM_PARITY_ANALYSIS.txt
+
+ADDITIONAL EVIDENCE:
+parity_lab/DEEP_ANALYSIS_REPORT.md
+parity_lab/AUTO_PARITY_AUDIT_REPORT.md
+parity_lab/PIVOT_PRICE_FORENSIC.txt
+parity_lab/PIVOT_SAME_BAR_FORENSIC.txt
+parity_lab/CRITICAL_REPAIR_FINDINGS.txt
+parity_lab/FUNCTION_PARAMETER_INVENTORY.txt
+parity_lab/REPAIR_METHOD_PLAN_*.md
+
+OBJECTIVE:
+Make the Python implementation semantically equivalent to the Pine/PyneCore implementation.
+Do not merely reduce mismatch counts.
+Do not merely write a report.
+Do not merely propose fixes.
+ACTUALLY MODIFY THE RESPONSIBLE SOURCE FILES, TEST THE MODIFICATIONS, KEEP SUCCESSFUL FIXES, AND ROLLBACK FAILED FIXES.
+
+NON-NEGOTIABLE RULE:
+The task is NOT complete if no source file was modified and tested.
+The task is NOT complete if FINAL PARITY == INITIAL PARITY unless you have proven with executable evidence that the remaining difference originates outside the Python source and have exhausted valid repair candidates.
+Never stop at "insufficient evidence" without performing additional forensic analysis and testing.
+
+PHASE 0 — BACKUP:
+Create a complete backup of all actual trading source files before modification.
+Never modify CSVs, raw data, logs, reports, or diagnostic evidence merely to make parity appear better.
+
+PHASE 1 — IDENTIFY REAL EXECUTION SOURCE:
+Determine which Python files are actually used by the trading bot.
+Do not treat parity_lab diagnostic scripts as trading implementation.
+Trace imports and execution flow from the actual entry point.
+Identify:
+- data acquisition
+- data normalization
+- indicator engine
+- pivot engine
+- state persistence
+- divergence
+- Fibonacci
+- candle filters
+- trend
+- scoring
+- signal generation
+- risk management
+- order execution
+
+PHASE 2 — READ ALL EVIDENCE:
+Read the complete parity analysis and all forensic reports.
+Do not rely on previous summaries.
+Use actual project files and actual CSV/log evidence.
+
+PHASE 3 — FIND THE FIRST DIVERGENCE:
+Do NOT start by fixing the final signal.
+Trace the dependency graph:
+
+RAW DATA
+→ BAR IDENTITY
+→ TIMESTAMP
+→ OHLC
+→ PIVOT SOURCE
+→ PIVOT CONFIRMATION
+→ PIVOT PRICE
+→ PIVOT STATE
+→ RMA
+→ EMA
+→ RSI
+→ MACD
+→ ATR
+→ TREND
+→ DIVERGENCE
+→ FIBONACCI
+→ CANDLE FILTER
+→ SCORE
+→ FINAL SIGNAL
+
+For each chain, find the earliest bar/value where Pine and Python differ.
+That earliest divergence is the preferred repair target.
+
+PHASE 4 — DATA AND BAR IDENTITY:
+Verify:
+- exchange source
+- timeframe
+- timestamp
+- timezone
+- bar index
+- ordering
+- duplicate bars
+- missing bars
+- open/high/low/close
+- volume
+- precision
+- open-candle behavior
+- historical warmup
+
+Never assume timestamp and bar_index are interchangeable.
+
+PHASE 5 — PIVOT:
+Reproduce Pine pivot semantics exactly.
+
+Keep these concepts separate:
+- pivot source bar
+- pivot confirmation bar
+- visible/confirmed bar
+- pivot price
+- source index
+- confirmation index
+- source timestamp
+- confirmation timestamp
+
+Investigate every use of:
+- LEFT_BARS
+- RIGHT_BARS
+- shift()
+- +RIGHT_BARS
+- -RIGHT_BARS
+- stored pivot index
+- loaded pivot state
+
+Find and remove actual double-shifts if proven.
+Do NOT remove a single +RIGHT_BARS merely because it exists.
+Test pivot HIGH and LOW independently.
+
+PHASE 6 — PIVOT STATE:
+Verify:
+- creation
+- update
+- historical storage
+- ordering
+- previous-state loading
+- save
+- restore
+- restart behavior
+- duplicate state
+- stale state
+- live versus historical behavior
+
+A persisted pivot must not be shifted again during restoration.
+
+PHASE 7 — INDICATORS:
+Compare Pine and Python BAR-BY-BAR.
+
+RMA:
+- seed
+- first valid value
+- warmup
+- na
+- recurrence
+- precision
+
+EMA:
+- seed
+- first valid value
+- warmup
+- na
+- recurrence
+- precision
+
+RSI:
+diff
+gain
+loss
+RMA gain
+RMA loss
+RS
+final RSI
+
+MACD:
+fast EMA
+slow EMA
+MACD line
+signal EMA
+histogram
+
+ATR:
+true range
+previous close
+RMA
+warmup
+na
+
+Do not accept "approximately equal".
+Find the exact semantic difference.
+
+PHASE 8 — TREND:
+Verify:
+- TREND_LOOKBACK
+- TREND_SLOPE_MIN_PCT
+- linear regression
+- slope calculation
+- normalization
+- sign
+- source series
+- exact lookback indexing
+
+PHASE 9 — DIVERGENCE:
+Verify:
+- exact P1
+- exact P2
+- pivot order
+- pivot price
+- RSI P1/P2
+- MACD P1/P2
+- regular/hidden
+- bullish/bearish
+- MAX_BARS_BETWEEN_PIVOTS
+- MAX_HISTORICAL_PIVOTS
+- timing
+
+Do not repair divergence independently while its pivots are wrong.
+Fix upstream pivot/state first.
+
+PHASE 10 — FIBONACCI:
+Verify:
+- swing source
+- anchors
+- 0.618
+- 0.786
+- tolerance
+- search window
+- precision
+- pivot dependency
+
+PHASE 11 — CANDLE FILTERS:
+Verify:
+- body
+- upper shadow
+- lower shadow
+- shadow/body ratio
+- opposite shadow
+- candle/ATR ratio
+- big-candle average
+- multiplier
+- exact candle index
+
+PHASE 12 — MTF:
+Verify:
+- requested timeframe
+- request.security equivalent
+- lookahead
+- gaps
+- confirmation
+- higher-timeframe bar mapping
+- current versus confirmed higher-timeframe value
+
+PHASE 13 — SCORE:
+Compare every score component independently.
+Do not alter score weights just to match signals.
+Fix the underlying input first.
+
+PHASE 14 — SIGNAL:
+Verify:
+- AND/OR logic
+- precedence
+- evaluation order
+- confirmation
+- cooldown
+- duplicate prevention
+- signal timestamp
+- signal price
+- state dependency
+
+PHASE 15 — PARAMETER PARITY:
+Compare every real strategy parameter between Pine and Python.
+For every parameter verify:
+- name
+- value
+- type
+- unit
+- default
+- runtime value
+- location
+- downstream consumers
+
+PHASE 16 — FUNCTION PARITY:
+For every real trading function:
+- identify Pine equivalent
+- compare inputs
+- compare output
+- compare indexing
+- compare state
+- compare na behavior
+- compare execution timing
+- compare precision
+
+PHASE 17 — AUTOMATIC REPAIR LOOP:
+For every root cause:
+
+1. Form a concrete repair hypothesis.
+2. Identify exact source file.
+3. Identify exact function.
+4. Identify exact lines.
+5. Make the smallest semantically correct patch.
+6. Compile/validate.
+7. Run the relevant parity test.
+8. Run broader parity tests.
+9. Compare before/after.
+10. KEEP if parity improves and semantics remain correct.
+11. ROLLBACK if parity worsens.
+12. If rejected, create a different hypothesis and test again.
+13. Continue until the issue is genuinely solved.
+
+Do not stop after the first failed candidate.
+
+PHASE 18 — UPSTREAM PRIORITY:
+Always prefer correcting:
+DATA
+before
+PIVOT
+before
+STATE
+before
+INDICATORS
+before
+DIVERGENCE
+before
+FIBONACCI
+before
+CANDLE
+before
+SCORE
+before
+SIGNAL.
+
+Do not patch downstream symptoms when an upstream cause exists.
+
+PHASE 19 — IMPORTANT PIVOT EVIDENCE:
+Previous evidence showed examples where Pine pivot prices did not equal the HIGH/LOW of the Python candle carrying the logged Pine timestamp.
+
+Therefore:
+DO NOT assume this means the Pine data is wrong.
+DO NOT assume this means the Python data is wrong.
+Determine whether:
+- the logged timestamp is source-bar timestamp,
+- confirmation-bar timestamp,
+- persisted-state timestamp,
+- or another mapping.
+
+Resolve source/confirmation identity before changing OHLC mapping or pivot logic.
+
+PHASE 20 — TEST AFTER EVERY SUCCESSFUL REPAIR:
+At minimum verify:
+timestamp parity
+bar identity parity
+OHLC parity
+pivot index parity
+pivot price parity
+pivot state parity
+RMA parity
+EMA parity
+RSI parity
+MACD parity
+ATR parity
+trend parity
+divergence parity
+Fibonacci parity
+candle parity
+score parity
+signal parity
+
+PHASE 21 — DO NOT CHEAT:
+Never:
+- alter Pine evidence
+- alter CSV values just to make them match
+- alter logs
+- change expected values to Python values
+- weaken comparison tolerances without mathematical justification
+- delete mismatching rows
+- suppress mismatches
+- hard-code Pine signal results
+- hard-code pivot prices
+- skip failed tests
+- claim success when no repair was made
+
+PHASE 22 — SUCCESS CONDITION:
+Success means actual source-code corrections have been made and verified.
+
+If FINAL PARITY is not improved:
+continue forensic analysis and candidate repair.
+
+If FINAL PARITY improves:
+continue to the next upstream mismatch.
+
+Do not stop merely because one mismatch disappeared.
+
+PHASE 23 — FINAL REPORT:
+After actual repairs, create:
+
+parity_lab/FINAL_REPAIR_RESULT.md
+
+It MUST contain:
+- baseline parity
+- final parity
+- actual files modified
+- actual functions modified
+- actual parameters modified
+- root cause for each modification
+- concise description of old behavior
+- concise description of new behavior
+- test used
+- before/after result
+- accepted repairs
+- rejected repairs
+- rollback count
+- remaining mismatches
+- why each remaining mismatch cannot yet be repaired
+
+FINAL RULE:
+A report is not a substitute for repair.
+
+The required action is:
+FIND → TRACE → PATCH → TEST → KEEP/ROLLBACK → NEXT ISSUE
+
+Continue until all demonstrated repairable parity problems are fixed.

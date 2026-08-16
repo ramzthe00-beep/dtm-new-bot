@@ -1,0 +1,25 @@
+AFTER finding the next critical post-Pivot fix:
+
+1. Test ONLY that fix on the SAME historical data.
+2. Compare Python BEFORE vs AFTER against Pine logs.
+3. Calculate ONLY:
+   Pine signals
+   Matches BEFORE
+   Matches AFTER
+   Parity BEFORE %
+   Parity AFTER %
+   Improvement %
+   Mismatch reduction %
+
+FINAL OUTPUT ONLY:
+
+NEXT FIX = ?
+PARITY BEFORE = ?%
+PARITY AFTER = ?%
+IMPROVEMENT = ?%
+MISMATCH REDUCTION = ?%
+LIVE PARITY CONFIDENCE = HIGH/MEDIUM/LOW/UNKNOWN
+
+Do NOT modify production/live code.
+Do NOT make speculative fixes.
+Do NOT modify API, Telegram, orders, or risk management.

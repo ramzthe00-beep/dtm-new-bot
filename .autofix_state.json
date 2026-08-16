@@ -1,0 +1,17 @@
+{
+  "batch": 2,
+  "accepted": 0,
+  "rejected": 19,
+  "last_files": [
+    "bot.py",
+    "d -n 70,175p strategy.py",
+    "dtm_bot.py",
+    "parity_lab/AUTO_REPAIR_BACKUP_20260815_214138/bot.py",
+    "parity_lab/AUTO_REPAIR_BACKUP_20260815_214138/dtm_bot.py",
+    "parity_lab/FORENSIC_BACKUP_20260815_214452/bot.py",
+    "parity_lab/FORENSIC_BACKUP_20260815_214452/dtm_bot.py",
+    "parity_lab/ULTIMATE_BACKUP_20260815_220752/bot.py",
+    "parity_lab/ULTIMATE_BACKUP_20260815_220752/dtm_bot.py",
+    "parity_lab/deep_analyzer.py"
+  ]
+}

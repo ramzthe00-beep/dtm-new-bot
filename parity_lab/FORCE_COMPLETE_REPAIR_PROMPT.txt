@@ -1,0 +1,574 @@
+============================================================
+ABSOLUTE MISSION — COMPLETE DTM PINE/PYTHON REPAIR
+============================================================
+
+THIS IS AN EXECUTION TASK, NOT AN ANALYSIS TASK.
+
+PRIMARY OBJECTIVE:
+ACTUALLY CORRECT EVERY DEMONSTRATED REPAIRABLE PINE ↔ PYTHON PARITY ERROR IN THE PROJECT.
+
+The project must be modified where necessary.
+Do not merely report problems.
+Do not merely propose fixes.
+Do not merely generate a plan.
+Do not stop after analysis.
+
+============================================================
+MANDATORY INPUTS
+============================================================
+
+Read ALL of these completely before modifying code:
+
+parity_lab/COMPLETE_DTM_PARITY_ANALYSIS.txt
+parity_lab/DEEP_ANALYSIS_REPORT.md
+parity_lab/AUTO_PARITY_AUDIT_REPORT.md
+parity_lab/PIVOT_PRICE_FORENSIC.txt
+parity_lab/PIVOT_SAME_BAR_FORENSIC.txt
+parity_lab/CRITICAL_REPAIR_FINDINGS.txt
+parity_lab/FUNCTION_PARAMETER_INVENTORY.txt
+parity_lab/REPAIR_METHOD_PLAN_*.md
+parity_lab/ULTIMATE_REPAIR_REPORT_*.md
+
+Also inspect:
+- actual Python trading source
+- actual Pine source/reference
+- raw data
+- aligned data
+- Pine logs
+- Python logs
+- parity result CSVs
+- state files
+- imports
+- execution entrypoint
+
+Do NOT treat parity_lab diagnostic scripts as the trading implementation.
+
+============================================================
+ABSOLUTE COMPLETION RULE
+============================================================
+
+THE TASK IS NOT COMPLETE UNTIL:
+
+1. Actual trading source files have been modified where required.
+2. The modifications have been executed/tested.
+3. At least one real repair has been validated whenever a repairable defect exists.
+4. Every remaining mismatch has been traced to a root cause.
+5. Successful repairs have been retained.
+6. Failed repairs have been rolled back.
+7. The complete repair chain has been rerun after upstream corrections.
+
+These are NOT acceptable completion states:
+
+- "Analysis complete"
+- "Report generated"
+- "Repair plan generated"
+- "Insufficient evidence"
+- "No changes made"
+- "CHANGES=0"
+- "FINAL=INITIAL"
+- "I recommend..."
+- "This should be fixed manually..."
+
+If an initial hypothesis fails:
+CREATE ANOTHER HYPOTHESIS.
+TEST IT.
+CONTINUE.
+
+============================================================
+BACKUP
+============================================================
+
+Before ANY source modification:
+
+Create a complete timestamped backup of all actual trading source files.
+
+Never modify:
+- Pine evidence
+- raw CSVs
+- Pine logs
+- Python logs
+- parity result evidence
+- expected/reference values
+
+Never make the evidence match Python.
+
+Python must match the reference semantics.
+
+============================================================
+REPAIR LOOP
+============================================================
+
+For EVERY demonstrated repairable root cause:
+
+DETECT
+→ LOCATE
+→ TRACE
+→ IDENTIFY ROOT CAUSE
+→ PATCH
+→ COMPILE
+→ RUN
+→ COMPARE
+→ KEEP OR ROLLBACK
+→ CONTINUE
+
+Do not stop after the first successful fix.
+
+Repeat until ALL demonstrated repairable issues are handled.
+
+============================================================
+ROOT-CAUSE ORDER
+============================================================
+
+Always repair upstream before downstream:
+
+DATA
+→ BAR IDENTITY
+→ TIMESTAMP
+→ OHLC
+→ PIVOT SOURCE
+→ PIVOT CONFIRMATION
+→ PIVOT PRICE
+→ PIVOT STATE
+→ INDICATORS
+→ TREND
+→ DIVERGENCE
+→ FIBONACCI
+→ CANDLE FILTERS
+→ SCORE
+→ SIGNAL
+
+Never patch a downstream symptom when its upstream input is wrong.
+
+============================================================
+DATA / BAR IDENTITY
+============================================================
+
+Verify and correct:
+
+- timeframe
+- exchange source
+- timestamp
+- timezone
+- bar_index
+- row index
+- candle ordering
+- duplicate candles
+- missing candles
+- OHLC
+- volume
+- precision
+- open candle handling
+- history warmup
+
+Timestamp and bar_index must not be treated as interchangeable.
+
+============================================================
+PIVOT
+============================================================
+
+Correct the Pivot implementation so that it reproduces Pine semantics exactly.
+
+Keep these values separate:
+
+source_bar
+confirmation_bar
+visible_bar
+source_index
+confirmation_index
+source_timestamp
+confirmation_timestamp
+pivot_price
+
+Verify:
+
+LEFT_BARS
+RIGHT_BARS
+pivot_high
+pivot_low
+pivot storage
+pivot retrieval
+pivot state
+shift()
++RIGHT_BARS
+-RIGHT_BARS
+
+Find REAL double-shifts.
+
+Do NOT remove a valid single confirmation offset merely because it contains RIGHT_BARS.
+
+P1/P2 must refer to the same logical pivots as Pine.
+
+============================================================
+IMPORTANT EXISTING EVIDENCE
+============================================================
+
+Existing forensic evidence showed cases where:
+
+Pine pivot price != HIGH/LOW of the Python candle carrying the logged Pine timestamp.
+
+This MUST NOT be "fixed" by:
+- forcing the price to High
+- forcing the price to Low
+- changing the reference CSV
+- changing the Pine evidence
+- blindly deleting +RIGHT_BARS
+
+Instead determine whether the reported Pine timestamp represents:
+- source bar
+- confirmation bar
+- persisted pivot state
+- another mapped bar
+
+Then correct the mapping/source logic in Python.
+
+============================================================
+PIVOT STATE
+============================================================
+
+Correct:
+
+- creation
+- update
+- ordering
+- historical pivot storage
+- previous state
+- state loading
+- state saving
+- state restoration
+- restart behavior
+- stale state
+- duplicate state
+
+A pivot loaded from persistent state must not receive another shift.
+
+============================================================
+RMA
+============================================================
+
+Match Pine ta.rma exactly:
+
+- seed
+- first valid value
+- warmup
+- na handling
+- recurrence
+- precision
+
+Compare bar-by-bar.
+
+============================================================
+EMA
+============================================================
+
+Match Pine ta.ema exactly:
+
+- seed
+- first valid value
+- warmup
+- na
+- recurrence
+- precision
+
+============================================================
+RSI
+============================================================
+
+Match the entire Pine calculation:
+
+diff
+gain
+loss
+RMA gain
+RMA loss
+RS
+RSI
+
+Do not replace Pine semantics with a superficially similar library call.
+
+============================================================
+MACD
+============================================================
+
+Match:
+
+fast EMA
+slow EMA
+MACD line
+signal EMA
+histogram
+
+Check initialization and warmup.
+
+============================================================
+ATR
+============================================================
+
+Match:
+
+true range
+previous close
+RMA
+warmup
+na
+precision
+
+============================================================
+TREND
+============================================================
+
+Verify:
+
+TREND_LOOKBACK
+TREND_SLOPE_MIN_PCT
+linear regression
+slope
+normalization
+sign
+source series
+lookback indexing
+
+============================================================
+DIVERGENCE
+============================================================
+
+Correct:
+
+P1
+P2
+pivot order
+pivot price
+RSI values
+MACD values
+regular divergence
+hidden divergence
+bullish divergence
+bearish divergence
+MAX_BARS_BETWEEN_PIVOTS
+MAX_HISTORICAL_PIVOTS
+timing
+
+Divergence MUST consume corrected pivots.
+
+============================================================
+FIBONACCI
+============================================================
+
+Correct:
+
+swing selection
+anchor selection
+0.618
+0.786
+tolerance
+search window
+precision
+pivot dependency
+
+============================================================
+CANDLE FILTERS
+============================================================
+
+Correct:
+
+body
+upper shadow
+lower shadow
+shadow/body ratio
+opposite shadow
+minimum candle/ATR ratio
+big candle average
+big candle multiplier
+exact candle index
+
+============================================================
+MTF
+============================================================
+
+Correct:
+
+requested timeframe
+higher timeframe mapping
+confirmation
+lookahead
+gaps
+historical/current bar semantics
+
+============================================================
+SCORE
+============================================================
+
+Compare every score component independently.
+
+Never change weights merely to make signals match.
+
+Fix the incorrect input first.
+
+============================================================
+SIGNAL
+============================================================
+
+Correct:
+
+AND/OR logic
+operator precedence
+condition ordering
+confirmation
+cooldown
+duplicate prevention
+signal timestamp
+signal price
+state dependency
+
+============================================================
+PARAMETER PARITY
+============================================================
+
+For EVERY REAL STRATEGY PARAMETER:
+
+Compare:
+name
+value
+type
+unit
+default
+runtime value
+location
+consumers
+
+Correct every demonstrated mismatch.
+
+============================================================
+FUNCTION PARITY
+============================================================
+
+For EVERY REAL TRADING FUNCTION:
+
+Identify:
+- Pine equivalent
+- inputs
+- outputs
+- indexing
+- state
+- na behavior
+- timing
+- precision
+
+Then repair the implementation where semantics differ.
+
+============================================================
+TESTING AFTER EACH REPAIR
+============================================================
+
+After EVERY retained patch:
+
+1. Syntax validation.
+2. Relevant component parity test.
+3. Full parity test.
+4. Compare before/after.
+5. Keep only a semantically valid improvement.
+6. Roll back if worse.
+
+At minimum verify:
+
+timestamp parity
+bar identity parity
+OHLC parity
+pivot index parity
+pivot price parity
+pivot state parity
+RMA parity
+EMA parity
+RSI parity
+MACD parity
+ATR parity
+trend parity
+divergence parity
+Fibonacci parity
+candle parity
+score parity
+signal parity
+
+============================================================
+NO CHEATING
+============================================================
+
+NEVER:
+
+- change reference Pine data
+- alter raw CSVs to hide mismatch
+- alter expected values
+- delete mismatching rows
+- suppress errors
+- weaken comparisons without mathematical justification
+- hard-code Pine outputs
+- hard-code pivot prices
+- hard-code signal timestamps
+- skip failed cases
+- declare success without verified source-code repair
+
+============================================================
+PERSISTENCE
+============================================================
+
+After each successful repair:
+
+- save modified source
+- retain backup
+- record file
+- record function
+- record parameter
+- record old behavior
+- record new behavior
+- record test result
+
+============================================================
+FINAL REQUIREMENT
+============================================================
+
+Create:
+
+parity_lab/FINAL_REPAIR_RESULT.md
+
+ONLY AFTER ACTUAL REPAIRS HAVE BEEN COMPLETED.
+
+The report must contain:
+
+baseline parity
+final parity
+files modified
+functions modified
+parameters modified
+root cause
+old behavior
+new behavior
+tests performed
+before/after results
+accepted repairs
+rejected repairs
+rollback count
+remaining mismatches
+reason for each remaining mismatch
+
+============================================================
+FINAL ABSOLUTE RULE
+============================================================
+
+DO NOT EXIT THE MISSION JUST BECAUSE ANALYSIS IS COMPLETE.
+
+DO NOT EXIT THE MISSION JUST BECAUSE A REPORT EXISTS.
+
+DO NOT EXIT THE MISSION WITH ZERO CHANGES WHEN A REPAIRABLE DEFECT HAS BEEN DEMONSTRATED.
+
+CONTINUE:
+
+FIND
+→ TRACE
+→ PATCH
+→ TEST
+→ KEEP/ROLLBACK
+→ NEXT ERROR
+
+UNTIL ALL DEMONSTRATED REPAIRABLE PINE ↔ PYTHON PARITY ERRORS HAVE BEEN CORRECTED.
+
+ONLY VERIFIED SOURCE-CODE REPAIR COUNTS AS SUCCESS.
+============================================================

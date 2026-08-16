@@ -1,0 +1,1739 @@
+# DTM — AUTOMATIC PINE ↔ PYTHON PARITY AUDIT
+
+MODE: READ-ONLY
+
+## FINAL VERDICT
+
+**PRIMARY ROOT CAUSE: PIVOT / INDEXING / STATE**
+
+Pivot identity is upstream of divergence, Fibonacci, scoring and final signals. If pivot source/confirmation indexing is wrong, every downstream signal can move or disappear.
+
+## ISSUES
+
+### 1. [HIGH] PIVOT INDEX
+
+**Problem:** Pivot value is stored on confirmation bar
+
+**Evidence:** `strategy.py contains out.iloc[i+right] = x`
+
+**Likely cause:** This can be correct only if every downstream consumer treats the value as a confirmed pivot while preserving source-bar identity. Mixing source and confirmation indices causes systematic shift.
+
+**Required correction:** Keep source index and confirmation index explicitly separate. Never apply another right-bar shift later.
+
+### 2. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '0', 'signal_type': 'HD-', 'signal_time': '2026-08-10 14:04:00+00:00', 'current_bar': '844', 'current_time': '2026-08-10 14:04:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '825', 'p1_time': '2026-08-10 13:45:00+00:00', 'p1_time_ok': 'True', 'p1_price': '601.71', 'p1_price_ok': 'False', 'p2_bar': '841', 'p2_time': '2026-08-10 14:01:00+00:00', 'p2_time_ok': 'True', 'p2_price': '601.55', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 3. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '1', 'signal_type': 'CD+', 'signal_time': '2026-08-10 15:43:00+00:00', 'current_bar': '943', 'current_time': '2026-08-10 15:43:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '926', 'p1_time': '2026-08-10 15:26:00+00:00', 'p1_time_ok': 'True', 'p1_price': '599.73', 'p1_price_ok': 'False', 'p2_bar': '940', 'p2_time': '2026-08-10 15:40:00+00:00', 'p2_time_ok': 'True', 'p2_price': '599.7', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 4. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '2', 'signal_type': 'HD+', 'signal_time': '2026-08-10 19:31:00+00:00', 'current_bar': '1171', 'current_time': '2026-08-10 19:31:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1154', 'p1_time': '2026-08-10 19:14:00+00:00', 'p1_time_ok': 'True', 'p1_price': '600.36', 'p1_price_ok': 'False', 'p2_bar': '1168', 'p2_time': '2026-08-10 19:28:00+00:00', 'p2_time_ok': 'True', 'p2_price': '600.58', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 5. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '3', 'signal_type': 'CD-', 'signal_time': '2026-08-10 19:36:00+00:00', 'current_bar': '1176', 'current_time': '2026-08-10 19:36:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1165', 'p1_time': '2026-08-10 19:25:00+00:00', 'p1_time_ok': 'True', 'p1_price': '600.9', 'p1_price_ok': 'False', 'p2_bar': '1173', 'p2_time': '2026-08-10 19:33:00+00:00', 'p2_time_ok': 'True', 'p2_price': '601.0', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 6. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '4', 'signal_type': 'HD+', 'signal_time': '2026-08-11 00:47:00+00:00', 'current_bar': '1487', 'current_time': '2026-08-11 00:47:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1456', 'p1_time': '2026-08-11 00:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '599.08', 'p1_price_ok': 'False', 'p2_bar': '1484', 'p2_time': '2026-08-11 00:44:00+00:00', 'p2_time_ok': 'True', 'p2_price': '599.15', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 7. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '5', 'signal_type': 'HD+', 'signal_time': '2026-08-11 07:59:00+00:00', 'current_bar': '1919', 'current_time': '2026-08-11 07:59:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1906', 'p1_time': '2026-08-11 07:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '601.5', 'p1_price_ok': 'False', 'p2_bar': '1916', 'p2_time': '2026-08-11 07:56:00+00:00', 'p2_time_ok': 'True', 'p2_price': '601.51', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 8. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '6', 'signal_type': 'CD-', 'signal_time': '2026-08-11 16:25:00+00:00', 'current_bar': '2425', 'current_time': '2026-08-11 16:25:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2410', 'p1_time': '2026-08-11 16:10:00+00:00', 'p1_time_ok': 'True', 'p1_price': '609.79', 'p1_price_ok': 'False', 'p2_bar': '2422', 'p2_time': '2026-08-11 16:22:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.14', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 9. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '7', 'signal_type': 'CD-', 'signal_time': '2026-08-12 09:28:00+00:00', 'current_bar': '3448', 'current_time': '2026-08-12 09:28:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3439', 'p1_time': '2026-08-12 09:19:00+00:00', 'p1_time_ok': 'True', 'p1_price': '612.08', 'p1_price_ok': 'False', 'p2_bar': '3445', 'p2_time': '2026-08-12 09:25:00+00:00', 'p2_time_ok': 'True', 'p2_price': '612.49', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 10. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '8', 'signal_type': 'HD-', 'signal_time': '2026-08-12 15:10:00+00:00', 'current_bar': '3790', 'current_time': '2026-08-12 15:10:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3766', 'p1_time': '2026-08-12 14:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '611.2', 'p1_price_ok': 'False', 'p2_bar': '3787', 'p2_time': '2026-08-12 15:07:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.64', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 11. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '9', 'signal_type': 'HD+', 'signal_time': '2026-08-13 07:40:00+00:00', 'current_bar': '4780', 'current_time': '2026-08-13 07:40:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4760', 'p1_time': '2026-08-13 07:20:00+00:00', 'p1_time_ok': 'True', 'p1_price': '613.46', 'p1_price_ok': 'False', 'p2_bar': '4777', 'p2_time': '2026-08-13 07:37:00+00:00', 'p2_time_ok': 'True', 'p2_price': '613.58', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 12. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '10', 'signal_type': 'HD-', 'signal_time': '2026-08-13 12:40:00+00:00', 'current_bar': '5080', 'current_time': '2026-08-13 12:40:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5070', 'p1_time': '2026-08-13 12:30:00+00:00', 'p1_time_ok': 'True', 'p1_price': '610.29', 'p1_price_ok': 'False', 'p2_bar': '5077', 'p2_time': '2026-08-13 12:37:00+00:00', 'p2_time_ok': 'True', 'p2_price': '609.95', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 13. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '11', 'signal_type': 'HD+', 'signal_time': '2026-08-13 21:45:00+00:00', 'current_bar': '5625', 'current_time': '2026-08-13 21:45:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5600', 'p1_time': '2026-08-13 21:20:00+00:00', 'p1_time_ok': 'True', 'p1_price': '610.76', 'p1_price_ok': 'False', 'p2_bar': '5622', 'p2_time': '2026-08-13 21:42:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.93', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 14. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '12', 'signal_type': 'HD-', 'signal_time': '2026-08-14 08:44:00+00:00', 'current_bar': '6284', 'current_time': '2026-08-14 08:44:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6262', 'p1_time': '2026-08-14 08:22:00+00:00', 'p1_time_ok': 'True', 'p1_price': '607.86', 'p1_price_ok': 'False', 'p2_bar': '6281', 'p2_time': '2026-08-14 08:41:00+00:00', 'p2_time_ok': 'True', 'p2_price': '607.78', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 15. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '13', 'signal_type': 'HD+', 'signal_time': '2026-08-14 09:15:00+00:00', 'current_bar': '6315', 'current_time': '2026-08-14 09:15:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6304', 'p1_time': '2026-08-14 09:04:00+00:00', 'p1_time_ok': 'True', 'p1_price': '608.15', 'p1_price_ok': 'False', 'p2_bar': '6312', 'p2_time': '2026-08-14 09:12:00+00:00', 'p2_time_ok': 'True', 'p2_price': '608.25', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 16. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '14', 'signal_type': 'HD-', 'signal_time': '2026-08-14 10:08:00+00:00', 'current_bar': '6368', 'current_time': '2026-08-14 10:08:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6350', 'p1_time': '2026-08-14 09:50:00+00:00', 'p1_time_ok': 'True', 'p1_price': '607.97', 'p1_price_ok': 'False', 'p2_bar': '6365', 'p2_time': '2026-08-14 10:05:00+00:00', 'p2_time_ok': 'True', 'p2_price': '607.9', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 17. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '15', 'signal_type': 'HD+', 'signal_time': '2026-08-14 20:29:00+00:00', 'current_bar': '6989', 'current_time': '2026-08-14 20:29:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6960', 'p1_time': '2026-08-14 20:00:00+00:00', 'p1_time_ok': 'True', 'p1_price': '606.3', 'p1_price_ok': 'False', 'p2_bar': '6986', 'p2_time': '2026-08-14 20:26:00+00:00', 'p2_time_ok': 'True', 'p2_price': '606.43', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 18. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '16', 'signal_type': 'HD-', 'signal_time': '2026-08-15 00:36:00+00:00', 'current_bar': '7236', 'current_time': '2026-08-15 00:36:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7226', 'p1_time': '2026-08-15 00:26:00+00:00', 'p1_time_ok': 'True', 'p1_price': '608.01', 'p1_price_ok': 'False', 'p2_bar': '7233', 'p2_time': '2026-08-15 00:33:00+00:00', 'p2_time_ok': 'True', 'p2_price': '607.87', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 19. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '17', 'signal_type': 'HD+', 'signal_time': '2026-08-15 01:34:00+00:00', 'current_bar': '7294', 'current_time': '2026-08-15 01:34:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7280', 'p1_time': '2026-08-15 01:20:00+00:00', 'p1_time_ok': 'True', 'p1_price': '608.09', 'p1_price_ok': 'False', 'p2_bar': '7291', 'p2_time': '2026-08-15 01:31:00+00:00', 'p2_time_ok': 'True', 'p2_price': '608.17', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 20. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '18', 'signal_type': 'CD+', 'signal_time': '2026-08-15 05:43:00+00:00', 'current_bar': '7543', 'current_time': '2026-08-15 05:43:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7525', 'p1_time': '2026-08-15 05:25:00+00:00', 'p1_time_ok': 'True', 'p1_price': '610.42', 'p1_price_ok': 'False', 'p2_bar': '7540', 'p2_time': '2026-08-15 05:40:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.36', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 21. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '19', 'signal_type': 'HD-', 'signal_time': '2026-08-15 05:48:00+00:00', 'current_bar': '7548', 'current_time': '2026-08-15 05:48:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7531', 'p1_time': '2026-08-15 05:31:00+00:00', 'p1_time_ok': 'True', 'p1_price': '611.02', 'p1_price_ok': 'False', 'p2_bar': '7545', 'p2_time': '2026-08-15 05:45:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.94', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 22. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '20', 'signal_type': 'HD-', 'signal_time': '2026-08-15 13:33:00+00:00', 'current_bar': '8013', 'current_time': '2026-08-15 13:33:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7996', 'p1_time': '2026-08-15 13:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '610.53', 'p1_price_ok': 'False', 'p2_bar': '8010', 'p2_time': '2026-08-15 13:30:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.4', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 23. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '0', 'signal_type': 'CD-', 'signal_time': '2026-08-10 14:46:00+00:00', 'current_bar': '886', 'current_time': '2026-08-10 14:46:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '877', 'p1_time': '2026-08-10 14:37:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.55', 'p1_price_ok': 'False', 'p2_bar': '883', 'p2_time': '2026-08-10 14:43:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.56', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 24. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '1', 'signal_type': 'HD+', 'signal_time': '2026-08-11 02:17:00+00:00', 'current_bar': '1577', 'current_time': '2026-08-11 02:17:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1567', 'p1_time': '2026-08-11 02:07:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.27', 'p1_price_ok': 'False', 'p2_bar': '1574', 'p2_time': '2026-08-11 02:14:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.28', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 25. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '2', 'signal_type': 'CD+', 'signal_time': '2026-08-11 07:18:00+00:00', 'current_bar': '1878', 'current_time': '2026-08-11 07:18:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1854', 'p1_time': '2026-08-11 06:54:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.04', 'p1_price_ok': 'False', 'p2_bar': '1875', 'p2_time': '2026-08-11 07:15:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.01', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 26. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '3', 'signal_type': 'HD-', 'signal_time': '2026-08-11 14:19:00+00:00', 'current_bar': '2299', 'current_time': '2026-08-11 14:19:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2285', 'p1_time': '2026-08-11 14:05:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.16', 'p1_price_ok': 'False', 'p2_bar': '2296', 'p2_time': '2026-08-11 14:16:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.12', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 27. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '4', 'signal_type': 'HD+', 'signal_time': '2026-08-12 01:28:00+00:00', 'current_bar': '2967', 'current_time': '2026-08-12 01:27:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '2937', 'p1_time': '2026-08-12 00:57:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.51', 'p1_price_ok': 'False', 'p2_bar': '2964', 'p2_time': '2026-08-12 01:24:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.52', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 28. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '5', 'signal_type': 'HD+', 'signal_time': '2026-08-12 09:43:00+00:00', 'current_bar': '3461', 'current_time': '2026-08-12 09:41:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '3448', 'p1_time': '2026-08-12 09:28:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.36', 'p1_price_ok': 'False', 'p2_bar': '3458', 'p2_time': '2026-08-12 09:38:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.37', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 29. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '6', 'signal_type': 'HD-', 'signal_time': '2026-08-13 01:44:00+00:00', 'current_bar': '4422', 'current_time': '2026-08-13 01:42:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '4396', 'p1_time': '2026-08-13 01:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.85', 'p1_price_ok': 'False', 'p2_bar': '4419', 'p2_time': '2026-08-13 01:39:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.83', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 30. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '7', 'signal_type': 'HD-', 'signal_time': '2026-08-13 04:51:00+00:00', 'current_bar': '4609', 'current_time': '2026-08-13 04:49:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '4596', 'p1_time': '2026-08-13 04:36:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.96', 'p1_price_ok': 'False', 'p2_bar': '4606', 'p2_time': '2026-08-13 04:46:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.95', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 31. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '8', 'signal_type': 'HD-', 'signal_time': '2026-08-13 12:02:00+00:00', 'current_bar': '5040', 'current_time': '2026-08-13 12:00:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '5025', 'p1_time': '2026-08-13 11:45:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.73', 'p1_price_ok': 'False', 'p2_bar': '5037', 'p2_time': '2026-08-13 11:57:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.71', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 32. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '9', 'signal_type': 'CD+', 'signal_time': '2026-08-13 14:13:00+00:00', 'current_bar': '5171', 'current_time': '2026-08-13 14:11:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '5159', 'p1_time': '2026-08-13 13:59:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.72', 'p1_price_ok': 'False', 'p2_bar': '5168', 'p2_time': '2026-08-13 14:08:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.66', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 33. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '10', 'signal_type': 'CD+', 'signal_time': '2026-08-14 12:58:00+00:00', 'current_bar': '6536', 'current_time': '2026-08-14 12:56:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '6526', 'p1_time': '2026-08-14 12:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.39', 'p1_price_ok': 'False', 'p2_bar': '6533', 'p2_time': '2026-08-14 12:53:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.38', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 34. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '11', 'signal_type': 'HD-', 'signal_time': '2026-08-14 13:04:00+00:00', 'current_bar': '6542', 'current_time': '2026-08-14 13:02:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '6529', 'p1_time': '2026-08-14 12:49:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.43', 'p1_price_ok': 'False', 'p2_bar': '6539', 'p2_time': '2026-08-14 12:59:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.41', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 35. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '12', 'signal_type': 'HD+', 'signal_time': '2026-08-15 01:58:00+00:00', 'current_bar': '7316', 'current_time': '2026-08-15 01:56:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7296', 'p1_time': '2026-08-15 01:36:00+00:00', 'p1_time_ok': 'True', 'p1_price': '43.75', 'p1_price_ok': 'False', 'p2_bar': '7313', 'p2_time': '2026-08-15 01:53:00+00:00', 'p2_time_ok': 'True', 'p2_price': '43.78', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 36. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '13', 'signal_type': 'CD-', 'signal_time': '2026-08-15 02:41:00+00:00', 'current_bar': '7359', 'current_time': '2026-08-15 02:39:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7349', 'p1_time': '2026-08-15 02:29:00+00:00', 'p1_time_ok': 'True', 'p1_price': '43.97', 'p1_price_ok': 'False', 'p2_bar': '7356', 'p2_time': '2026-08-15 02:36:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.0', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 37. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '14', 'signal_type': 'HD-', 'signal_time': '2026-08-15 08:36:00+00:00', 'current_bar': '7714', 'current_time': '2026-08-15 08:34:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7683', 'p1_time': '2026-08-15 08:03:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.05', 'p1_price_ok': 'False', 'p2_bar': '7711', 'p2_time': '2026-08-15 08:31:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.04', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 38. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '0', 'signal_type': 'HD+', 'signal_time': '2026-08-11 11:25:00+00:00', 'current_bar': '2125', 'current_time': '2026-08-11 11:25:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2109', 'p1_time': '2026-08-11 11:09:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07059', 'p1_price_ok': 'False', 'p2_bar': '2122', 'p2_time': '2026-08-11 11:22:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07061', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 39. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '1', 'signal_type': 'HD+', 'signal_time': '2026-08-11 22:22:00+00:00', 'current_bar': '2782', 'current_time': '2026-08-11 22:22:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2770', 'p1_time': '2026-08-11 22:10:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.0726', 'p1_price_ok': 'False', 'p2_bar': '2779', 'p2_time': '2026-08-11 22:19:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07277', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 40. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '2', 'signal_type': 'HD+', 'signal_time': '2026-08-12 01:20:00+00:00', 'current_bar': '2960', 'current_time': '2026-08-12 01:20:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2936', 'p1_time': '2026-08-12 00:56:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07218', 'p1_price_ok': 'False', 'p2_bar': '2957', 'p2_time': '2026-08-12 01:17:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07224', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 41. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '3', 'signal_type': 'CD-', 'signal_time': '2026-08-12 03:40:00+00:00', 'current_bar': '3100', 'current_time': '2026-08-12 03:40:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3086', 'p1_time': '2026-08-12 03:26:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07242', 'p1_price_ok': 'False', 'p2_bar': '3097', 'p2_time': '2026-08-12 03:37:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07248', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 42. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '4', 'signal_type': 'CD+', 'signal_time': '2026-08-12 12:33:00+00:00', 'current_bar': '3633', 'current_time': '2026-08-12 12:33:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3625', 'p1_time': '2026-08-12 12:25:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07182', 'p1_price_ok': 'False', 'p2_bar': '3630', 'p2_time': '2026-08-12 12:30:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.0717', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 43. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '5', 'signal_type': 'CD-', 'signal_time': '2026-08-12 16:37:00+00:00', 'current_bar': '3877', 'current_time': '2026-08-12 16:37:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3858', 'p1_time': '2026-08-12 16:18:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07098', 'p1_price_ok': 'False', 'p2_bar': '3874', 'p2_time': '2026-08-12 16:34:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07099', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 44. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '6', 'signal_type': 'HD+', 'signal_time': '2026-08-13 05:33:00+00:00', 'current_bar': '4653', 'current_time': '2026-08-13 05:33:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4643', 'p1_time': '2026-08-13 05:23:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07031', 'p1_price_ok': 'False', 'p2_bar': '4650', 'p2_time': '2026-08-13 05:30:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07032', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 45. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '7', 'signal_type': 'HD-', 'signal_time': '2026-08-13 09:23:00+00:00', 'current_bar': '4883', 'current_time': '2026-08-13 09:23:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4860', 'p1_time': '2026-08-13 09:00:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07051', 'p1_price_ok': 'False', 'p2_bar': '4880', 'p2_time': '2026-08-13 09:20:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07044', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 46. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '8', 'signal_type': 'HD-', 'signal_time': '2026-08-13 10:47:00+00:00', 'current_bar': '4967', 'current_time': '2026-08-13 10:47:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4943', 'p1_time': '2026-08-13 10:23:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07021', 'p1_price_ok': 'False', 'p2_bar': '4964', 'p2_time': '2026-08-13 10:44:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07015', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 47. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '9', 'signal_type': 'HD+', 'signal_time': '2026-08-13 18:04:00+00:00', 'current_bar': '5404', 'current_time': '2026-08-13 18:04:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5377', 'p1_time': '2026-08-13 17:37:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.06985', 'p1_price_ok': 'False', 'p2_bar': '5401', 'p2_time': '2026-08-13 18:01:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.06987', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 48. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '10', 'signal_type': 'HD-', 'signal_time': '2026-08-14 05:21:00+00:00', 'current_bar': '6081', 'current_time': '2026-08-14 05:21:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6066', 'p1_time': '2026-08-14 05:06:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.06999', 'p1_price_ok': 'False', 'p2_bar': '6078', 'p2_time': '2026-08-14 05:18:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.06998', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 49. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '11', 'signal_type': 'HD+', 'signal_time': '2026-08-14 23:59:00+00:00', 'current_bar': '7199', 'current_time': '2026-08-14 23:59:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7175', 'p1_time': '2026-08-14 23:35:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.06999', 'p1_price_ok': 'False', 'p2_bar': '7196', 'p2_time': '2026-08-14 23:56:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07004', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 50. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '12', 'signal_type': 'HD-', 'signal_time': '2026-08-15 01:47:00+00:00', 'current_bar': '7306', 'current_time': '2026-08-15 01:46:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7294', 'p1_time': '2026-08-15 01:34:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07007', 'p1_price_ok': 'False', 'p2_bar': '7303', 'p2_time': '2026-08-15 01:43:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07006', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 51. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '13', 'signal_type': 'HD+', 'signal_time': '2026-08-15 07:15:00+00:00', 'current_bar': '7633', 'current_time': '2026-08-15 07:13:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7605', 'p1_time': '2026-08-15 06:45:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07008', 'p1_price_ok': 'False', 'p2_bar': '7630', 'p2_time': '2026-08-15 07:10:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07011', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 52. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '14', 'signal_type': 'CD+', 'signal_time': '2026-08-15 07:52:00+00:00', 'current_bar': '7670', 'current_time': '2026-08-15 07:50:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7656', 'p1_time': '2026-08-15 07:36:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07005', 'p1_price_ok': 'False', 'p2_bar': '7667', 'p2_time': '2026-08-15 07:47:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07004', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 53. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '15', 'signal_type': 'HD-', 'signal_time': '2026-08-15 07:58:00+00:00', 'current_bar': '7676', 'current_time': '2026-08-15 07:56:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7659', 'p1_time': '2026-08-15 07:39:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07009', 'p1_price_ok': 'False', 'p2_bar': '7673', 'p2_time': '2026-08-15 07:53:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07008', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 54. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '16', 'signal_type': 'CD+', 'signal_time': '2026-08-15 10:34:00+00:00', 'current_bar': '7832', 'current_time': '2026-08-15 10:32:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7822', 'p1_time': '2026-08-15 10:22:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07003', 'p1_price_ok': 'False', 'p2_bar': '7829', 'p2_time': '2026-08-15 10:29:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07001', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 55. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '0', 'signal_type': 'CD+', 'signal_time': '2026-08-10 14:42:00+00:00', 'current_bar': '882', 'current_time': '2026-08-10 14:42:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '873', 'p1_time': '2026-08-10 14:33:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1898.04', 'p1_price_ok': 'False', 'p2_bar': '879', 'p2_time': '2026-08-10 14:39:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1897.38', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 56. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '1', 'signal_type': 'HD-', 'signal_time': '2026-08-10 18:29:00+00:00', 'current_bar': '1109', 'current_time': '2026-08-10 18:29:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1087', 'p1_time': '2026-08-10 18:07:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1874.79', 'p1_price_ok': 'False', 'p2_bar': '1106', 'p2_time': '2026-08-10 18:26:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1874.54', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 57. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '2', 'signal_type': 'CD-', 'signal_time': '2026-08-11 01:27:00+00:00', 'current_bar': '1527', 'current_time': '2026-08-11 01:27:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1513', 'p1_time': '2026-08-11 01:13:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1877.85', 'p1_price_ok': 'False', 'p2_bar': '1524', 'p2_time': '2026-08-11 01:24:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.57', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 58. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '3', 'signal_type': 'HD+', 'signal_time': '2026-08-11 01:45:00+00:00', 'current_bar': '1545', 'current_time': '2026-08-11 01:45:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1520', 'p1_time': '2026-08-11 01:20:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1873.9', 'p1_price_ok': 'False', 'p2_bar': '1542', 'p2_time': '2026-08-11 01:42:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1874.25', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 59. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '4', 'signal_type': 'HD+', 'signal_time': '2026-08-11 02:18:00+00:00', 'current_bar': '1578', 'current_time': '2026-08-11 02:18:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1567', 'p1_time': '2026-08-11 02:07:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1877.7', 'p1_price_ok': 'False', 'p2_bar': '1575', 'p2_time': '2026-08-11 02:15:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.03', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 60. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '5', 'signal_type': 'CD-', 'signal_time': '2026-08-11 03:22:00+00:00', 'current_bar': '1642', 'current_time': '2026-08-11 03:22:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1633', 'p1_time': '2026-08-11 03:13:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1880.44', 'p1_price_ok': 'False', 'p2_bar': '1639', 'p2_time': '2026-08-11 03:19:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1881.22', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 61. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '6', 'signal_type': 'HD+', 'signal_time': '2026-08-11 03:25:00+00:00', 'current_bar': '1645', 'current_time': '2026-08-11 03:25:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1636', 'p1_time': '2026-08-11 03:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.61', 'p1_price_ok': 'False', 'p2_bar': '1642', 'p2_time': '2026-08-11 03:22:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1879.74', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 62. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '7', 'signal_type': 'HD+', 'signal_time': '2026-08-11 03:34:00+00:00', 'current_bar': '1654', 'current_time': '2026-08-11 03:34:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1642', 'p1_time': '2026-08-11 03:22:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.74', 'p1_price_ok': 'False', 'p2_bar': '1651', 'p2_time': '2026-08-11 03:31:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1880.22', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 63. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '8', 'signal_type': 'CD-', 'signal_time': '2026-08-11 03:43:00+00:00', 'current_bar': '1663', 'current_time': '2026-08-11 03:43:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1647', 'p1_time': '2026-08-11 03:27:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1881.29', 'p1_price_ok': 'False', 'p2_bar': '1660', 'p2_time': '2026-08-11 03:40:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1881.78', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 64. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '9', 'signal_type': 'HD+', 'signal_time': '2026-08-11 11:27:00+00:00', 'current_bar': '2127', 'current_time': '2026-08-11 11:27:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2117', 'p1_time': '2026-08-11 11:17:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1891.0', 'p1_price_ok': 'False', 'p2_bar': '2124', 'p2_time': '2026-08-11 11:24:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1891.46', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 65. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '10', 'signal_type': 'HD-', 'signal_time': '2026-08-11 14:49:00+00:00', 'current_bar': '2329', 'current_time': '2026-08-11 14:49:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2316', 'p1_time': '2026-08-11 14:36:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1881.25', 'p1_price_ok': 'False', 'p2_bar': '2326', 'p2_time': '2026-08-11 14:46:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.6', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 66. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '11', 'signal_type': 'CD+', 'signal_time': '2026-08-11 14:55:00+00:00', 'current_bar': '2335', 'current_time': '2026-08-11 14:55:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2320', 'p1_time': '2026-08-11 14:40:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1874.34', 'p1_price_ok': 'False', 'p2_bar': '2332', 'p2_time': '2026-08-11 14:52:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1871.45', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 67. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '12', 'signal_type': 'HD-', 'signal_time': '2026-08-11 15:11:00+00:00', 'current_bar': '2351', 'current_time': '2026-08-11 15:11:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2326', 'p1_time': '2026-08-11 14:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1878.6', 'p1_price_ok': 'False', 'p2_bar': '2348', 'p2_time': '2026-08-11 15:08:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1877.63', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 68. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '13', 'signal_type': 'HD+', 'signal_time': '2026-08-11 21:26:00+00:00', 'current_bar': '2726', 'current_time': '2026-08-11 21:26:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2691', 'p1_time': '2026-08-11 20:51:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.79', 'p1_price_ok': 'False', 'p2_bar': '2723', 'p2_time': '2026-08-11 21:23:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1880.67', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 69. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '14', 'signal_type': 'HD-', 'signal_time': '2026-08-12 14:52:00+00:00', 'current_bar': '3772', 'current_time': '2026-08-12 14:52:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3748', 'p1_time': '2026-08-12 14:28:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1897.6', 'p1_price_ok': 'False', 'p2_bar': '3769', 'p2_time': '2026-08-12 14:49:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1895.31', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 70. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '15', 'signal_type': 'CD+', 'signal_time': '2026-08-12 20:12:00+00:00', 'current_bar': '4092', 'current_time': '2026-08-12 20:12:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4073', 'p1_time': '2026-08-12 19:53:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1877.98', 'p1_price_ok': 'False', 'p2_bar': '4089', 'p2_time': '2026-08-12 20:09:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1877.81', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 71. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '16', 'signal_type': 'CD+', 'signal_time': '2026-08-12 23:27:00+00:00', 'current_bar': '4287', 'current_time': '2026-08-12 23:27:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4267', 'p1_time': '2026-08-12 23:07:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1875.3', 'p1_price_ok': 'False', 'p2_bar': '4284', 'p2_time': '2026-08-12 23:24:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1874.81', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 72. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '17', 'signal_type': 'CD-', 'signal_time': '2026-08-12 23:49:00+00:00', 'current_bar': '4309', 'current_time': '2026-08-12 23:49:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4299', 'p1_time': '2026-08-12 23:39:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.25', 'p1_price_ok': 'False', 'p2_bar': '4306', 'p2_time': '2026-08-12 23:46:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1879.3', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 73. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '18', 'signal_type': 'HD+', 'signal_time': '2026-08-13 00:07:00+00:00', 'current_bar': '4327', 'current_time': '2026-08-13 00:07:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4305', 'p1_time': '2026-08-12 23:45:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1878.0', 'p1_price_ok': 'False', 'p2_bar': '4324', 'p2_time': '2026-08-13 00:04:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.9', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 74. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '19', 'signal_type': 'HD+', 'signal_time': '2026-08-13 03:31:00+00:00', 'current_bar': '4531', 'current_time': '2026-08-13 03:31:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4510', 'p1_time': '2026-08-13 03:10:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1882.02', 'p1_price_ok': 'False', 'p2_bar': '4528', 'p2_time': '2026-08-13 03:28:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1882.93', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 75. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '20', 'signal_type': 'HD-', 'signal_time': '2026-08-13 09:28:00+00:00', 'current_bar': '4888', 'current_time': '2026-08-13 09:28:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4860', 'p1_time': '2026-08-13 09:00:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1890.05', 'p1_price_ok': 'False', 'p2_bar': '4885', 'p2_time': '2026-08-13 09:25:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1886.83', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 76. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '21', 'signal_type': 'CD-', 'signal_time': '2026-08-13 12:33:00+00:00', 'current_bar': '5073', 'current_time': '2026-08-13 12:33:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5056', 'p1_time': '2026-08-13 12:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1884.59', 'p1_price_ok': 'False', 'p2_bar': '5070', 'p2_time': '2026-08-13 12:30:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1890.18', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 77. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '22', 'signal_type': 'HD+', 'signal_time': '2026-08-13 13:28:00+00:00', 'current_bar': '5128', 'current_time': '2026-08-13 13:28:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5087', 'p1_time': '2026-08-13 12:47:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1886.83', 'p1_price_ok': 'False', 'p2_bar': '5125', 'p2_time': '2026-08-13 13:25:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1887.15', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 78. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '23', 'signal_type': 'HD-', 'signal_time': '2026-08-13 15:46:00+00:00', 'current_bar': '5266', 'current_time': '2026-08-13 15:46:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5242', 'p1_time': '2026-08-13 15:22:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1894.32', 'p1_price_ok': 'False', 'p2_bar': '5263', 'p2_time': '2026-08-13 15:43:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1892.0', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 79. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '24', 'signal_type': 'HD+', 'signal_time': '2026-08-13 17:59:00+00:00', 'current_bar': '5399', 'current_time': '2026-08-13 17:59:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5377', 'p1_time': '2026-08-13 17:37:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1875.8', 'p1_price_ok': 'False', 'p2_bar': '5396', 'p2_time': '2026-08-13 17:56:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1876.88', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 80. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '25', 'signal_type': 'HD-', 'signal_time': '2026-08-14 03:25:00+00:00', 'current_bar': '5965', 'current_time': '2026-08-14 03:25:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5933', 'p1_time': '2026-08-14 02:53:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1889.23', 'p1_price_ok': 'False', 'p2_bar': '5962', 'p2_time': '2026-08-14 03:22:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1889.07', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 81. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '26', 'signal_type': 'HD-', 'signal_time': '2026-08-14 06:49:00+00:00', 'current_bar': '6169', 'current_time': '2026-08-14 06:49:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6153', 'p1_time': '2026-08-14 06:33:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.33', 'p1_price_ok': 'False', 'p2_bar': '6166', 'p2_time': '2026-08-14 06:46:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.45', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 82. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '27', 'signal_type': 'HD-', 'signal_time': '2026-08-14 07:10:00+00:00', 'current_bar': '6190', 'current_time': '2026-08-14 07:10:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6166', 'p1_time': '2026-08-14 06:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1878.45', 'p1_price_ok': 'False', 'p2_bar': '6187', 'p2_time': '2026-08-14 07:07:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1876.52', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 83. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '28', 'signal_type': 'HD+', 'signal_time': '2026-08-14 13:55:00+00:00', 'current_bar': '6595', 'current_time': '2026-08-14 13:55:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6579', 'p1_time': '2026-08-14 13:39:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1866.43', 'p1_price_ok': 'False', 'p2_bar': '6592', 'p2_time': '2026-08-14 13:52:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1866.9', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 84. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '29', 'signal_type': 'HD+', 'signal_time': '2026-08-14 15:00:00+00:00', 'current_bar': '6660', 'current_time': '2026-08-14 15:00:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6621', 'p1_time': '2026-08-14 14:21:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1864.28', 'p1_price_ok': 'False', 'p2_bar': '6657', 'p2_time': '2026-08-14 14:57:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1864.52', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 85. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '30', 'signal_type': 'HD-', 'signal_time': '2026-08-14 18:21:00+00:00', 'current_bar': '6861', 'current_time': '2026-08-14 18:21:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6846', 'p1_time': '2026-08-14 18:06:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1878.87', 'p1_price_ok': 'False', 'p2_bar': '6858', 'p2_time': '2026-08-14 18:18:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.26', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 86. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '31', 'signal_type': 'CD-', 'signal_time': '2026-08-14 23:05:00+00:00', 'current_bar': '7145', 'current_time': '2026-08-14 23:05:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7126', 'p1_time': '2026-08-14 22:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1880.09', 'p1_price_ok': 'False', 'p2_bar': '7142', 'p2_time': '2026-08-14 23:02:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1880.32', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 87. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '0', 'signal_type': 'HD-', 'signal_time': '2026-08-10 14:04:00+00:00', 'current_bar': '844', 'current_time': '2026-08-10 14:04:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '825', 'p1_time': '2026-08-10 13:45:00+00:00', 'p1_time_ok': 'True', 'p1_price': '601.71', 'p1_price_ok': 'False', 'p2_bar': '841', 'p2_time': '2026-08-10 14:01:00+00:00', 'p2_time_ok': 'True', 'p2_price': '601.55', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 88. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '1', 'signal_type': 'CD+', 'signal_time': '2026-08-10 15:43:00+00:00', 'current_bar': '943', 'current_time': '2026-08-10 15:43:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '926', 'p1_time': '2026-08-10 15:26:00+00:00', 'p1_time_ok': 'True', 'p1_price': '599.73', 'p1_price_ok': 'False', 'p2_bar': '940', 'p2_time': '2026-08-10 15:40:00+00:00', 'p2_time_ok': 'True', 'p2_price': '599.7', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 89. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '2', 'signal_type': 'HD+', 'signal_time': '2026-08-10 19:31:00+00:00', 'current_bar': '1171', 'current_time': '2026-08-10 19:31:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1154', 'p1_time': '2026-08-10 19:14:00+00:00', 'p1_time_ok': 'True', 'p1_price': '600.36', 'p1_price_ok': 'False', 'p2_bar': '1168', 'p2_time': '2026-08-10 19:28:00+00:00', 'p2_time_ok': 'True', 'p2_price': '600.58', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 90. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '3', 'signal_type': 'CD-', 'signal_time': '2026-08-10 19:36:00+00:00', 'current_bar': '1176', 'current_time': '2026-08-10 19:36:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1165', 'p1_time': '2026-08-10 19:25:00+00:00', 'p1_time_ok': 'True', 'p1_price': '600.9', 'p1_price_ok': 'False', 'p2_bar': '1173', 'p2_time': '2026-08-10 19:33:00+00:00', 'p2_time_ok': 'True', 'p2_price': '601.0', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 91. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '4', 'signal_type': 'HD+', 'signal_time': '2026-08-11 00:47:00+00:00', 'current_bar': '1487', 'current_time': '2026-08-11 00:47:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1456', 'p1_time': '2026-08-11 00:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '599.08', 'p1_price_ok': 'False', 'p2_bar': '1484', 'p2_time': '2026-08-11 00:44:00+00:00', 'p2_time_ok': 'True', 'p2_price': '599.15', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 92. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '5', 'signal_type': 'HD+', 'signal_time': '2026-08-11 07:59:00+00:00', 'current_bar': '1919', 'current_time': '2026-08-11 07:59:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1906', 'p1_time': '2026-08-11 07:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '601.5', 'p1_price_ok': 'False', 'p2_bar': '1916', 'p2_time': '2026-08-11 07:56:00+00:00', 'p2_time_ok': 'True', 'p2_price': '601.51', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 93. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '6', 'signal_type': 'CD-', 'signal_time': '2026-08-11 16:25:00+00:00', 'current_bar': '2425', 'current_time': '2026-08-11 16:25:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2410', 'p1_time': '2026-08-11 16:10:00+00:00', 'p1_time_ok': 'True', 'p1_price': '609.79', 'p1_price_ok': 'False', 'p2_bar': '2422', 'p2_time': '2026-08-11 16:22:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.14', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 94. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '7', 'signal_type': 'CD-', 'signal_time': '2026-08-12 09:28:00+00:00', 'current_bar': '3448', 'current_time': '2026-08-12 09:28:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3439', 'p1_time': '2026-08-12 09:19:00+00:00', 'p1_time_ok': 'True', 'p1_price': '612.08', 'p1_price_ok': 'False', 'p2_bar': '3445', 'p2_time': '2026-08-12 09:25:00+00:00', 'p2_time_ok': 'True', 'p2_price': '612.49', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 95. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '8', 'signal_type': 'HD-', 'signal_time': '2026-08-12 15:10:00+00:00', 'current_bar': '3790', 'current_time': '2026-08-12 15:10:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3766', 'p1_time': '2026-08-12 14:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '611.2', 'p1_price_ok': 'False', 'p2_bar': '3787', 'p2_time': '2026-08-12 15:07:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.64', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 96. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '9', 'signal_type': 'HD+', 'signal_time': '2026-08-13 07:40:00+00:00', 'current_bar': '4780', 'current_time': '2026-08-13 07:40:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4760', 'p1_time': '2026-08-13 07:20:00+00:00', 'p1_time_ok': 'True', 'p1_price': '613.46', 'p1_price_ok': 'False', 'p2_bar': '4777', 'p2_time': '2026-08-13 07:37:00+00:00', 'p2_time_ok': 'True', 'p2_price': '613.58', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 97. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '10', 'signal_type': 'HD-', 'signal_time': '2026-08-13 12:40:00+00:00', 'current_bar': '5080', 'current_time': '2026-08-13 12:40:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5070', 'p1_time': '2026-08-13 12:30:00+00:00', 'p1_time_ok': 'True', 'p1_price': '610.29', 'p1_price_ok': 'False', 'p2_bar': '5077', 'p2_time': '2026-08-13 12:37:00+00:00', 'p2_time_ok': 'True', 'p2_price': '609.95', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 98. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '11', 'signal_type': 'HD+', 'signal_time': '2026-08-13 21:45:00+00:00', 'current_bar': '5625', 'current_time': '2026-08-13 21:45:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5600', 'p1_time': '2026-08-13 21:20:00+00:00', 'p1_time_ok': 'True', 'p1_price': '610.76', 'p1_price_ok': 'False', 'p2_bar': '5622', 'p2_time': '2026-08-13 21:42:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.93', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 99. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '12', 'signal_type': 'HD-', 'signal_time': '2026-08-14 08:44:00+00:00', 'current_bar': '6284', 'current_time': '2026-08-14 08:44:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6262', 'p1_time': '2026-08-14 08:22:00+00:00', 'p1_time_ok': 'True', 'p1_price': '607.86', 'p1_price_ok': 'False', 'p2_bar': '6281', 'p2_time': '2026-08-14 08:41:00+00:00', 'p2_time_ok': 'True', 'p2_price': '607.78', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 100. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '13', 'signal_type': 'HD+', 'signal_time': '2026-08-14 09:15:00+00:00', 'current_bar': '6315', 'current_time': '2026-08-14 09:15:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6304', 'p1_time': '2026-08-14 09:04:00+00:00', 'p1_time_ok': 'True', 'p1_price': '608.15', 'p1_price_ok': 'False', 'p2_bar': '6312', 'p2_time': '2026-08-14 09:12:00+00:00', 'p2_time_ok': 'True', 'p2_price': '608.25', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 101. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '14', 'signal_type': 'HD-', 'signal_time': '2026-08-14 10:08:00+00:00', 'current_bar': '6368', 'current_time': '2026-08-14 10:08:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6350', 'p1_time': '2026-08-14 09:50:00+00:00', 'p1_time_ok': 'True', 'p1_price': '607.97', 'p1_price_ok': 'False', 'p2_bar': '6365', 'p2_time': '2026-08-14 10:05:00+00:00', 'p2_time_ok': 'True', 'p2_price': '607.9', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 102. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '15', 'signal_type': 'HD+', 'signal_time': '2026-08-14 20:29:00+00:00', 'current_bar': '6989', 'current_time': '2026-08-14 20:29:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6960', 'p1_time': '2026-08-14 20:00:00+00:00', 'p1_time_ok': 'True', 'p1_price': '606.3', 'p1_price_ok': 'False', 'p2_bar': '6986', 'p2_time': '2026-08-14 20:26:00+00:00', 'p2_time_ok': 'True', 'p2_price': '606.43', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 103. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '16', 'signal_type': 'HD-', 'signal_time': '2026-08-15 00:36:00+00:00', 'current_bar': '7236', 'current_time': '2026-08-15 00:36:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7226', 'p1_time': '2026-08-15 00:26:00+00:00', 'p1_time_ok': 'True', 'p1_price': '608.01', 'p1_price_ok': 'False', 'p2_bar': '7233', 'p2_time': '2026-08-15 00:33:00+00:00', 'p2_time_ok': 'True', 'p2_price': '607.87', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 104. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '17', 'signal_type': 'HD+', 'signal_time': '2026-08-15 01:34:00+00:00', 'current_bar': '7294', 'current_time': '2026-08-15 01:34:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7280', 'p1_time': '2026-08-15 01:20:00+00:00', 'p1_time_ok': 'True', 'p1_price': '608.09', 'p1_price_ok': 'False', 'p2_bar': '7291', 'p2_time': '2026-08-15 01:31:00+00:00', 'p2_time_ok': 'True', 'p2_price': '608.17', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 105. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '18', 'signal_type': 'CD+', 'signal_time': '2026-08-15 05:43:00+00:00', 'current_bar': '7543', 'current_time': '2026-08-15 05:43:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7525', 'p1_time': '2026-08-15 05:25:00+00:00', 'p1_time_ok': 'True', 'p1_price': '610.42', 'p1_price_ok': 'False', 'p2_bar': '7540', 'p2_time': '2026-08-15 05:40:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.36', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 106. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '19', 'signal_type': 'HD-', 'signal_time': '2026-08-15 05:48:00+00:00', 'current_bar': '7548', 'current_time': '2026-08-15 05:48:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7531', 'p1_time': '2026-08-15 05:31:00+00:00', 'p1_time_ok': 'True', 'p1_price': '611.02', 'p1_price_ok': 'False', 'p2_bar': '7545', 'p2_time': '2026-08-15 05:45:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.94', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 107. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'BNBUSDT', 'row': '20', 'signal_type': 'HD-', 'signal_time': '2026-08-15 13:33:00+00:00', 'current_bar': '8013', 'current_time': '2026-08-15 13:33:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7996', 'p1_time': '2026-08-15 13:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '610.53', 'p1_price_ok': 'False', 'p2_bar': '8010', 'p2_time': '2026-08-15 13:30:00+00:00', 'p2_time_ok': 'True', 'p2_price': '610.4', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 108. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '0', 'signal_type': 'HD+', 'signal_time': '2026-08-11 11:25:00+00:00', 'current_bar': '2125', 'current_time': '2026-08-11 11:25:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2109', 'p1_time': '2026-08-11 11:09:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07059', 'p1_price_ok': 'False', 'p2_bar': '2122', 'p2_time': '2026-08-11 11:22:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07061', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 109. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '1', 'signal_type': 'HD+', 'signal_time': '2026-08-11 22:22:00+00:00', 'current_bar': '2782', 'current_time': '2026-08-11 22:22:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2770', 'p1_time': '2026-08-11 22:10:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.0726', 'p1_price_ok': 'False', 'p2_bar': '2779', 'p2_time': '2026-08-11 22:19:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07277', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 110. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '2', 'signal_type': 'HD+', 'signal_time': '2026-08-12 01:20:00+00:00', 'current_bar': '2960', 'current_time': '2026-08-12 01:20:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2936', 'p1_time': '2026-08-12 00:56:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07218', 'p1_price_ok': 'False', 'p2_bar': '2957', 'p2_time': '2026-08-12 01:17:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07224', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 111. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '3', 'signal_type': 'CD-', 'signal_time': '2026-08-12 03:40:00+00:00', 'current_bar': '3100', 'current_time': '2026-08-12 03:40:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3086', 'p1_time': '2026-08-12 03:26:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07242', 'p1_price_ok': 'False', 'p2_bar': '3097', 'p2_time': '2026-08-12 03:37:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07248', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 112. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '4', 'signal_type': 'CD+', 'signal_time': '2026-08-12 12:33:00+00:00', 'current_bar': '3633', 'current_time': '2026-08-12 12:33:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3625', 'p1_time': '2026-08-12 12:25:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07182', 'p1_price_ok': 'False', 'p2_bar': '3630', 'p2_time': '2026-08-12 12:30:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.0717', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 113. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '5', 'signal_type': 'CD-', 'signal_time': '2026-08-12 16:37:00+00:00', 'current_bar': '3877', 'current_time': '2026-08-12 16:37:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3858', 'p1_time': '2026-08-12 16:18:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07098', 'p1_price_ok': 'False', 'p2_bar': '3874', 'p2_time': '2026-08-12 16:34:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07099', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 114. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '6', 'signal_type': 'HD+', 'signal_time': '2026-08-13 05:33:00+00:00', 'current_bar': '4653', 'current_time': '2026-08-13 05:33:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4643', 'p1_time': '2026-08-13 05:23:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07031', 'p1_price_ok': 'False', 'p2_bar': '4650', 'p2_time': '2026-08-13 05:30:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07032', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 115. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '7', 'signal_type': 'HD-', 'signal_time': '2026-08-13 09:23:00+00:00', 'current_bar': '4883', 'current_time': '2026-08-13 09:23:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4860', 'p1_time': '2026-08-13 09:00:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07051', 'p1_price_ok': 'False', 'p2_bar': '4880', 'p2_time': '2026-08-13 09:20:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07044', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 116. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '8', 'signal_type': 'HD-', 'signal_time': '2026-08-13 10:47:00+00:00', 'current_bar': '4967', 'current_time': '2026-08-13 10:47:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4943', 'p1_time': '2026-08-13 10:23:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07021', 'p1_price_ok': 'False', 'p2_bar': '4964', 'p2_time': '2026-08-13 10:44:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07015', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 117. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '9', 'signal_type': 'HD+', 'signal_time': '2026-08-13 18:04:00+00:00', 'current_bar': '5404', 'current_time': '2026-08-13 18:04:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5377', 'p1_time': '2026-08-13 17:37:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.06985', 'p1_price_ok': 'False', 'p2_bar': '5401', 'p2_time': '2026-08-13 18:01:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.06987', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 118. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '10', 'signal_type': 'HD-', 'signal_time': '2026-08-14 05:21:00+00:00', 'current_bar': '6081', 'current_time': '2026-08-14 05:21:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6066', 'p1_time': '2026-08-14 05:06:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.06999', 'p1_price_ok': 'False', 'p2_bar': '6078', 'p2_time': '2026-08-14 05:18:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.06998', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 119. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '11', 'signal_type': 'HD+', 'signal_time': '2026-08-14 23:59:00+00:00', 'current_bar': '7199', 'current_time': '2026-08-14 23:59:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7175', 'p1_time': '2026-08-14 23:35:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.06999', 'p1_price_ok': 'False', 'p2_bar': '7196', 'p2_time': '2026-08-14 23:56:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07004', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 120. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '12', 'signal_type': 'HD-', 'signal_time': '2026-08-15 01:47:00+00:00', 'current_bar': '7306', 'current_time': '2026-08-15 01:46:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7294', 'p1_time': '2026-08-15 01:34:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07007', 'p1_price_ok': 'False', 'p2_bar': '7303', 'p2_time': '2026-08-15 01:43:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07006', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 121. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '13', 'signal_type': 'HD+', 'signal_time': '2026-08-15 07:15:00+00:00', 'current_bar': '7633', 'current_time': '2026-08-15 07:13:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7605', 'p1_time': '2026-08-15 06:45:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07008', 'p1_price_ok': 'False', 'p2_bar': '7630', 'p2_time': '2026-08-15 07:10:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07011', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 122. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '14', 'signal_type': 'CD+', 'signal_time': '2026-08-15 07:52:00+00:00', 'current_bar': '7670', 'current_time': '2026-08-15 07:50:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7656', 'p1_time': '2026-08-15 07:36:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07005', 'p1_price_ok': 'False', 'p2_bar': '7667', 'p2_time': '2026-08-15 07:47:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07004', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 123. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '15', 'signal_type': 'HD-', 'signal_time': '2026-08-15 07:58:00+00:00', 'current_bar': '7676', 'current_time': '2026-08-15 07:56:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7659', 'p1_time': '2026-08-15 07:39:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07009', 'p1_price_ok': 'False', 'p2_bar': '7673', 'p2_time': '2026-08-15 07:53:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07008', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 124. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'DOGEUSDT', 'row': '16', 'signal_type': 'CD+', 'signal_time': '2026-08-15 10:34:00+00:00', 'current_bar': '7832', 'current_time': '2026-08-15 10:32:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7822', 'p1_time': '2026-08-15 10:22:00+00:00', 'p1_time_ok': 'True', 'p1_price': '0.07003', 'p1_price_ok': 'False', 'p2_bar': '7829', 'p2_time': '2026-08-15 10:29:00+00:00', 'p2_time_ok': 'True', 'p2_price': '0.07001', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 125. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '0', 'signal_type': 'CD+', 'signal_time': '2026-08-10 14:42:00+00:00', 'current_bar': '882', 'current_time': '2026-08-10 14:42:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '873', 'p1_time': '2026-08-10 14:33:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1898.04', 'p1_price_ok': 'False', 'p2_bar': '879', 'p2_time': '2026-08-10 14:39:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1897.38', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 126. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '1', 'signal_type': 'HD-', 'signal_time': '2026-08-10 18:29:00+00:00', 'current_bar': '1109', 'current_time': '2026-08-10 18:29:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1087', 'p1_time': '2026-08-10 18:07:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1874.79', 'p1_price_ok': 'False', 'p2_bar': '1106', 'p2_time': '2026-08-10 18:26:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1874.54', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 127. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '2', 'signal_type': 'CD-', 'signal_time': '2026-08-11 01:27:00+00:00', 'current_bar': '1527', 'current_time': '2026-08-11 01:27:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1513', 'p1_time': '2026-08-11 01:13:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1877.85', 'p1_price_ok': 'False', 'p2_bar': '1524', 'p2_time': '2026-08-11 01:24:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.57', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 128. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '3', 'signal_type': 'HD+', 'signal_time': '2026-08-11 01:45:00+00:00', 'current_bar': '1545', 'current_time': '2026-08-11 01:45:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1520', 'p1_time': '2026-08-11 01:20:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1873.9', 'p1_price_ok': 'False', 'p2_bar': '1542', 'p2_time': '2026-08-11 01:42:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1874.25', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 129. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '4', 'signal_type': 'HD+', 'signal_time': '2026-08-11 02:18:00+00:00', 'current_bar': '1578', 'current_time': '2026-08-11 02:18:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1567', 'p1_time': '2026-08-11 02:07:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1877.7', 'p1_price_ok': 'False', 'p2_bar': '1575', 'p2_time': '2026-08-11 02:15:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.03', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 130. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '5', 'signal_type': 'CD-', 'signal_time': '2026-08-11 03:22:00+00:00', 'current_bar': '1642', 'current_time': '2026-08-11 03:22:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1633', 'p1_time': '2026-08-11 03:13:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1880.44', 'p1_price_ok': 'False', 'p2_bar': '1639', 'p2_time': '2026-08-11 03:19:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1881.22', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 131. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '6', 'signal_type': 'HD+', 'signal_time': '2026-08-11 03:25:00+00:00', 'current_bar': '1645', 'current_time': '2026-08-11 03:25:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1636', 'p1_time': '2026-08-11 03:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.61', 'p1_price_ok': 'False', 'p2_bar': '1642', 'p2_time': '2026-08-11 03:22:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1879.74', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 132. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '7', 'signal_type': 'HD+', 'signal_time': '2026-08-11 03:34:00+00:00', 'current_bar': '1654', 'current_time': '2026-08-11 03:34:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1642', 'p1_time': '2026-08-11 03:22:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.74', 'p1_price_ok': 'False', 'p2_bar': '1651', 'p2_time': '2026-08-11 03:31:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1880.22', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 133. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '8', 'signal_type': 'CD-', 'signal_time': '2026-08-11 03:43:00+00:00', 'current_bar': '1663', 'current_time': '2026-08-11 03:43:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1647', 'p1_time': '2026-08-11 03:27:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1881.29', 'p1_price_ok': 'False', 'p2_bar': '1660', 'p2_time': '2026-08-11 03:40:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1881.78', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 134. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '9', 'signal_type': 'HD+', 'signal_time': '2026-08-11 11:27:00+00:00', 'current_bar': '2127', 'current_time': '2026-08-11 11:27:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2117', 'p1_time': '2026-08-11 11:17:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1891.0', 'p1_price_ok': 'False', 'p2_bar': '2124', 'p2_time': '2026-08-11 11:24:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1891.46', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 135. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '10', 'signal_type': 'HD-', 'signal_time': '2026-08-11 14:49:00+00:00', 'current_bar': '2329', 'current_time': '2026-08-11 14:49:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2316', 'p1_time': '2026-08-11 14:36:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1881.25', 'p1_price_ok': 'False', 'p2_bar': '2326', 'p2_time': '2026-08-11 14:46:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.6', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 136. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '11', 'signal_type': 'CD+', 'signal_time': '2026-08-11 14:55:00+00:00', 'current_bar': '2335', 'current_time': '2026-08-11 14:55:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2320', 'p1_time': '2026-08-11 14:40:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1874.34', 'p1_price_ok': 'False', 'p2_bar': '2332', 'p2_time': '2026-08-11 14:52:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1871.45', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 137. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '12', 'signal_type': 'HD-', 'signal_time': '2026-08-11 15:11:00+00:00', 'current_bar': '2351', 'current_time': '2026-08-11 15:11:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2326', 'p1_time': '2026-08-11 14:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1878.6', 'p1_price_ok': 'False', 'p2_bar': '2348', 'p2_time': '2026-08-11 15:08:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1877.63', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 138. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '13', 'signal_type': 'HD+', 'signal_time': '2026-08-11 21:26:00+00:00', 'current_bar': '2726', 'current_time': '2026-08-11 21:26:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2691', 'p1_time': '2026-08-11 20:51:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.79', 'p1_price_ok': 'False', 'p2_bar': '2723', 'p2_time': '2026-08-11 21:23:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1880.67', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 139. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '14', 'signal_type': 'HD-', 'signal_time': '2026-08-12 14:52:00+00:00', 'current_bar': '3772', 'current_time': '2026-08-12 14:52:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '3748', 'p1_time': '2026-08-12 14:28:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1897.6', 'p1_price_ok': 'False', 'p2_bar': '3769', 'p2_time': '2026-08-12 14:49:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1895.31', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 140. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '15', 'signal_type': 'CD+', 'signal_time': '2026-08-12 20:12:00+00:00', 'current_bar': '4092', 'current_time': '2026-08-12 20:12:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4073', 'p1_time': '2026-08-12 19:53:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1877.98', 'p1_price_ok': 'False', 'p2_bar': '4089', 'p2_time': '2026-08-12 20:09:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1877.81', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 141. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '16', 'signal_type': 'CD+', 'signal_time': '2026-08-12 23:27:00+00:00', 'current_bar': '4287', 'current_time': '2026-08-12 23:27:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4267', 'p1_time': '2026-08-12 23:07:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1875.3', 'p1_price_ok': 'False', 'p2_bar': '4284', 'p2_time': '2026-08-12 23:24:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1874.81', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 142. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '17', 'signal_type': 'CD-', 'signal_time': '2026-08-12 23:49:00+00:00', 'current_bar': '4309', 'current_time': '2026-08-12 23:49:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4299', 'p1_time': '2026-08-12 23:39:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.25', 'p1_price_ok': 'False', 'p2_bar': '4306', 'p2_time': '2026-08-12 23:46:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1879.3', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 143. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '18', 'signal_type': 'HD+', 'signal_time': '2026-08-13 00:07:00+00:00', 'current_bar': '4327', 'current_time': '2026-08-13 00:07:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4305', 'p1_time': '2026-08-12 23:45:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1878.0', 'p1_price_ok': 'False', 'p2_bar': '4324', 'p2_time': '2026-08-13 00:04:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.9', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 144. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '19', 'signal_type': 'HD+', 'signal_time': '2026-08-13 03:31:00+00:00', 'current_bar': '4531', 'current_time': '2026-08-13 03:31:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4510', 'p1_time': '2026-08-13 03:10:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1882.02', 'p1_price_ok': 'False', 'p2_bar': '4528', 'p2_time': '2026-08-13 03:28:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1882.93', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 145. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '20', 'signal_type': 'HD-', 'signal_time': '2026-08-13 09:28:00+00:00', 'current_bar': '4888', 'current_time': '2026-08-13 09:28:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '4860', 'p1_time': '2026-08-13 09:00:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1890.05', 'p1_price_ok': 'False', 'p2_bar': '4885', 'p2_time': '2026-08-13 09:25:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1886.83', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 146. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '21', 'signal_type': 'CD-', 'signal_time': '2026-08-13 12:33:00+00:00', 'current_bar': '5073', 'current_time': '2026-08-13 12:33:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5056', 'p1_time': '2026-08-13 12:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1884.59', 'p1_price_ok': 'False', 'p2_bar': '5070', 'p2_time': '2026-08-13 12:30:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1890.18', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 147. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '22', 'signal_type': 'HD+', 'signal_time': '2026-08-13 13:28:00+00:00', 'current_bar': '5128', 'current_time': '2026-08-13 13:28:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5087', 'p1_time': '2026-08-13 12:47:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1886.83', 'p1_price_ok': 'False', 'p2_bar': '5125', 'p2_time': '2026-08-13 13:25:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1887.15', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 148. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '23', 'signal_type': 'HD-', 'signal_time': '2026-08-13 15:46:00+00:00', 'current_bar': '5266', 'current_time': '2026-08-13 15:46:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5242', 'p1_time': '2026-08-13 15:22:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1894.32', 'p1_price_ok': 'False', 'p2_bar': '5263', 'p2_time': '2026-08-13 15:43:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1892.0', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 149. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '24', 'signal_type': 'HD+', 'signal_time': '2026-08-13 17:59:00+00:00', 'current_bar': '5399', 'current_time': '2026-08-13 17:59:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5377', 'p1_time': '2026-08-13 17:37:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1875.8', 'p1_price_ok': 'False', 'p2_bar': '5396', 'p2_time': '2026-08-13 17:56:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1876.88', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 150. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '25', 'signal_type': 'HD-', 'signal_time': '2026-08-14 03:25:00+00:00', 'current_bar': '5965', 'current_time': '2026-08-14 03:25:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '5933', 'p1_time': '2026-08-14 02:53:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1889.23', 'p1_price_ok': 'False', 'p2_bar': '5962', 'p2_time': '2026-08-14 03:22:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1889.07', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 151. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '26', 'signal_type': 'HD-', 'signal_time': '2026-08-14 06:49:00+00:00', 'current_bar': '6169', 'current_time': '2026-08-14 06:49:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6153', 'p1_time': '2026-08-14 06:33:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1879.33', 'p1_price_ok': 'False', 'p2_bar': '6166', 'p2_time': '2026-08-14 06:46:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.45', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 152. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '27', 'signal_type': 'HD-', 'signal_time': '2026-08-14 07:10:00+00:00', 'current_bar': '6190', 'current_time': '2026-08-14 07:10:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6166', 'p1_time': '2026-08-14 06:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1878.45', 'p1_price_ok': 'False', 'p2_bar': '6187', 'p2_time': '2026-08-14 07:07:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1876.52', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 153. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '28', 'signal_type': 'HD+', 'signal_time': '2026-08-14 13:55:00+00:00', 'current_bar': '6595', 'current_time': '2026-08-14 13:55:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6579', 'p1_time': '2026-08-14 13:39:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1866.43', 'p1_price_ok': 'False', 'p2_bar': '6592', 'p2_time': '2026-08-14 13:52:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1866.9', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 154. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '29', 'signal_type': 'HD+', 'signal_time': '2026-08-14 15:00:00+00:00', 'current_bar': '6660', 'current_time': '2026-08-14 15:00:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6621', 'p1_time': '2026-08-14 14:21:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1864.28', 'p1_price_ok': 'False', 'p2_bar': '6657', 'p2_time': '2026-08-14 14:57:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1864.52', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 155. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '30', 'signal_type': 'HD-', 'signal_time': '2026-08-14 18:21:00+00:00', 'current_bar': '6861', 'current_time': '2026-08-14 18:21:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '6846', 'p1_time': '2026-08-14 18:06:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1878.87', 'p1_price_ok': 'False', 'p2_bar': '6858', 'p2_time': '2026-08-14 18:18:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1878.26', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 156. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'ETHUSDT', 'row': '31', 'signal_type': 'CD-', 'signal_time': '2026-08-14 23:05:00+00:00', 'current_bar': '7145', 'current_time': '2026-08-14 23:05:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '7126', 'p1_time': '2026-08-14 22:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '1880.09', 'p1_price_ok': 'False', 'p2_bar': '7142', 'p2_time': '2026-08-14 23:02:00+00:00', 'p2_time_ok': 'True', 'p2_price': '1880.32', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 157. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '0', 'signal_type': 'CD-', 'signal_time': '2026-08-10 14:46:00+00:00', 'current_bar': '886', 'current_time': '2026-08-10 14:46:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '877', 'p1_time': '2026-08-10 14:37:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.55', 'p1_price_ok': 'False', 'p2_bar': '883', 'p2_time': '2026-08-10 14:43:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.56', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 158. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '1', 'signal_type': 'HD+', 'signal_time': '2026-08-11 02:17:00+00:00', 'current_bar': '1577', 'current_time': '2026-08-11 02:17:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1567', 'p1_time': '2026-08-11 02:07:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.27', 'p1_price_ok': 'False', 'p2_bar': '1574', 'p2_time': '2026-08-11 02:14:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.28', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 159. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '2', 'signal_type': 'CD+', 'signal_time': '2026-08-11 07:18:00+00:00', 'current_bar': '1878', 'current_time': '2026-08-11 07:18:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '1854', 'p1_time': '2026-08-11 06:54:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.04', 'p1_price_ok': 'False', 'p2_bar': '1875', 'p2_time': '2026-08-11 07:15:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.01', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 160. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '3', 'signal_type': 'HD-', 'signal_time': '2026-08-11 14:19:00+00:00', 'current_bar': '2299', 'current_time': '2026-08-11 14:19:00+00:00', 'current_bar_ok': 'True', 'p1_bar': '2285', 'p1_time': '2026-08-11 14:05:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.16', 'p1_price_ok': 'False', 'p2_bar': '2296', 'p2_time': '2026-08-11 14:16:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.12', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 161. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '4', 'signal_type': 'HD+', 'signal_time': '2026-08-12 01:28:00+00:00', 'current_bar': '2967', 'current_time': '2026-08-12 01:27:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '2937', 'p1_time': '2026-08-12 00:57:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.51', 'p1_price_ok': 'False', 'p2_bar': '2964', 'p2_time': '2026-08-12 01:24:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.52', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 162. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '5', 'signal_type': 'HD+', 'signal_time': '2026-08-12 09:43:00+00:00', 'current_bar': '3461', 'current_time': '2026-08-12 09:41:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '3448', 'p1_time': '2026-08-12 09:28:00+00:00', 'p1_time_ok': 'True', 'p1_price': '45.36', 'p1_price_ok': 'False', 'p2_bar': '3458', 'p2_time': '2026-08-12 09:38:00+00:00', 'p2_time_ok': 'True', 'p2_price': '45.37', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 163. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '6', 'signal_type': 'HD-', 'signal_time': '2026-08-13 01:44:00+00:00', 'current_bar': '4422', 'current_time': '2026-08-13 01:42:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '4396', 'p1_time': '2026-08-13 01:16:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.85', 'p1_price_ok': 'False', 'p2_bar': '4419', 'p2_time': '2026-08-13 01:39:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.83', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 164. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '7', 'signal_type': 'HD-', 'signal_time': '2026-08-13 04:51:00+00:00', 'current_bar': '4609', 'current_time': '2026-08-13 04:49:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '4596', 'p1_time': '2026-08-13 04:36:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.96', 'p1_price_ok': 'False', 'p2_bar': '4606', 'p2_time': '2026-08-13 04:46:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.95', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 165. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '8', 'signal_type': 'HD-', 'signal_time': '2026-08-13 12:02:00+00:00', 'current_bar': '5040', 'current_time': '2026-08-13 12:00:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '5025', 'p1_time': '2026-08-13 11:45:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.73', 'p1_price_ok': 'False', 'p2_bar': '5037', 'p2_time': '2026-08-13 11:57:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.71', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 166. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '9', 'signal_type': 'CD+', 'signal_time': '2026-08-13 14:13:00+00:00', 'current_bar': '5171', 'current_time': '2026-08-13 14:11:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '5159', 'p1_time': '2026-08-13 13:59:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.72', 'p1_price_ok': 'False', 'p2_bar': '5168', 'p2_time': '2026-08-13 14:08:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.66', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 167. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '10', 'signal_type': 'CD+', 'signal_time': '2026-08-14 12:58:00+00:00', 'current_bar': '6536', 'current_time': '2026-08-14 12:56:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '6526', 'p1_time': '2026-08-14 12:46:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.39', 'p1_price_ok': 'False', 'p2_bar': '6533', 'p2_time': '2026-08-14 12:53:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.38', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 168. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '11', 'signal_type': 'HD-', 'signal_time': '2026-08-14 13:04:00+00:00', 'current_bar': '6542', 'current_time': '2026-08-14 13:02:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '6529', 'p1_time': '2026-08-14 12:49:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.43', 'p1_price_ok': 'False', 'p2_bar': '6539', 'p2_time': '2026-08-14 12:59:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.41', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 169. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '12', 'signal_type': 'HD+', 'signal_time': '2026-08-15 01:58:00+00:00', 'current_bar': '7316', 'current_time': '2026-08-15 01:56:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7296', 'p1_time': '2026-08-15 01:36:00+00:00', 'p1_time_ok': 'True', 'p1_price': '43.75', 'p1_price_ok': 'False', 'p2_bar': '7313', 'p2_time': '2026-08-15 01:53:00+00:00', 'p2_time_ok': 'True', 'p2_price': '43.78', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 170. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '13', 'signal_type': 'CD-', 'signal_time': '2026-08-15 02:41:00+00:00', 'current_bar': '7359', 'current_time': '2026-08-15 02:39:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7349', 'p1_time': '2026-08-15 02:29:00+00:00', 'p1_time_ok': 'True', 'p1_price': '43.97', 'p1_price_ok': 'False', 'p2_bar': '7356', 'p2_time': '2026-08-15 02:36:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.0', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+### 171. [CRITICAL] PIVOT PARITY
+
+**Problem:** Pivot mismatch detected in parity result
+
+**Evidence:** `{'symbol': 'LTCUSDT', 'row': '14', 'signal_type': 'HD-', 'signal_time': '2026-08-15 08:36:00+00:00', 'current_bar': '7714', 'current_time': '2026-08-15 08:34:00+00:00', 'current_bar_ok': 'False', 'p1_bar': '7683', 'p1_time': '2026-08-15 08:03:00+00:00', 'p1_time_ok': 'True', 'p1_price': '44.05', 'p1_price_ok': 'False', 'p2_bar': '7711', 'p2_time': '2026-08-15 08:31:00+00:00', 'p2_time_ok': 'True', 'p2_price': '44.04', 'p2_price_ok': 'False'}`
+
+**Likely cause:** Python pivot source/confirmation/state does not match Pine for at least one bar.
+
+**Required correction:** Fix pivot source-bar versus confirmation-bar indexing first. Do not modify signal scoring until pivot parity reaches 100%.
+
+## WARNINGS
+
+- BNBUSDT_python_signals_5d.csv has extremely low signal count (0); this may indicate an upstream parity failure rather than a valid strategy result.
+
+## PROJECT FILES
+
+
+## RECOMMENDED ORDER OF CORRECTION
+
+1. Verify exact timestamp/bar identity.
+2. Verify Pine pivot source bar versus confirmation bar.
+3. Verify pivot state persistence and eliminate any second shift.
+4. Re-run pivot parity until it is 100%.
+5. Compare RMA/EMA/RSI/MACD per bar.
+6. Compare divergence inputs.
+7. Compare Fibonacci and candle filters.
+8. Compare final score and signal.

@@ -1,0 +1,89 @@
+
+DTM — CRITICAL REPAIR FINDINGS
+================================
+
+SOURCE REPORT:
+parity_lab/ULTIMATE_REPAIR_REPORT_20260815_220752.md
+
+این فایل فقط موارد مهم گزارش نهایی را استخراج می‌کند.
+هیچ فایل پروژه در این مرحله تغییر نکرده است.
+
+TOTAL EXTRACTED:
+19
+
+================================
+
+--- FINDING #1 ---
+SHIFT
+
+
+--- FINDING #2 ---
+RSI
+
+
+--- FINDING #3 ---
+high
+
+
+--- FINDING #4 ---
+rma
+
+
+--- FINDING #5 ---
+Error
+
+
+--- FINDING #6 ---
+State
+
+
+--- FINDING #7 ---
+state
+
+
+--- FINDING #8 ---
+ERROR
+
+
+--- FINDING #9 ---
+error
+
+
+--- FINDING #10 ---
+eMa
+
+
+--- FINDING #11 ---
+rsi
+
+
+--- FINDING #12 ---
+HIGH
+
+
+--- FINDING #13 ---
+ema
+
+
+--- FINDING #14 ---
+Index
+
+
+--- FINDING #15 ---
+index
+
+
+--- FINDING #16 ---
+mismatch
+
+
+--- FINDING #17 ---
+RMA
+
+
+--- FINDING #18 ---
+EMa
+
+
+--- FINDING #19 ---
+MACD

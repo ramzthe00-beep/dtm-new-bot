@@ -1,0 +1,115 @@
+{
+  "batch": 2,
+  "results": [
+    {
+      "rule_id": "R003_BLANK_LINES",
+      "file": "bot.py",
+      "description": "normalize excessive blank lines",
+      "before_hash": "9f1174a0c27747be0809dc5838bcdf19504321ccf426f5ecb1483024bae753c0",
+      "after_hash": "a023112ee994a38ac6e5d97d27a01b6cab8982ec78f75484f6b9c56a985e99cf",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    },
+    {
+      "rule_id": "R002_TRAILING_WS",
+      "file": "d -n 70,175p strategy.py",
+      "description": "remove trailing whitespace",
+      "before_hash": "779381a9d9da4eae2f1f18acd6f4ea8c7c29d52b4bec2ca7b73fc9ef8bcc15e8",
+      "after_hash": "48e455b486eb651485d7d35e6a9237439e9434a0d78048326b875e23f42b5f4f",
+      "status": "rejected_syntax",
+      "score_before": 0,
+      "score_after": 0,
+      "details": "AST parse failed"
+    },
+    {
+      "rule_id": "R001_DUP_IMPORTS",
+      "file": "dtm_bot.py",
+      "description": "remove duplicate imports",
+      "before_hash": "a8fc8ca0842b97544f83266947a074f59b750fa0e1ca7b50655259f79c910ab0",
+      "after_hash": "225812d05efe08fcc28522a179e0fd2dab3edeb38415c910560ce0e84309a6b6",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    },
+    {
+      "rule_id": "R003_BLANK_LINES",
+      "file": "parity_lab/AUTO_REPAIR_BACKUP_20260815_214138/bot.py",
+      "description": "normalize excessive blank lines",
+      "before_hash": "3e4ff98cf630fb681625f61870ce96df42080f81c4eb04e3d87e994fafb92d26",
+      "after_hash": "e1cdb2435a51e904979a47caa7f84dcc8cbb5a4184d6360fd72518c5194bbf90",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    },
+    {
+      "rule_id": "R001_DUP_IMPORTS",
+      "file": "parity_lab/AUTO_REPAIR_BACKUP_20260815_214138/dtm_bot.py",
+      "description": "remove duplicate imports",
+      "before_hash": "a8fc8ca0842b97544f83266947a074f59b750fa0e1ca7b50655259f79c910ab0",
+      "after_hash": "225812d05efe08fcc28522a179e0fd2dab3edeb38415c910560ce0e84309a6b6",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    },
+    {
+      "rule_id": "R003_BLANK_LINES",
+      "file": "parity_lab/FORENSIC_BACKUP_20260815_214452/bot.py",
+      "description": "normalize excessive blank lines",
+      "before_hash": "3e4ff98cf630fb681625f61870ce96df42080f81c4eb04e3d87e994fafb92d26",
+      "after_hash": "e1cdb2435a51e904979a47caa7f84dcc8cbb5a4184d6360fd72518c5194bbf90",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    },
+    {
+      "rule_id": "R001_DUP_IMPORTS",
+      "file": "parity_lab/FORENSIC_BACKUP_20260815_214452/dtm_bot.py",
+      "description": "remove duplicate imports",
+      "before_hash": "a8fc8ca0842b97544f83266947a074f59b750fa0e1ca7b50655259f79c910ab0",
+      "after_hash": "225812d05efe08fcc28522a179e0fd2dab3edeb38415c910560ce0e84309a6b6",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    },
+    {
+      "rule_id": "R003_BLANK_LINES",
+      "file": "parity_lab/ULTIMATE_BACKUP_20260815_220752/bot.py",
+      "description": "normalize excessive blank lines",
+      "before_hash": "3e4ff98cf630fb681625f61870ce96df42080f81c4eb04e3d87e994fafb92d26",
+      "after_hash": "e1cdb2435a51e904979a47caa7f84dcc8cbb5a4184d6360fd72518c5194bbf90",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    },
+    {
+      "rule_id": "R001_DUP_IMPORTS",
+      "file": "parity_lab/ULTIMATE_BACKUP_20260815_220752/dtm_bot.py",
+      "description": "remove duplicate imports",
+      "before_hash": "a8fc8ca0842b97544f83266947a074f59b750fa0e1ca7b50655259f79c910ab0",
+      "after_hash": "225812d05efe08fcc28522a179e0fd2dab3edeb38415c910560ce0e84309a6b6",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    },
+    {
+      "rule_id": "R001_DUP_IMPORTS",
+      "file": "parity_lab/deep_analyzer.py",
+      "description": "remove duplicate imports",
+      "before_hash": "15d047297d4d9746e141d0f9916d32cbf12cdf6bc2bb0faa97caf0c0028d9e83",
+      "after_hash": "c8d363e0b6ee1d3e4850132a5e345a4495f482f7e9aa4a04fd9a401b3fcd8d5a",
+      "status": "rejected",
+      "score_before": -15,
+      "score_after": -15,
+      "details": "score -15 -> -15"
+    }
+  ]
+}

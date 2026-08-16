@@ -1,0 +1,39 @@
+==========================================================================================
+DTM AUTOMATIC PINE ↔ PYTHON REPAIR ENGINE
+==========================================================================================
+MODE: FULL AUTO ANALYZE / REPAIR / VERIFY / ROLLBACK
+
+[1] CREATING FULL BACKUP
+BACKUP: /data/data/com.termux/files/home/dtm-new-bot/parity_lab/AUTO_REPAIR_BACKUP_20260815_214138
+
+[2] INITIAL PARITY TEST
+INITIAL MISMATCH SCORE: 8
+
+[3] AUTOMATIC ROOT-CAUSE DETECTION
+
+[4] DATA / TIMESTAMP / OHLC FORENSICS
+PINE PRICE NOT SAME-BAR OHLC: 6
+
+[5] APPLYING HIGH-CONFIDENCE REPAIRS
+[CHECKED] pivot storage i+right
+[KEPT] Pine confirmation semantics require explicit source/confirmation distinction
+[CHECKED] Timestamp/OHLC mapping
+[KEPT] No blind timestamp rewrite because Pine pivot price was proven not to equal same-bar OHLC
+
+[6] VERIFYING REPAIRS
+AFTER MISMATCH SCORE: 8
+[INFO] Parity unchanged
+
+[7] FINAL ANALYSIS
+
+==========================================================================================
+AUTOMATIC REPAIR FINISHED
+==========================================================================================
+REPORT : /data/data/com.termux/files/home/dtm-new-bot/parity_lab/AUTO_REPAIR_FINAL_20260815_214138.md
+BACKUP : /data/data/com.termux/files/home/dtm-new-bot/parity_lab/AUTO_REPAIR_BACKUP_20260815_214138
+LOG    : /data/data/com.termux/files/home/dtm-new-bot/parity_lab/AUTO_REPAIR_LOG_20260815_214138.txt
+INITIAL: 8
+FINAL  : 8
+CHANGES: 0
+ROLLBACKS: 0
+==========================================================================================

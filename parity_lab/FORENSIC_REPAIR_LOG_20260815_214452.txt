@@ -1,0 +1,80 @@
+====================================================================================================
+DTM FORENSIC AUTOMATIC PINE <-> PYTHON REPAIR ENGINE
+====================================================================================================
+ANALYZE -> HYPOTHESIS -> CANDIDATE -> TEST -> KEEP/ROLLBACK
+
+[1] FULL BACKUP
+BACKUP = /data/data/com.termux/files/home/dtm-new-bot/parity_lab/FORENSIC_BACKUP_20260815_214452
+
+[2] BASELINE ANALYSIS
+BASELINE SCORE = 160
+
+[3] ROOT CAUSE DISCOVERY
+[ROOT CAUSE] Pine pivot price does not map to same-timestamp OHLC.
+[ROOT CAUSE] strategy.py stores pivot value using confirmation-bar indexing.
+[ROOT CAUSE] strategy.py contains explicit pandas shift operation.
+
+[4] GENERATING REPAIR CANDIDATES
+
+[5] PIVOT SOURCE/CONFIRMATION FORENSICS
+
+[PIVOT FUNCTION FOUND]
+def pivot_high(high, left=LEFT_BARS, right=RIGHT_BARS):
+    out = pd.Series(np.nan, index=high.index, dtype=float)
+    n = len(high)
+    for i in range(left, n - right):
+        x = high.iloc[i]
+        if high.iloc[i-left:i].max() < x and high.iloc[i+1:i+right+1].max() < x:
+            out.iloc[i+right] = x
+    return out
+
+
+[PIVOT FUNCTION FOUND]
+def pivot_low(low, left=LEFT_BARS, right=RIGHT_BARS):
+    out = pd.Series(np.nan, index=low.index, dtype=float)
+    n = len(low)
+    for i in range(left, n - right):
+        x = low.iloc[i]
+        if low.iloc[i-left:i].min() > x and low.iloc[i+1:i+right+1].min() > x:
+            out.iloc[i+right] = x
+    return out
+
+
+[6] SEARCHING FOR SECONDARY PIVOT SHIFTS
+[PIVOT TRACE] strategy.py:78: def pivot_high(high, left=LEFT_BARS, right=RIGHT_BARS):
+[PIVOT TRACE] strategy.py:87: def pivot_low(low, left=LEFT_BARS, right=RIGHT_BARS):
+[PIVOT TRACE] parity_lab/deep_analyzer.py:229: "pivot_high_storage": r"out\.iloc\[i\+right\]\s*=",
+[PIVOT TRACE] parity_lab/deep_analyzer.py:230: "pivot_low_storage": r"out\.iloc\[i\+right\]\s*=",
+[PIVOT TRACE] parity_lab/AUTO_REPAIR_ALL.py:213: "evidence": "strategy.py contains i+right pivot storage",
+[PIVOT TRACE] parity_lab/AUTO_REPAIR_ALL.py:345: say("[CHECKED] pivot storage i+right")
+[PIVOT TRACE] parity_lab/FORENSIC_BACKUP_20260815_214452/strategy.py:78: def pivot_high(high, left=LEFT_BARS, right=RIGHT_BARS):
+[PIVOT TRACE] parity_lab/FORENSIC_BACKUP_20260815_214452/strategy.py:87: def pivot_low(low, left=LEFT_BARS, right=RIGHT_BARS):
+
+[7] TIMESTAMP / OHLC FORENSICS
+NON-SAME-BAR PIVOTS = 6
+
+[8] PIVOT PRICE OFFSET ANALYSIS
+OFFSET ZERO     = 0
+OFFSET POSITIVE = 23
+OFFSET NEGATIVE = 45
+[FINDING] Offsets are not a constant shift. A single +N/-N correction would be invalid.
+
+[9] INDICATOR IMPLEMENTATION AUDIT
+[FOUND] RMA implementation/reference in strategy.py
+[FOUND] EMA implementation/reference in strategy.py
+[FOUND] RSI implementation/reference in strategy.py
+[FOUND] MACD implementation/reference in strategy.py
+[FOUND] ATR implementation/reference in strategy.py
+
+[10] STATE / PERSISTENCE AUDIT
+
+[11] DOWNSTREAM SIGNAL DEPENDENCY AUDIT
+strategy.py -> signal, pivot
+dtm_bot.py -> fib, signal, candle
+bot.py -> signal, candle
+
+[12] FINAL PARITY VERIFICATION
+BASELINE SCORE = 160
+FINAL SCORE    = 160
+
+[13] WRITING COMPLETE REPORT
