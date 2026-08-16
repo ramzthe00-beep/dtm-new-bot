@@ -253,26 +253,65 @@ class TrueTradePrivateExchange:
     def create_order(self, symbol, side, capital, params=None):
         params = params or {}
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
+        
+        # تبدیل side به فرمت مورد نیاز API
+        # اگر side قبلاً LONG یا SHORT است، همان را استفاده کن
+        side_upper = side.upper()
+        if side_upper in ("BUY", "LONG"):
+            api_side = "LONG"
+        elif side_upper in ("SELL", "SHORT"):
+            api_side = "SHORT"
+        else:
+            api_side = side_upper  # اگر قبلاً LONG یا SHORT است
+        
+        # ساختار صحیح بر اساس کتابچه
         od = {
             "symbol": symbol.upper(),
-            "side": side.upper(),
-            "tradeType": "MARKET",
+            "side": api_side,  # LONG یا SHORT
+            "tradeType": "MARKET",  # MARKET یا LIMIT
             "leverage": params.get("leverage", 1),
-            "cost": f"{capital:.{prec}f}",
+            "cost": f"{capital:.{prec}f}",  # cost به معنی collateral در quote asset
             "walletType": "debit"
         }
+        
+        # افزودن حد ضرر و حد سود اگر موجود باشند
         if "stopLoss" in params:
             od["stopLoss"] = f"{self._round_price(params['stopLoss'], symbol):.{prec}f}"
         if "takeProfit" in params:
             od["takeProfit"] = f"{self._round_price(params['takeProfit'], symbol):.{prec}f}"
-        send_telegram_message(f"📤 ثبت سفارش — {symbol} {side} | اهرم: {od['leverage']}")
+            
+        send_telegram_message(f"📤 ثبت سفارش — {symbol} {api_side} | اهرم: {od['leverage']}")
+        
         try:
+            # امضای صحیح: timestamp + METHOD + URI (بدون body)
             result = self._request("POST", "/futures/positions", od)
-            send_telegram_message(f"📥 سفارش ثبت شد — {symbol} {side}")
-            return {"id": result.get("positionId") if isinstance(result, dict) else None}
+            
+            # پاسخ موفقیت‌آمیز شامل positionId است
+            position_id = result.get("positionId") if isinstance(result, dict) else None
+            
+            send_telegram_message(f"📥 سفارش ثبت شد — {symbol} {api_side} | Position ID: {position_id}")
+            return {"id": position_id}
+            
         except Exception as e:
-            body = self._last_response.text[:300] if self._last_response is not None else str(e)
-            send_telegram_message(f"❌ خطای سفارش {symbol} {side}\n{body}")
+            # نمایش خطای دقیق از پاسخ API
+            if self._last_response is not None:
+                try:
+                    error_data = self._last_response.json()
+                    if "errors" in error_data:
+                        error_messages = []
+                        for error in error_data["errors"]:
+                            field = error.get("field", "unknown")
+                            message = error.get("message", "unknown error")
+                            error_messages.append(f"{field}: {message}")
+                        error_text = "\n".join(error_messages)
+                    else:
+                        error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:300]}"
+                except ValueError:
+                    error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:300]}"
+            else:
+                error_text = str(e)
+                
+            send_telegram_message(f"❌ خطای سفارش {symbol} {api_side}\n{error_text}")
             raise
 
 # ===== Main loop =====
