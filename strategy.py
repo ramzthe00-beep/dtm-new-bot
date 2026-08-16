@@ -1,271 +1,306 @@
-# -*- coding: utf-8 -*-
 """
-DTM Signal Engine — ریاضی معادل PyneCore (بدون وابستگی)
+@pyne edge
+
+This code was compiled by PyneComp v6.0.54 — the Pine Script to Python compiler.
+Run with open-source PyneCore: https://pynecore.org
+Compile Pine Scripts online at PyneSys: https://pynesys.io
 """
-import pandas as pd
-import numpy as np
+from pynecore import pine_range
+from pynecore.lib import (
+    bar_index, barmerge, close, color, high, input, location, low, math, na,
+    open, plotshape, request, script, shape, size, strategy, syminfo, ta
+)
+from pynecore.types import Persistent, Series
 
-LEFT_BARS = 5
-RIGHT_BARS = 3
-RSI_LEN = 14
-MACD_FAST = 12
-MACD_SLOW = 26
-MACD_SIG = 9
-
-def rma(s, length):
-    out = pd.Series(np.nan, index=s.index)
-    vals = s.to_numpy(dtype=float)
-    valid = ~np.isnan(vals)
-    if valid.sum() < length:
-        return out
-    seed_idx = np.where(valid)[0][length - 1]
-    seed = vals[seed_idx - length + 1: seed_idx + 1].mean()
-    out.iloc[seed_idx] = seed
-    alpha = 1.0 / length
-    prev = seed
-    for i in range(seed_idx + 1, len(vals)):
-        if np.isnan(vals[i]):
-            out.iloc[i] = prev
-        else:
-            prev = alpha * vals[i] + (1 - alpha) * prev
-            out.iloc[i] = prev
-    return out
-
-def ema(s, length):
-    out = pd.Series(np.nan, index=s.index)
-    vals = s.to_numpy(dtype=float)
-    valid = ~np.isnan(vals)
-    if valid.sum() < length:
-        return out
-    seed_idx = np.where(valid)[0][length - 1]
-    seed = vals[seed_idx - length + 1: seed_idx + 1].mean()
-    out.iloc[seed_idx] = seed
-    alpha = 2.0 / (length + 1)
-    prev = seed
-    for i in range(seed_idx + 1, len(vals)):
-        if np.isnan(vals[i]):
-            out.iloc[i] = prev
-        else:
-            prev = alpha * vals[i] + (1 - alpha) * prev
-            out.iloc[i] = prev
-    return out
-
-def rsi(close, length=RSI_LEN):
-    diff = close.diff()
-    gain = diff.clip(lower=0)
-    loss = -diff.clip(upper=0)
-    ag = rma(gain, length)
-    al = rma(loss, length)
-    rs = ag / al.replace(0, np.nan)
-    out = 100 - (100 / (1 + rs))
-    out = out.mask((al == 0) & (ag > 0), 100)
-    out = out.mask((ag == 0) & (al > 0), 0)
-    return out
-
-def macd(close, fast=MACD_FAST, slow=MACD_SLOW, signal=MACD_SIG):
-    ef = ema(close, fast)
-    es = ema(close, slow)
-    line = ef - es
-    sig = ema(line, signal)
-    hist = line - sig
-    return line, sig, hist
-
-def atr(high, low, close, length=14):
-    prev_close = close.shift(1)
-    tr = pd.concat([high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
-    return rma(tr, length)
-
-def pivot_high(high, left=LEFT_BARS, right=RIGHT_BARS):
-    """
-    Pine ta.pivothigh(high, left, right) semantics.
-
-    The pivot is CONFIRMED on bar i + right, but its value belongs
-    to the original pivot bar i.  We therefore store the value on
-    the confirmation bar, exactly like Pine's returned series.
-    """
-    out = pd.Series(np.nan, index=high.index, dtype=float)
-    n = len(high)
-
-    for i in range(left, n - right):
-        x = high.iloc[i]
-
-        left_max = high.iloc[i-left:i].max()
-        right_max = high.iloc[i+1:i+right+1].max()
-
-        if left_max < x and right_max < x:
-            out.iloc[i + right] = x
-
-    return out
+grp_pivot: str = "Pivot"
+grp_ind: str = "Indicators"
+grp_trend: str = "Trend"
+grp_score: str = "Min Confirmations"
+grp_fib: str = "Fibonacci"
+grp_candle: str = "Price Action"
 
 
-def pivot_low(low, left=LEFT_BARS, right=RIGHT_BARS):
-    """
-    Pine ta.pivotlow(low, left, right) semantics.
-    Returned value appears on the confirmation bar i + right,
-    while the actual pivot price belongs to bar i.
-    """
-    out = pd.Series(np.nan, index=low.index, dtype=float)
-    n = len(low)
+@script.strategy("DTM Divergence Light", overlay=True, initial_capital=500, default_qty_type=strategy.fixed, default_qty_value=1, commission_type=strategy.commission.percent, commission_value=0.1, pyramiding=3, process_orders_on_close=True, max_labels_count=50, max_lines_count=50)
+def main(
+    pivotMode=input.string("سریع (5/3)", "روش Pivot", options=("استاندارد (5/5)", "سریع (5/3)"), group=grp_pivot),
+    rsiLen=input.int(14, "RSI", group=grp_ind),
+    macdFast=input.int(12, "MACD Fast", group=grp_ind),
+    macdSlow=input.int(26, "MACD Slow", group=grp_ind),
+    macdSig=input.int(9, "MACD Signal", group=grp_ind),
+    trendLookback=input.int(20, "Trend Lookback", group=grp_trend),
+    trendSlopeMinPct=input.float(0.05, "Min Slope %", step=0.01, group=grp_trend),
+    minConfirmations=input.string("۳ تعییدیه (حداقل مجاز)", "حداقل شرط", options=("۳ تعییدیه (حداقل مجاز)", "۳ تعییدیه + فیبوناچی (۴ امتیاز) [Custom]", "۳ تعییدیه + پرایس‌اکشن (۴ امتیاز) [Custom]", "۵ امتیاز کامل (ایده‌آل)"), group=grp_score),
+    enableHidden=input.bool(True, "Enable Hidden Divergence"),
+    fibUse618=input.bool(True, "Use 0.618", group=grp_fib),
+    fibUse786=input.bool(True, "Use 0.786", group=grp_fib),
+    fibTolerancePct=input.float(0.5, "Fib Tolerance %", step=0.1, group=grp_fib),
+    fibTrendSearchBars=input.int(100, "Fib Search Bars", group=grp_fib),
+    shadowToBodyRatio=input.float(2.0, "Shadow/Body Ratio", group=grp_candle),
+    maxOppositeShadowPct=input.float(20.0, "Max Opposite Shadow %", group=grp_candle),
+    minCandleATRRatio=input.float(0.3, "Min Candle ATR Ratio", group=grp_candle),
+    bigCandleAvgLen=input.int(14, "Big Candle Avg Len", group=grp_candle),
+    bigCandleMultiplier=input.float(1.5, "Big Candle Mult", group=grp_candle),
+    enableMTF=input.bool(False, "Enable MTF Filter"),
+    mtfTimeframe=input.timeframe("240", "MTF Timeframe")
+):
+    leftBars: int = 5
+    rightBars = 5 if pivotMode == 'استاندارد (5/5)' else 3
 
-    for i in range(left, n - right):
-        x = low.iloc[i]
+    rsiVal: Series = ta.rsi(close, rsiLen)
+    macdLine: Series
+    histLine: Series
+    macdLine, signalLine, histLine = ta.macd(close, macdFast, macdSlow, macdSig)
+    atr14 = ta.atr(14)
+    mtf_hist: Series = request.security(syminfo.tickerid, mtfTimeframe, histLine[1], lookahead=barmerge.lookahead_off)
 
-        left_min = low.iloc[i-left:i].min()
-        right_min = low.iloc[i+1:i+right+1].min()
+    pivotHighPrice = ta.pivothigh(high, leftBars, rightBars)
+    pivotLowPrice = ta.pivotlow(low, leftBars, rightBars)
 
-        if left_min > x and right_min > x:
-            out.iloc[i + right] = x
+    rsiAtPivotHigh = ta.valuewhen(not na(pivotHighPrice), rsiVal[rightBars], 0)
+    rsiAtPivotLow = ta.valuewhen(not na(pivotLowPrice), rsiVal[rightBars], 0)
+    macdLineAtPivotHigh = ta.valuewhen(not na(pivotHighPrice), macdLine[rightBars], 0)
+    macdLineAtPivotLow = ta.valuewhen(not na(pivotLowPrice), macdLine[rightBars], 0)
+    histAtPivotHigh = ta.valuewhen(not na(pivotHighPrice), histLine[rightBars], 0)
+    histAtPivotLow = ta.valuewhen(not na(pivotLowPrice), histLine[rightBars], 0)
 
-    return out
+    ph_price_2: Persistent[float] = na(float)
+    ph_price_1 = na(float)
+    ph_bar_2: Persistent[int] = na(int)
+    ph_bar_1 = na(int)
+    ph_rsi_2: Persistent[float] = na(float)
+    ph_rsi_1 = na(float)
+    ph_macdline_2: Persistent[float] = na(float)
+    ph_macdline_1 = na(float)
+    ph_hist_2: Persistent[float] = na(float)
+    ph_hist_1 = na(float)
 
+    pl_price_2: Persistent[float] = na(float)
+    pl_price_1 = na(float)
+    pl_bar_2: Persistent[int] = na(int)
+    pl_bar_1 = na(int)
+    pl_rsi_2: Persistent[float] = na(float)
+    pl_rsi_1 = na(float)
+    pl_macdline_2: Persistent[float] = na(float)
+    pl_macdline_1 = na(float)
+    pl_hist_2: Persistent[float] = na(float)
+    pl_hist_1 = na(float)
 
-def calculate_signals(df):
-    close = df['close']
-    high = df['high']
-    low = df['low']
+    newPivotHigh = not na(pivotHighPrice)
+    newPivotLow = not na(pivotLowPrice)
 
-    rsi_val = rsi(close)
-    macd_line, signal_line, hist_line = macd(close)
-    atr_val = atr(high, low, close)
+    if newPivotHigh:
+        ph_price_1 = ph_price_2
+        ph_bar_1 = ph_bar_2
+        ph_rsi_1 = ph_rsi_2
+        ph_macdline_1 = ph_macdline_2
+        ph_hist_1 = ph_hist_2
+        ph_price_2 = pivotHighPrice
+        ph_bar_2 = bar_index - rightBars
+        ph_rsi_2 = rsiAtPivotHigh
+        ph_macdline_2 = macdLineAtPivotHigh
+        ph_hist_2 = histAtPivotHigh
 
-    ph = pivot_high(high)
-    pl = pivot_low(low)
+    if newPivotLow:
+        pl_price_1 = pl_price_2
+        pl_bar_1 = pl_bar_2
+        pl_rsi_1 = pl_rsi_2
+        pl_macdline_1 = pl_macdline_2
+        pl_hist_1 = pl_hist_2
+        pl_price_2 = pivotLowPrice
+        pl_bar_2 = bar_index - rightBars
+        pl_rsi_2 = rsiAtPivotLow
+        pl_macdline_2 = macdLineAtPivotLow
+        pl_hist_2 = histAtPivotLow
 
-    n = len(df)
-
-    if n <= RIGHT_BARS:
-        return None, None
-
-    # Pine-equivalent pivot confirmation:
-    # pivot_high/low() stores the pivot at i + RIGHT_BARS.
-    # Therefore the pivot value already lives on the confirmation bar.
-    # Do NOT apply a second RIGHT_BARS shift here.
-    confirmation_idx = n - 1
-
-    new_ph = not pd.isna(ph.iloc[confirmation_idx])
-    new_pl = not pd.isna(pl.iloc[confirmation_idx])
-
-    # ---------------------------------------------------------
-    # PIVOT HIGH / BEARISH DIVERGENCE
-    # ---------------------------------------------------------
-    if new_ph:
-        ph_prev = ph.iloc[:confirmation_idx].dropna()
-
-        if len(ph_prev) >= 1:
-            prev_confirmation_idx = ph_prev.index[-1]
-
-            curr_ph_price = float(ph.iloc[confirmation_idx])
-            prev_ph_price = float(ph.loc[prev_confirmation_idx])
-
-            # The actual pivot bar is RIGHT_BARS bars BEFORE
-            # the confirmation bar.
-            curr_pivot_pos = confirmation_idx - RIGHT_BARS
-            prev_confirmation_pos = df.index.get_loc(prev_confirmation_idx)
-            prev_pivot_pos = prev_confirmation_pos - RIGHT_BARS
-
-            if curr_pivot_pos >= 0 and prev_pivot_pos >= 0:
-
-                price_higher_high = curr_ph_price > prev_ph_price
-
-                rsi_lower = (
-                    rsi_val.iloc[curr_pivot_pos]
-                    < rsi_val.iloc[prev_pivot_pos]
-                )
-
-                macd_lower = (
-                    macd_line.iloc[curr_pivot_pos]
-                    < macd_line.iloc[prev_pivot_pos]
-                )
-
-                hist_lower = (
-                    hist_line.iloc[curr_pivot_pos]
-                    < hist_line.iloc[prev_pivot_pos]
-                )
-
-                both_green = (
-                    hist_line.iloc[curr_pivot_pos] > 0
-                    and hist_line.iloc[prev_pivot_pos] > 0
-                )
-
-                color_changed = False
-
-                start = prev_pivot_pos + 1
-                end = curr_pivot_pos
-
-                for j in range(start, end):
-                    if hist_line.iloc[j] < 0:
-                        color_changed = True
+    def checkColorChange(barStart, barEnd, needRedPhase):
+        found: bool = False
+        if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
+            startOffset = bar_index - (barEnd - 1)
+            endOffset = bar_index - (barStart + 1)
+            if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
+                for j in pine_range(startOffset, endOffset):
+                    h = histLine[j]
+                    if needRedPhase and h < 0:
+                        found = True
                         break
-
-                if (
-                    price_higher_high
-                    and rsi_lower
-                    and macd_lower
-                    and hist_lower
-                    and both_green
-                    and color_changed
-                ):
-                    return "SELL", float(close.iloc[-1])
-
-    # ---------------------------------------------------------
-    # PIVOT LOW / BULLISH DIVERGENCE
-    # ---------------------------------------------------------
-    if new_pl:
-        pl_prev = pl.iloc[:confirmation_idx].dropna()
-
-        if len(pl_prev) >= 1:
-            prev_confirmation_idx = pl_prev.index[-1]
-
-            curr_pl_price = float(pl.iloc[confirmation_idx])
-            prev_pl_price = float(pl.loc[prev_confirmation_idx])
-
-            # Actual pivot bars.
-            curr_pivot_pos = confirmation_idx - RIGHT_BARS
-            prev_confirmation_pos = df.index.get_loc(prev_confirmation_idx)
-            prev_pivot_pos = prev_confirmation_pos - RIGHT_BARS
-
-            if curr_pivot_pos >= 0 and prev_pivot_pos >= 0:
-
-                price_lower_low = curr_pl_price < prev_pl_price
-
-                rsi_higher = (
-                    rsi_val.iloc[curr_pivot_pos]
-                    > rsi_val.iloc[prev_pivot_pos]
-                )
-
-                macd_higher = (
-                    macd_line.iloc[curr_pivot_pos]
-                    > macd_line.iloc[prev_pivot_pos]
-                )
-
-                hist_higher = (
-                    hist_line.iloc[curr_pivot_pos]
-                    > hist_line.iloc[prev_pivot_pos]
-                )
-
-                both_red = (
-                    hist_line.iloc[curr_pivot_pos] < 0
-                    and hist_line.iloc[prev_pivot_pos] < 0
-                )
-
-                color_changed = False
-
-                start = prev_pivot_pos + 1
-                end = curr_pivot_pos
-
-                for j in range(start, end):
-                    if hist_line.iloc[j] > 0:
-                        color_changed = True
+                    if not needRedPhase and h > 0:
+                        found = True
                         break
+        return found
 
-                if (
-                    price_lower_low
-                    and rsi_higher
-                    and macd_higher
-                    and hist_higher
-                    and both_red
-                    and color_changed
-                ):
-                    return "BUY", float(close.iloc[-1])
+    macdColorChangedForHighs = checkColorChange(ph_bar_1, ph_bar_2, True) if newPivotHigh and (not na(ph_bar_1)) else False
+    macdColorChangedForLows = checkColorChange(pl_bar_1, pl_bar_2, False) if newPivotLow and (not na(pl_bar_1)) else False
 
-    return None, None
+    def mtfColorChanged(barStart, barEnd, needRedPhase):
+        found: bool = False
+        if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
+            startOffset = bar_index - (barEnd - 1)
+            endOffset = bar_index - (barStart + 1)
+            if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
+                for j in pine_range(startOffset, endOffset):
+                    h = mtf_hist[j]
+                    if needRedPhase and h < 0:
+                        found = True
+                        break
+                    if not needRedPhase and h > 0:
+                        found = True
+                        break
+        return found
+
+    mtfColorChangedForHighs = mtfColorChanged(ph_bar_1, ph_bar_2, True) if newPivotHigh and (not na(ph_bar_1)) else False
+    mtfColorChangedForLows = mtfColorChanged(pl_bar_1, pl_bar_2, False) if newPivotLow and (not na(pl_bar_1)) else False
+    mtfFilterOkForBearish = not enableMTF or mtfColorChangedForHighs
+    mtfFilterOkForBullish = not enableMTF or mtfColorChangedForLows
+
+    def isTrendingUp(refBar):
+        result: bool = False
+        if not na(refBar):
+            offset = bar_index - refBar
+            if offset >= 0 and offset + trendLookback < 5000:
+                slope = ta.linreg(close[offset], trendLookback, 0) - ta.linreg(close[offset + trendLookback], trendLookback, 0)
+                avgPrice = ta.sma(close[offset], trendLookback)
+                slopePct = slope / avgPrice * 100 if avgPrice != 0 else 0.0
+                result = slopePct > trendSlopeMinPct
+        return result
+
+    def isTrendingDown(refBar):
+        result: bool = False
+        if not na(refBar):
+            offset = bar_index - refBar
+            if offset >= 0 and offset + trendLookback < 5000:
+                slope = ta.linreg(close[offset], trendLookback, 0) - ta.linreg(close[offset + trendLookback], trendLookback, 0)
+                avgPrice = ta.sma(close[offset], trendLookback)
+                slopePct = slope / avgPrice * 100 if avgPrice != 0 else 0.0
+                result = slopePct < -trendSlopeMinPct
+        return result
+
+    trendOkForBearish = isTrendingUp(ph_bar_1) if newPivotHigh and (not na(ph_bar_1)) else False
+    trendOkForBullish = isTrendingDown(pl_bar_1) if newPivotLow and (not na(pl_bar_1)) else False
+
+    def findTrendStartLow(refBar):
+        result: float = na(float)
+        if not na(refBar):
+            offset = bar_index - refBar
+            if offset >= 0 and offset + fibTrendSearchBars < 5000:
+                result = ta.lowest(low[offset], fibTrendSearchBars)
+        return result
+
+    def findTrendStartHigh(refBar):
+        result: float = na(float)
+        if not na(refBar):
+            offset = bar_index - refBar
+            if offset >= 0 and offset + fibTrendSearchBars < 5000:
+                result = ta.highest(high[offset], fibTrendSearchBars)
+        return result
+
+    def checkFibLevel(fibStart, fibEnd, targetPrice, isRetraceDown):
+        ok: bool = False
+        if not na(fibStart) and (not na(fibEnd)) and (fibEnd != fibStart):
+            range_ = fibEnd - fibStart
+            tol = math.abs(range_) * (fibTolerancePct / 100.0)
+            level618 = fibEnd - range_ * 0.618 if isRetraceDown else fibEnd + math.abs(range_) * 0.618
+            level786 = fibEnd - range_ * 0.786 if isRetraceDown else fibEnd + math.abs(range_) * 0.786
+            if fibUse618 and math.abs(targetPrice - level618) <= tol:
+                ok = True
+            if fibUse786 and math.abs(targetPrice - level786) <= tol:
+                ok = True
+        return ok
+
+    fibScoreBearish: bool = False
+    if newPivotHigh and (not na(ph_bar_1)):
+        trendStart = findTrendStartLow(ph_bar_1)
+        fibScoreBearish = checkFibLevel(trendStart, ph_price_1, ph_price_2, True)
+
+    fibScoreBullish: bool = False
+    if newPivotLow and (not na(pl_bar_1)):
+        trendStart = findTrendStartHigh(pl_bar_1)
+        fibScoreBullish = checkFibLevel(trendStart, pl_price_1, pl_price_2, False)
+
+    candleRange = high - low
+    candleBody = math.abs(close - open)
+    upperShadow = high - math.max(close, open)
+    lowerShadow = math.min(close, open) - low
+    avgBody = ta.sma(math.abs(close - open), bigCandleAvgLen)
+    sizeOk = candleRange >= minCandleATRRatio * atr14
+
+    bullishWick = candleRange > 0 and lowerShadow >= shadowToBodyRatio * candleBody and (upperShadow / candleRange * 100 <= maxOppositeShadowPct) and sizeOk
+    bigGreenCandle = close > open and candleBody >= bigCandleMultiplier * avgBody and sizeOk
+    priceActionBullish = bullishWick or bigGreenCandle
+
+    bearishWick = candleRange > 0 and upperShadow >= shadowToBodyRatio * candleBody and (lowerShadow / candleRange * 100 <= maxOppositeShadowPct) and sizeOk
+    bearishHangingMan = candleRange > 0 and lowerShadow >= shadowToBodyRatio * candleBody and (upperShadow / candleRange * 100 <= maxOppositeShadowPct) and sizeOk
+    bigRedCandle = close < open and candleBody >= bigCandleMultiplier * avgBody and sizeOk
+    priceActionBearish = bearishWick or bearishHangingMan or bigRedCandle
+
+    priceActionBullishAtPivot = priceActionBullish
+    priceActionBearishAtPivot = priceActionBearish
+
+    priceHigherHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 > ph_price_1)
+    rsiLowerHighOnPeaks = newPivotHigh and (not na(ph_rsi_1)) and (ph_rsi_2 < ph_rsi_1)
+    macdLineLowerHighOnPeaks = newPivotHigh and (not na(ph_macdline_1)) and (ph_macdline_2 < ph_macdline_1)
+    histLowerHighOnPeaks = newPivotHigh and (not na(ph_hist_1)) and (ph_hist_2 < ph_hist_1)
+    bothPeaksGreen = newPivotHigh and (not na(ph_hist_1)) and (ph_hist_1 > 0) and (ph_hist_2 > 0)
+
+    classicBearishCond1_RSI = priceHigherHigh and rsiLowerHighOnPeaks
+    classicBearishCond2_MACDl = priceHigherHigh and macdLineLowerHighOnPeaks
+    classicBearishCond3_MACDh = priceHigherHigh and histLowerHighOnPeaks and bothPeaksGreen and macdColorChangedForHighs
+    classicBearishBase3 = priceHigherHigh and trendOkForBearish and classicBearishCond3_MACDh and classicBearishCond1_RSI and classicBearishCond2_MACDl
+
+    priceLowerLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 < pl_price_1)
+    rsiHigherLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and (pl_rsi_2 > pl_rsi_1)
+    macdLineHigherLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 > pl_macdline_1)
+    histHigherLowOnTroughs = newPivotLow and (not na(pl_hist_1)) and (pl_hist_2 > pl_hist_1)
+    bothTroughsRed = newPivotLow and (not na(pl_hist_1)) and (pl_hist_1 < 0) and (pl_hist_2 < 0)
+
+    classicBullishCond1_RSI = priceLowerLow and rsiHigherLowOnTroughs
+    classicBullishCond2_MACDl = priceLowerLow and macdLineHigherLowOnTroughs
+    classicBullishCond3_MACDh = priceLowerLow and histHigherLowOnTroughs and bothTroughsRed and macdColorChangedForLows
+    classicBullishBase3 = priceLowerLow and trendOkForBullish and classicBullishCond3_MACDh and classicBullishCond1_RSI and classicBullishCond2_MACDl
+
+    priceHigherLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 > pl_price_1)
+    rsiLowerLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and (pl_rsi_2 < pl_rsi_1)
+    macdLineLowerLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 < pl_macdline_1)
+    histLowerLowOnTroughs = newPivotLow and (not na(pl_hist_1)) and (pl_hist_2 < pl_hist_1)
+
+    hiddenBullishCond1_RSI = priceHigherLow and rsiLowerLowOnTroughs
+    hiddenBullishCond2_MACDl = priceHigherLow and macdLineLowerLowOnTroughs
+    hiddenBullishCond3_MACDh = priceHigherLow and histLowerLowOnTroughs and bothTroughsRed and macdColorChangedForLows
+    hiddenBullishBase3 = enableHidden and priceHigherLow and hiddenBullishCond3_MACDh and hiddenBullishCond1_RSI and hiddenBullishCond2_MACDl
+
+    priceLowerHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 < ph_price_1)
+    rsiHigherHighOnPeaks = newPivotHigh and (not na(ph_rsi_1)) and (ph_rsi_2 > ph_rsi_1)
+    macdLineHigherHighOnPeaks = newPivotHigh and (not na(ph_macdline_1)) and (ph_macdline_2 > ph_macdline_1)
+    histHigherHighOnPeaks = newPivotHigh and (not na(ph_hist_1)) and (ph_hist_2 > ph_hist_1)
+
+    hiddenBearishCond1_RSI = priceLowerHigh and rsiHigherHighOnPeaks
+    hiddenBearishCond2_MACDl = priceLowerHigh and macdLineHigherHighOnPeaks
+    hiddenBearishCond3_MACDh = priceLowerHigh and histHigherHighOnPeaks and bothPeaksGreen and macdColorChangedForHighs
+    hiddenBearishBase3 = enableHidden and priceLowerHigh and hiddenBearishCond3_MACDh and hiddenBearishCond1_RSI and hiddenBearishCond2_MACDl
+
+    def passesMinRequirement(base3, fibOk, paOk):
+        result: bool = False
+        if base3:
+            if minConfirmations == '۳ تعییدیه (حداقل مجاز)':
+                result = True
+            elif minConfirmations == '۳ تعییدیه + فیبوناچی (۴ امتیاز) [Custom]':
+                result = fibOk
+            elif minConfirmations == '۳ تعییدیه + پرایس\u200cاکشن (۴ امتیاز) [Custom]':
+                result = paOk
+            elif minConfirmations == '۵ امتیاز کامل (ایده\u200cآل)':
+                result = fibOk and paOk
+        return result
+
+    finalClassicBearish = passesMinRequirement(classicBearishBase3, fibScoreBearish, priceActionBearishAtPivot) and mtfFilterOkForBearish
+    finalClassicBullish = passesMinRequirement(classicBullishBase3, fibScoreBullish, priceActionBullishAtPivot) and mtfFilterOkForBullish
+    finalHiddenBullish = passesMinRequirement(hiddenBullishBase3, fibScoreBullish, priceActionBullishAtPivot) and mtfFilterOkForBullish
+    finalHiddenBearish = passesMinRequirement(hiddenBearishBase3, fibScoreBearish, priceActionBearishAtPivot) and mtfFilterOkForBearish
+
+    plotshape(finalClassicBearish, title='CD-', style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text='CD-', offset=-rightBars)
+    plotshape(finalClassicBullish, title='CD+', style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text='CD+', offset=-rightBars)
+    plotshape(finalHiddenBullish, title='HD+', style=shape.triangleup, location=location.belowbar, color=color.blue, size=size.small, text='HD+', offset=-rightBars)
+    plotshape(finalHiddenBearish, title='HD-', style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.small, text='HD-', offset=-rightBars)
+
+
+if __name__ == "__main__":
+    from pynecore.standalone import run
+    run(__file__)
