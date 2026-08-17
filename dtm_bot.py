@@ -38,7 +38,7 @@ BASE_URL = os.getenv("BASE_URL", "https://apiv2.thetruetrade.io")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 
-SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT"]
+SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
 TIMEFRAME = "1m"
 HISTORY_BARS = 400
 LIVE_BUFFER_SIZE = 400
@@ -66,9 +66,9 @@ MTF_TIMEFRAME = "240"
 LEFT_BARS = 5
 RIGHT_BARS = 3
 
-TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01}
-PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2}
-LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50}
+TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01}
+PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2, "BNBUSDT": 2}
+LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 50}
 
 def _ignore_sigterm(signum, frame):
     print(f"Ignoring SIGTERM ({signum}), keeping process alive...", flush=True)
@@ -605,17 +605,12 @@ class TrueTradePrivateExchange:
         # تبدیل side به فرمت مورد نیاز API
         side_upper = str(side).upper().strip()
         
-        # لاگ مقدار ورودی برای دیباگ
-        logger.info(f"[CREATE ORDER] Symbol: {symbol}, Input side: '{side}', Capital: {capital}")
-        
         if side_upper in ("BUY", "LONG"):
             api_side = "LONG"
         elif side_upper in ("SELL", "SHORT"):
             api_side = "SHORT"
         else:
             api_side = side_upper
-            
-        logger.info(f"[CREATE ORDER] API side: '{api_side}'")
         
         # استفاده از اهرم مناسب برای هر نماد
         leverage = params.get("leverage", LEVERAGE_MAP.get(symbol.upper(), 1))
@@ -630,47 +625,22 @@ class TrueTradePrivateExchange:
             "walletType": "debit"
         }
         
-        # لاگ کامل بدنه درخواست
-        logger.info(f"[CREATE ORDER] Request body: {json.dumps(od, ensure_ascii=False, indent=2)}")
-        
         # افزودن حد ضرر و حد سود اگر موجود باشند
         if "stopLoss" in params and params["stopLoss"]:
             od["stopLoss"] = f"{self._round_price(params['stopLoss'], symbol):.{prec}f}"
         if "takeProfit" in params and params["takeProfit"]:
             od["takeProfit"] = f"{self._round_price(params['takeProfit'], symbol):.{prec}f}"
-            
-        # ارسال اطلاعات کامل درخواست به تلگرام
-        request_info = (
-            f"📤 ثبت سفارش — {symbol} {api_side}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🔹 Side: {api_side}\n"
-            f"🔹 Trade Type: MARKET\n"
-            f"🔹 Leverage: {od['leverage']}\n"
-            f"🔹 Cost: {od['cost']} USDT\n"
-            f"🔹 Wallet Type: {od['walletType']}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📋 Body: {json.dumps(od, ensure_ascii=False)}"
-        )
-        send_telegram_message(request_info)
         
         try:
-            # امضای صحیح: timestamp + METHOD + URI (بدون body)
             result = self._request("POST", "/futures/positions", od)
             
-            # پاسخ موفقیت‌آمیز شامل positionId است
             position_id = result.get("positionId") if isinstance(result, dict) else None
             
-            success_msg = (
-                f"📥 سفارش ثبت شد — {symbol} {api_side}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"✅ Position ID: {position_id}"
-            )
-            send_telegram_message(success_msg)
+            send_telegram_message(f"📥 سفارش ثبت شد — {symbol} {api_side} | Position ID: {position_id}")
             return {"id": position_id}
             
         except Exception as e:
             # نمایش خطای دقیق از پاسخ API
-            error_text = ""
             if self._last_response is not None:
                 try:
                     error_data = self._last_response.json()
@@ -679,7 +649,7 @@ class TrueTradePrivateExchange:
                         for error in error_data["errors"]:
                             field = error.get("field", "unknown")
                             message = error.get("message", "unknown error")
-                            error_messages.append(f"• {field}: {message}")
+                            error_messages.append(f"{field}: {message}")
                         error_text = "\n".join(error_messages)
                     else:
                         error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:500]}"
@@ -688,7 +658,6 @@ class TrueTradePrivateExchange:
             else:
                 error_text = str(e)
             
-            # ارسال خطای کامل به تلگرام
             error_msg = (
                 f"❌ خطای سفارش {symbol} {api_side}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -746,6 +715,7 @@ def run_trading_loop():
             self.last_closed_ts = None
             self.last_signal = None
             self.last_entry = None
+            self.executed_orders = set()
 
         def add_closed_candle(self, row):
             ts = int(row.Index.timestamp() * 1000)
@@ -859,9 +829,6 @@ def run_trading_loop():
                 Path(__file__).resolve().parent / "strategy.py"
             )
 
-            # The SAME ScriptRunner instance lives for the whole process.
-            # Its run_iter() consumes the warmup and then waits for
-            # subsequent live candles from feed_queue.
             self.runner = ScriptRunner(
                 strategy_path,
                 self.iterator(),
@@ -903,11 +870,21 @@ def run_trading_loop():
                                 ):
                                     entry = value
 
-                        # Preserve the exact PyneCore result in one snapshot.
-                        # Reporting does not recalculate strategy values.
-                        if sig is not None:
-                            signal_snapshot["signal"] = sig
-                            self.last_signal = sig
+                        # تبدیل سیگنال به فرمت استاندارد
+                        raw_sig = str(sig).upper().strip() if sig is not None else None
+                        
+                        if raw_sig == "BUY":
+                            normalized_sig = "LONG"
+                        elif raw_sig == "SELL":
+                            normalized_sig = "SHORT"
+                        elif raw_sig in ("LONG", "SHORT"):
+                            normalized_sig = raw_sig
+                        else:
+                            normalized_sig = None
+
+                        if normalized_sig is not None:
+                            signal_snapshot["signal"] = normalized_sig
+                            self.last_signal = normalized_sig
 
                         if entry is not None:
                             signal_snapshot["entry"] = entry
@@ -917,20 +894,134 @@ def run_trading_loop():
                             f"{self.symbol}: "
                             f"PYNECORE LIVE BAR | "
                             f"ts={getattr(bar, 'timestamp', None)} | "
-                            f"signal={sig} | "
+                            f"raw_signal={raw_sig} | "
+                            f"signal={normalized_sig} | "
                             f"entry={entry}"
                         )
 
-                        # ADDITIVE ONLY:
-                        # This sends the two new reporting messages.
-                        # It does NOT call create_order(), does NOT alter
-                        # strategy state, and does NOT alter existing messages.
-                        if sig in ("LONG", "SHORT"):
+                        if normalized_sig not in ("LONG", "SHORT"):
+                            continue
+
+                        candle_ts = getattr(bar, "timestamp", None)
+                        order_key = (
+                            self.symbol.upper(),
+                            int(candle_ts) if candle_ts is not None else None,
+                            normalized_sig,
+                        )
+
+                        # جلوگیری از سفارش تکراری
+                        if order_key in self.executed_orders:
+                            logger.warning(
+                                f"{self.symbol}: DUPLICATE SIGNAL IGNORED | "
+                                f"signal={normalized_sig} | candle={candle_ts}"
+                            )
+                            continue
+
+                        self.executed_orders.add(order_key)
+
+                        # ارسال گزارش سیگنال
+                        try:
                             send_dtm_signal_reports(
                                 self.symbol,
                                 TIMEFRAME,
                                 signal_snapshot,
                                 bar,
+                            )
+                        except Exception:
+                            logger.exception(f"{self.symbol}: signal Telegram report failed")
+
+                        # ========================================
+                        # فرمول محاسبه سرمایه بر اساس ۲ دلار
+                        # ========================================
+                        
+                        # دریافت موجودی حساب
+                        try:
+                            current_balance = exchange.fetch_balance()
+                            if current_balance is None:
+                                current_balance = 0.0
+                        except Exception:
+                            current_balance = 0.0
+
+                        # پارامترهای فرمول
+                        stop_loss_pct = 0.001  # 0.1%
+                        target_pct = 0.002  # 0.2%
+                        allowed_leverage = LEVERAGE_MAP.get(self.symbol.upper(), 50)
+                        base_risk = 2.0  # 2 دلار
+
+                        # Step 1: محاسبه اهرم قدیمی
+                        old_leverage = 1.0 / stop_loss_pct
+                        # old_leverage = 1000
+
+                        # Step 2: محاسبه سرمایه موردنیاز
+                        if old_leverage > allowed_leverage:
+                            required_capital = (old_leverage / allowed_leverage) * base_risk
+                        else:
+                            required_capital = base_risk
+
+                        # قانون مدیریت موجودی ناکافی
+                        if current_balance > 0 and current_balance < required_capital:
+                            order_capital = current_balance * 0.98
+                        else:
+                            order_capital = required_capital
+
+                        # اگر موجودی صفر است، سفارش ارسال نشود
+                        if current_balance <= 0:
+                            logger.warning(
+                                f"{self.symbol}: INSUFFICIENT BALANCE | "
+                                f"balance={current_balance}"
+                            )
+                            send_telegram_message(
+                                f"⚠️ موجودی ناکافی — {self.symbol}\n"
+                                f"Balance: {current_balance} USDT"
+                            )
+                            continue
+
+                        logger.info(
+                            f"{self.symbol}: CAPITAL CALC | "
+                            f"balance={current_balance} | "
+                            f"required={required_capital:.2f} | "
+                            f"order_capital={order_capital:.2f}"
+                        )
+
+                        logger.info(
+                            f"{self.symbol}: EXECUTING ORDER NOW | "
+                            f"signal={normalized_sig} | "
+                            f"capital={order_capital:.2f} | "
+                            f"entry={entry} | "
+                            f"candle={candle_ts}"
+                        )
+
+                        try:
+                            order_result = exchange.create_order(
+                                symbol=self.symbol,
+                                side=normalized_sig,
+                                capital=order_capital,
+                            )
+
+                            position_id = order_result.get("id") if isinstance(order_result, dict) else None
+
+                            success_text = "\n".join([
+                                "✅ ORDER EXECUTED",
+                                "━━━━━━━━━━━━━━━━━━",
+                                f"Symbol: {self.symbol}",
+                                f"Signal: {normalized_sig}",
+                                f"Entry: {entry}",
+                                f"Capital: {order_capital:.2f} USDT",
+                                f"Position ID: {position_id}",
+                                f"Candle: {candle_ts}",
+                            ])
+                            send_telegram_message(success_text)
+
+                            logger.info(
+                                f"{self.symbol}: ORDER SUCCESS | "
+                                f"signal={normalized_sig} | "
+                                f"position_id={position_id}"
+                            )
+
+                        except Exception as order_exc:
+                            logger.exception(
+                                f"{self.symbol}: ORDER EXECUTION FAILED | "
+                                f"signal={normalized_sig}"
                             )
 
                 except Exception as exc:
@@ -969,8 +1060,6 @@ def run_trading_loop():
                 )
                 continue
 
-            # The current 1m candle is not closed until the next
-            # minute begins. Never feed the open candle to Pine.
             now_ts = int(time.time())
             current_bucket = (
                 now_ts // 60
@@ -1030,8 +1119,6 @@ def run_trading_loop():
                     continue
 
                 try:
-                    # Fetch only a small live tail.
-                    # This is NOT replayed through ScriptRunner.
                     df = public.fetch_ohlcv(
                         symbol,
                         TIMEFRAME,
@@ -1046,15 +1133,11 @@ def run_trading_loop():
                             row.Index.timestamp()
                         )
 
-                        # Only CLOSED candles enter Pine.
                         if row_ts >= current_bucket:
                             continue
 
                         if state.add_closed_candle(row):
                             candle = state.buffer[-1]
-
-                            # Feed ONLY the new candle to the
-                            # already-running ScriptRunner.
                             state.feed_queue.put(candle)
 
                             logger.info(
@@ -1063,21 +1146,6 @@ def run_trading_loop():
                                 f"ts={candle.timestamp} | "
                                 f"buffer={len(state.buffer)}"
                             )
-
-                            # Do not execute an order from the
-                            # polling path. Signal execution remains
-                            # attached to the PyneCore live stream.
-                            if (
-                                state.last_signal
-                                and balance
-                                and balance > 0
-                            ):
-                                logger.info(
-                                    f"{symbol}: "
-                                    f"PyneCore signal available: "
-                                    f"{state.last_signal} | "
-                                    f"entry={state.last_entry}"
-                                )
 
                 except Exception as exc:
                     logger.exception(
