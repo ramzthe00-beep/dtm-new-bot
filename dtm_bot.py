@@ -639,7 +639,19 @@ class TrueTradePrivateExchange:
         if "takeProfit" in params and params["takeProfit"]:
             od["takeProfit"] = f"{self._round_price(params['takeProfit'], symbol):.{prec}f}"
             
-        send_telegram_message(f"📤 ثبت سفارش — {symbol} {api_side} | اهرم: {od['leverage']} | سرمایه: {od['cost']} USDT")
+        # ارسال اطلاعات کامل درخواست به تلگرام
+        request_info = (
+            f"📤 ثبت سفارش — {symbol} {api_side}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🔹 Side: {api_side}\n"
+            f"🔹 Trade Type: MARKET\n"
+            f"🔹 Leverage: {od['leverage']}\n"
+            f"🔹 Cost: {od['cost']} USDT\n"
+            f"🔹 Wallet Type: {od['walletType']}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"📋 Body: {json.dumps(od, ensure_ascii=False)}"
+        )
+        send_telegram_message(request_info)
         
         try:
             # امضای صحیح: timestamp + METHOD + URI (بدون body)
@@ -648,11 +660,17 @@ class TrueTradePrivateExchange:
             # پاسخ موفقیت‌آمیز شامل positionId است
             position_id = result.get("positionId") if isinstance(result, dict) else None
             
-            send_telegram_message(f"📥 سفارش ثبت شد — {symbol} {api_side} | Position ID: {position_id}")
+            success_msg = (
+                f"📥 سفارش ثبت شد — {symbol} {api_side}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"✅ Position ID: {position_id}"
+            )
+            send_telegram_message(success_msg)
             return {"id": position_id}
             
         except Exception as e:
             # نمایش خطای دقیق از پاسخ API
+            error_text = ""
             if self._last_response is not None:
                 try:
                     error_data = self._last_response.json()
@@ -661,7 +679,7 @@ class TrueTradePrivateExchange:
                         for error in error_data["errors"]:
                             field = error.get("field", "unknown")
                             message = error.get("message", "unknown error")
-                            error_messages.append(f"{field}: {message}")
+                            error_messages.append(f"• {field}: {message}")
                         error_text = "\n".join(error_messages)
                     else:
                         error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:500]}"
@@ -669,8 +687,16 @@ class TrueTradePrivateExchange:
                     error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:500]}"
             else:
                 error_text = str(e)
-                
-            send_telegram_message(f"❌ خطای سفارش {symbol} {api_side}\n{error_text}")
+            
+            # ارسال خطای کامل به تلگرام
+            error_msg = (
+                f"❌ خطای سفارش {symbol} {api_side}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📋 Body ارسالی:\n{json.dumps(od, ensure_ascii=False, indent=2)}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🔴 خطا:\n{error_text}"
+            )
+            send_telegram_message(error_msg)
             raise
 
 # ===== Main loop =====
