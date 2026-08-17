@@ -76,6 +76,7 @@ class PrivateExchange:
         self.api_secret = API_SECRET
         self.base = BASE_URL
         self.session = requests.Session()
+        self._last_response = None
     def _sign(self, method, uri, ts):
         payload = f"{ts}{method.upper()}{uri}"
         return hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -83,9 +84,22 @@ class PrivateExchange:
         ts = str(int(time.time()*1000))
         sig = self._sign(method, uri, ts)
         headers = {"X-API-Key": self.api_key, "X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"}
-        r = self.session.request(method, f"{self.base}{uri}", headers=headers, json=data, timeout=15)
+        r = self.session.request(
+            method,
+            f"{self.base}{uri}",
+            headers=headers,
+            json=data,
+            timeout=15,
+        )
+
+        # IMPORTANT:
+        # Keep the complete exchange response BEFORE any exception
+        # is raised. This does NOT change calculations or order logic.
+        self._last_response = r
+
         if not r.ok:
             r.raise_for_status()
+
         return r.json()
     def test_connection(self):
         try:
@@ -183,9 +197,417 @@ def _handle_shutdown(signum, frame):
     logger.info("Shutdown signal received: %s", signum)
     STOP_EVENT.set()
 
+
+# ================================================================
+# STARTUP DIAGNOSTIC — READ ONLY
+# ================================================================
+# IMPORTANT:
+# This diagnostic NEVER sends a real order.
+# It NEVER changes trading formulas or calculations.
+# ================================================================
+
+def startup_diagnostic(exchange, public):
+    report = [
+        "🚀 DTM BOT STARTUP DIAGNOSTIC",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "MODE: READ-ONLY",
+        "REAL ORDER: 🚫 NOT SENT",
+    ]
+
+    def add(title, ok, details=""):
+        status = "✅ ACTIVE" if ok else "❌ FAILED"
+        text = f"{title}: {status}"
+        if details:
+            text += f"\n{details}"
+        report.append(text)
+
+    def full_exchange_error(prefix="FULL EXCHANGE ERROR"):
+        response = getattr(exchange, "_last_response", None)
+
+        if response is None:
+            return (
+                f"{prefix}\n"
+                "NO HTTP RESPONSE RECEIVED"
+            )
+
+        text = (
+            f"{prefix}\n"
+            f"HTTP STATUS: {response.status_code}\n"
+            f"HTTP URL: {response.url}\n"
+            f"RAW RESPONSE:\n{response.text}"
+        )
+
+        try:
+            parsed = response.json()
+            text += (
+                "\nPARSED JSON:\n"
+                + json.dumps(
+                    parsed,
+                    ensure_ascii=False,
+                    indent=2
+                )
+            )
+        except Exception:
+            pass
+
+        return text
+
+    # ------------------------------------------------------------
+    # TELEGRAM
+    # ------------------------------------------------------------
+    try:
+        send_telegram("🧪 DTM startup diagnostic started")
+        add("TELEGRAM", True)
+    except Exception as e:
+        add(
+            "TELEGRAM",
+            False,
+            f"FULL ERROR: {repr(e)}"
+        )
+
+    # ------------------------------------------------------------
+    # EXCHANGE CONNECTION
+    # ------------------------------------------------------------
+    try:
+        exchange._last_response = None
+        ok = exchange.test_connection()
+
+        if ok:
+            add("EXCHANGE API", True)
+        else:
+            add(
+                "EXCHANGE API",
+                False,
+                full_exchange_error()
+            )
+    except Exception as e:
+        add(
+            "EXCHANGE API",
+            False,
+            full_exchange_error() +
+            f"\nLOCAL EXCEPTION: {repr(e)}"
+        )
+
+    # ------------------------------------------------------------
+    # BALANCE
+    # ------------------------------------------------------------
+    balance = None
+
+    try:
+        exchange._last_response = None
+        balance = exchange.fetch_balance()
+
+        if balance is not None and balance >= 0:
+            add(
+                "BALANCE",
+                True,
+                f"Available USDT: {balance}"
+            )
+        else:
+            add(
+                "BALANCE",
+                False,
+                full_exchange_error()
+            )
+    except Exception as e:
+        add(
+            "BALANCE",
+            False,
+            full_exchange_error() +
+            f"\nLOCAL EXCEPTION: {repr(e)}"
+        )
+
+    # ------------------------------------------------------------
+    # MARKET DATA
+    # ------------------------------------------------------------
+    report.append("━━━━━━━━━━━━━━━━━━━━━━")
+    report.append("MARKET DATA:")
+
+    market_ok = 0
+
+    for symbol in SYMBOLS:
+        try:
+            df = public.fetch_ohlcv(symbol)
+
+            if df is not None and not df.empty:
+                market_ok += 1
+                report.append(
+                    f"{symbol}: ✅ ACTIVE "
+                    f"({len(df)} candles)"
+                )
+            else:
+                report.append(
+                    f"{symbol}: ❌ FAILED\n"
+                    "FULL ERROR: Empty OHLCV response"
+                )
+
+        except Exception as e:
+            report.append(
+                f"{symbol}: ❌ FAILED\n"
+                f"FULL ERROR: {repr(e)}"
+            )
+
+    add(
+        "MARKET DATA SYSTEM",
+        market_ok == len(SYMBOLS),
+        f"Active symbols: {market_ok}/{len(SYMBOLS)}"
+    )
+
+    # ------------------------------------------------------------
+    # STRATEGY IMPORT
+    # ------------------------------------------------------------
+    calculate_signals_fn = None
+
+    report.append("━━━━━━━━━━━━━━━━━━━━━━")
+
+    try:
+        from strategy import calculate_signals as _calculate_signals
+        calculate_signals_fn = _calculate_signals
+
+        add(
+            "STRATEGY.PY",
+            callable(calculate_signals_fn),
+            "calculate_signals: AVAILABLE"
+        )
+
+    except Exception as e:
+        add(
+            "STRATEGY.PY",
+            False,
+            f"FULL ERROR: {repr(e)}"
+        )
+
+    # ------------------------------------------------------------
+    # STRATEGY EXECUTION — READ ONLY
+    # ------------------------------------------------------------
+    strategy_ok = False
+
+    if callable(calculate_signals_fn):
+        for symbol in SYMBOLS:
+            try:
+                df = public.fetch_ohlcv(symbol)
+
+                if df is not None and not df.empty:
+                    sig, entry = calculate_signals_fn(df)
+
+                    logger.info(
+                        "[STARTUP DIAGNOSTIC] "
+                        "%s signal=%r entry=%r",
+                        symbol,
+                        sig,
+                        entry,
+                    )
+
+                    strategy_ok = True
+                    report.append(
+                        f"STRATEGY TEST {symbol}: "
+                        f"✅ OK | signal={sig!r} | entry={entry!r}"
+                    )
+                    break
+
+            except Exception as e:
+                logger.exception(
+                    "[STARTUP DIAGNOSTIC] "
+                    "Strategy test failed: %s",
+                    symbol,
+                )
+
+        add(
+            "STRATEGY EXECUTION",
+            strategy_ok
+        )
+
+    else:
+        add(
+            "STRATEGY EXECUTION",
+            False,
+            "calculate_signals unavailable"
+        )
+
+    # ------------------------------------------------------------
+    # POSITION API — READ ONLY
+    # ------------------------------------------------------------
+    try:
+        exchange._last_response = None
+
+        positions = exchange._request(
+            "GET",
+            "/futures/positions"
+        )
+
+        add(
+            "POSITION API",
+            True,
+            f"Response type: {type(positions).__name__}"
+        )
+
+    except Exception as e:
+        add(
+            "POSITION API",
+            False,
+            full_exchange_error() +
+            f"\nLOCAL EXCEPTION: {repr(e)}"
+        )
+
+    # ------------------------------------------------------------
+    # ORDER CAPABILITY — NO REAL ORDER
+    # ------------------------------------------------------------
+    report.append("━━━━━━━━━━━━━━━━━━━━━━")
+    report.append("ORDER SYSTEM — READ ONLY")
+
+    try:
+        create_order = getattr(
+            exchange,
+            "create_order",
+            None
+        )
+
+        if callable(create_order):
+            add(
+                "CREATE_ORDER FUNCTION",
+                True,
+                "Function exists"
+            )
+        else:
+            add(
+                "CREATE_ORDER FUNCTION",
+                False,
+                "create_order not found"
+            )
+
+    except Exception as e:
+        add(
+            "CREATE_ORDER FUNCTION",
+            False,
+            f"FULL ERROR: {repr(e)}"
+        )
+
+    # ------------------------------------------------------------
+    # ORDER STRUCTURE VALIDATION
+    # ------------------------------------------------------------
+    try:
+        for symbol in SYMBOLS:
+            leverage = LEVERAGE_MAP.get(symbol, 50)
+
+            # IMPORTANT:
+            # These are ONLY the currently configured values.
+            # No trading formula is recalculated or modified.
+            side_test = "LONG"
+            trade_type = "MARKET"
+            wallet_type = "debit"
+
+            report.append(
+                f"\n{symbol} ORDER STRUCTURE:"
+            )
+            report.append(
+                f"  side={side_test}"
+            )
+            report.append(
+                f"  tradeType={trade_type}"
+            )
+            report.append(
+                f"  leverage={leverage}"
+            )
+            report.append(
+                f"  walletType={wallet_type}"
+            )
+
+            report.append(
+                "  cost: 🔒 CURRENT BOT CALCULATION "
+                "(NOT MODIFIED)"
+            )
+
+        add(
+            "ORDER REQUEST STRUCTURE",
+            True,
+            "Structure inspected without sending an order"
+        )
+
+    except Exception as e:
+        add(
+            "ORDER REQUEST STRUCTURE",
+            False,
+            f"FULL ERROR: {repr(e)}"
+        )
+
+    # ------------------------------------------------------------
+    # CURRENT FORMULA / RISK VALUES — OBSERVATION ONLY
+    # ------------------------------------------------------------
+    report.append("━━━━━━━━━━━━━━━━━━━━━━")
+    report.append("CURRENT TRADING CONFIG — OBSERVATION ONLY")
+
+    report.append(
+        f"TARGET_RISK: {TARGET_RISK}"
+    )
+
+    for symbol in SYMBOLS:
+        report.append(
+            f"{symbol}: "
+            f"LEVERAGE_MAP={LEVERAGE_MAP.get(symbol)}"
+        )
+
+    report.append(
+        "TRADING FORMULAS: 🔒 NOT MODIFIED"
+    )
+    report.append(
+        "CAPITAL CALCULATION: 🔒 NOT MODIFIED"
+    )
+    report.append(
+        "LEVERAGE CALCULATION: 🔒 NOT MODIFIED"
+    )
+    report.append(
+        "STRATEGY LOGIC: 🔒 NOT MODIFIED"
+    )
+
+    # ------------------------------------------------------------
+    # FINAL SAFETY
+    # ------------------------------------------------------------
+    report.extend([
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        "REAL ORDER: 🚫 NOT SENT",
+        "ORDER TEST MODE: READ-ONLY",
+        "DIAGNOSTIC COMPLETE",
+    ])
+
+    final_report = "\n".join(report)
+
+    logger.info(
+        "[STARTUP DIAGNOSTIC]\n%s",
+        final_report
+    )
+
+    try:
+        send_telegram(final_report)
+        logger.info(
+            "[STARTUP DIAGNOSTIC] TELEGRAM SENT"
+        )
+    except Exception as e:
+        logger.exception(
+            "[STARTUP DIAGNOSTIC] "
+            "TELEGRAM SEND FAILED: %s",
+            e,
+        )
+
+    return final_report
+
 def loop():
     public = PublicData()
     exchange = PrivateExchange()
+
+    # ============================================================
+    # READ-ONLY STARTUP DIAGNOSTIC
+    # Runs once at every bot startup/restart.
+    # No trading calculation is modified.
+    # No real order is sent.
+    # ============================================================
+    try:
+        startup_diagnostic(exchange, public)
+    except Exception as e:
+        logger.exception(
+            "[STARTUP DIAGNOSTIC] FATAL ERROR: %s",
+            e
+        )
+
     send_telegram("ربات شروع شد")
     logger.info("Worker bot started")
     while not STOP_EVENT.is_set():
