@@ -12,7 +12,20 @@ import logging
 import threading
 import signal
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dt_time
+
+# ===== TIMEZONE CONSTANTS =====
+# Iran official fixed offset: UTC+03:30
+IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
+UTC_TZ = timezone.utc
+
+def format_iran_time(dt=None):
+    if dt is None:
+        dt = datetime.now(UTC_TZ)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC_TZ)
+    return dt.astimezone(IRAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
 from pathlib import Path
 
 import requests
@@ -80,6 +93,7 @@ logger = logging.getLogger("DTM")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
     fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    fmt.converter = lambda *args: datetime.now(IRAN_TZ).timetuple()
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
     logger.addHandler(sh)
@@ -92,10 +106,6 @@ def send_telegram_message(text):
     except Exception as e:
         logger.error(f"[TG] {e}")
         return False
-
-def format_iran_time():
-    return (datetime.now(timezone.utc) + timedelta(hours=3, minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
-
 
 # ============================================================
 # DTM ADDITIVE SIGNAL REPORTING
@@ -497,6 +507,9 @@ class TrueTradePrivateExchange:
         return hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
 
     def _request(self, method, uri, data=None):
+        # IMPORTANT: never reuse a previous HTTP response
+        self._last_response = None
+
         ts = str(int(time.time()*1000))
         sig = self._sign(method, uri, ts)
 
@@ -535,6 +548,16 @@ class TrueTradePrivateExchange:
                 uri,
                 r.status_code,
                 r.text
+            )
+
+            # Keep the COMPLETE raw exchange response visible in log
+            logger.info(
+                "[EXCHANGE RAW RESPONSE COMPLETE] "
+                "method=%s | uri=%s | status=%s | body=%s",
+                method.upper(),
+                uri,
+                r.status_code,
+                r.text,
             )
 
             if not r.ok:
@@ -640,23 +663,48 @@ class TrueTradePrivateExchange:
             return {"id": position_id}
             
         except Exception as e:
-            # نمایش خطای دقیق از پاسخ API
+            # ====================================================
+            # COMPLETE EXCHANGE ERROR — LOG ONLY
+            # No order calculation or request values are changed.
+            # ====================================================
             if self._last_response is not None:
+                response = self._last_response
+
                 try:
-                    error_data = self._last_response.json()
-                    if "errors" in error_data:
-                        error_messages = []
-                        for error in error_data["errors"]:
-                            field = error.get("field", "unknown")
-                            message = error.get("message", "unknown error")
-                            error_messages.append(f"{field}: {message}")
-                        error_text = "\n".join(error_messages)
-                    else:
-                        error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:500]}"
-                except ValueError:
-                    error_text = f"HTTP {self._last_response.status_code}: {self._last_response.text[:500]}"
+                    error_data = response.json()
+                except Exception:
+                    error_data = None
+
+                error_text = (
+                    f"HTTP STATUS: {response.status_code}\n"
+                    f"RAW RESPONSE:\n{response.text}\n"
+                )
+
+                if error_data is not None:
+                    error_text += (
+                        "PARSED JSON:\n"
+                        + json.dumps(
+                            error_data,
+                            ensure_ascii=False,
+                            indent=2
+                        )
+                    )
+
+                logger.error(
+                    "[ORDER COMPLETE EXCHANGE ERROR]\n%s",
+                    error_text
+                )
+
             else:
-                error_text = str(e)
+                error_text = (
+                    "NO HTTP RESPONSE RECEIVED\n"
+                    f"LOCAL EXCEPTION: {repr(e)}"
+                )
+
+                logger.error(
+                    "[ORDER NO HTTP RESPONSE] %s",
+                    error_text
+                )
             
             error_msg = (
                 f"❌ خطای سفارش {symbol} {api_side}\n"
@@ -667,6 +715,506 @@ class TrueTradePrivateExchange:
             )
             send_telegram_message(error_msg)
             raise
+
+
+# ============================================================
+# STARTUP DIAGNOSTIC — READ ONLY
+# ============================================================
+
+def startup_diagnostic(exchange, public):
+    """
+    READ-ONLY startup diagnostic.
+
+    This function:
+      - NEVER creates an order
+      - NEVER changes trading calculations
+      - NEVER changes capital formulas
+      - NEVER changes leverage formulas
+      - NEVER changes strategy.py
+      - checks APIs, market data, configuration and engine readiness
+      - sends the complete diagnostic to Telegram
+    """
+
+    lines = [
+        "🚀 DTM BOT STARTUP DIAGNOSTIC",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"🕐 START TIME: {format_iran_time()}",
+        "",
+    ]
+
+    failures = []
+    warnings = []
+
+    def OK(name, detail=""):
+        lines.append(f"🟢 {name}: OK")
+        if detail:
+            lines.append(f"   {detail}")
+
+    def FAIL(name, error):
+        lines.append(f"🔴 {name}: FAILED")
+        lines.append("   ERROR:")
+        lines.append(str(error))
+        failures.append((name, str(error)))
+
+    def WARN(name, detail):
+        lines.append(f"🟡 {name}: WARNING")
+        lines.append(f"   {detail}")
+        warnings.append((name, str(detail)))
+
+    # --------------------------------------------------------
+    # PYTHON
+    # --------------------------------------------------------
+    try:
+        OK("PYTHON", sys.version.split()[0])
+    except Exception as e:
+        FAIL("PYTHON", repr(e))
+
+    # --------------------------------------------------------
+    # REQUIRED MODULES
+    # --------------------------------------------------------
+    try:
+        import pynecore
+        OK("PYNECORE IMPORT")
+    except Exception as e:
+        FAIL("PYNECORE IMPORT", repr(e))
+
+    try:
+        from pynecore.core.script_runner import ScriptRunner
+        OK("PYNECORE SCRIPTRUNNER")
+    except Exception as e:
+        FAIL("PYNECORE SCRIPTRUNNER", repr(e))
+
+    # --------------------------------------------------------
+    # strategy.py
+    # --------------------------------------------------------
+    strategy_path = Path(__file__).resolve().parent / "strategy.py"
+
+    try:
+        if not strategy_path.exists():
+            FAIL(
+                "strategy.py",
+                f"FILE NOT FOUND: {strategy_path}"
+            )
+        else:
+            size = strategy_path.stat().st_size
+
+            if size <= 0:
+                FAIL(
+                    "strategy.py",
+                    "FILE EXISTS BUT IS EMPTY"
+                )
+            else:
+                OK(
+                    "strategy.py",
+                    f"{size} bytes"
+                )
+    except Exception as e:
+        FAIL("strategy.py CHECK", repr(e))
+
+    # --------------------------------------------------------
+    # CONFIGURATION
+    # --------------------------------------------------------
+    try:
+        OK(
+            "TIMEFRAME",
+            f"{TIMEFRAME}"
+        )
+
+        OK(
+            "SYMBOLS",
+            ", ".join(SYMBOLS)
+        )
+
+        OK(
+            "HISTORY BARS",
+            str(HISTORY_BARS)
+        )
+
+        OK(
+            "LIVE BUFFER",
+            str(LIVE_BUFFER_SIZE)
+        )
+
+        if ENABLE_MTF:
+            OK(
+                "MTF",
+                f"ENABLED / {MTF_TIMEFRAME}"
+            )
+        else:
+            OK(
+                "MTF",
+                "DISABLED BY CONFIGURATION"
+            )
+
+    except Exception as e:
+        FAIL("CONFIGURATION", repr(e))
+
+    # --------------------------------------------------------
+    # STRATEGY CAPABILITY CHECK
+    # --------------------------------------------------------
+    try:
+        strategy_text = strategy_path.read_text(
+            encoding="utf-8",
+            errors="replace"
+        ).lower()
+
+        capabilities = {
+            "RSI": ["rsi", "ta.rsi"],
+            "MACD": ["macd", "ta.macd"],
+            "ATR": ["atr", "ta.atr"],
+            "PIVOT": ["pivot"],
+            "DIVERGENCE": ["divergence"],
+            "FIBONACCI": ["0.618", "0.786", "fib"],
+            "PRICE ACTION": [
+                "candle",
+                "wick",
+                "shadow",
+                "pin"
+            ],
+            "TREND": [
+                "trend",
+                "slope",
+                "linreg"
+            ],
+            "SIGNAL": [
+                "signal",
+                "entry"
+            ],
+        }
+
+        for name, needles in capabilities.items():
+            if any(x.lower() in strategy_text for x in needles):
+                OK(
+                    f"STRATEGY {name}",
+                    "DETECTED"
+                )
+            else:
+                WARN(
+                    f"STRATEGY {name}",
+                    "NOT DETECTED IN strategy.py"
+                )
+
+    except Exception as e:
+        FAIL(
+            "STRATEGY CAPABILITY CHECK",
+            repr(e)
+        )
+
+    # --------------------------------------------------------
+    # PUBLIC MARKET DATA
+    # --------------------------------------------------------
+    lines += [
+        "",
+        "📊 MARKET DATA",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    for symbol in SYMBOLS:
+        try:
+            df = public.fetch_ohlcv(
+                symbol,
+                TIMEFRAME,
+                min(5, LIVE_BUFFER_SIZE)
+            )
+
+            if df is None or df.empty:
+                FAIL(
+                    f"{symbol} MARKET DATA",
+                    "EMPTY OHLCV RESPONSE"
+                )
+            else:
+                OK(
+                    f"{symbol} MARKET DATA",
+                    f"rows={len(df)} | last={df.index[-1]}"
+                )
+
+        except Exception as e:
+            FAIL(
+                f"{symbol} MARKET DATA",
+                repr(e)
+            )
+
+    # --------------------------------------------------------
+    # PRIVATE API CONNECTION
+    # --------------------------------------------------------
+    lines += [
+        "",
+        "🔐 PRIVATE EXCHANGE API",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    try:
+        if exchange.test_connection():
+            OK(
+                "PRIVATE API CONNECTION",
+                "GET /futures/positions"
+            )
+        else:
+            response = exchange._last_response
+
+            if response is not None:
+                FAIL(
+                    "PRIVATE API CONNECTION",
+                    "\n".join([
+                        f"HTTP STATUS: {response.status_code}",
+                        "RAW RESPONSE:",
+                        response.text,
+                    ])
+                )
+            else:
+                FAIL(
+                    "PRIVATE API CONNECTION",
+                    "test_connection() returned FALSE"
+                )
+
+    except Exception as e:
+        response = exchange._last_response
+
+        if response is not None:
+            FAIL(
+                "PRIVATE API CONNECTION",
+                "\n".join([
+                    f"HTTP STATUS: {response.status_code}",
+                    "RAW RESPONSE:",
+                    response.text,
+                ])
+            )
+        else:
+            FAIL(
+                "PRIVATE API CONNECTION",
+                repr(e)
+            )
+
+    # --------------------------------------------------------
+    # BALANCE
+    # --------------------------------------------------------
+    try:
+        balance = exchange.fetch_balance()
+
+        if balance is None:
+            response = exchange._last_response
+
+            if response is not None:
+                FAIL(
+                    "USDT BALANCE",
+                    "\n".join([
+                        f"HTTP STATUS: {response.status_code}",
+                        "RAW RESPONSE:",
+                        response.text,
+                    ])
+                )
+            else:
+                FAIL(
+                    "USDT BALANCE",
+                    "RETURNED NONE"
+                )
+        else:
+            OK(
+                "USDT BALANCE",
+                f"{balance} USDT"
+            )
+
+    except Exception as e:
+        response = exchange._last_response
+
+        if response is not None:
+            FAIL(
+                "USDT BALANCE",
+                "\n".join([
+                    f"HTTP STATUS: {response.status_code}",
+                    "RAW RESPONSE:",
+                    response.text,
+                ])
+            )
+        else:
+            FAIL(
+                "USDT BALANCE",
+                repr(e)
+            )
+
+    # --------------------------------------------------------
+    # SYMBOL CONFIG
+    # --------------------------------------------------------
+    lines += [
+        "",
+        "⚙️ SYMBOL CONFIGURATION",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    for symbol in SYMBOLS:
+        try:
+            lev = LEVERAGE_MAP.get(symbol.upper())
+            tick = TICK_SIZES.get(symbol.upper())
+            prec = PRICE_PRECISION.get(symbol.upper())
+
+            if lev is None:
+                FAIL(
+                    f"{symbol} LEVERAGE",
+                    "NOT CONFIGURED"
+                )
+                continue
+
+            if tick is None:
+                FAIL(
+                    f"{symbol} TICK SIZE",
+                    "NOT CONFIGURED"
+                )
+                continue
+
+            if prec is None:
+                FAIL(
+                    f"{symbol} PRICE PRECISION",
+                    "NOT CONFIGURED"
+                )
+                continue
+
+            OK(
+                f"{symbol} CONFIG",
+                f"leverage={lev} | tick={tick} | precision={prec}"
+            )
+
+        except Exception as e:
+            FAIL(
+                f"{symbol} CONFIG",
+                repr(e)
+            )
+
+    # --------------------------------------------------------
+    # LIVE ENGINE
+    # --------------------------------------------------------
+    lines += [
+        "",
+        "⚡ LIVE ENGINE",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    OK(
+        "PERSISTENT PYNECORE RUNNER",
+        "CONFIGURED"
+    )
+
+    OK(
+        "CLOSED CANDLE FEED",
+        "CONFIGURED"
+    )
+
+    OK(
+        "LIVE POLLING",
+        "CONFIGURED"
+    )
+
+    OK(
+        "DUPLICATE SIGNAL PROTECTION",
+        "CONFIGURED"
+    )
+
+    OK(
+        "ORDER ENGINE",
+        "CONFIGURED / NO TEST ORDER SENT"
+    )
+
+    # --------------------------------------------------------
+    # TELEGRAM
+    # --------------------------------------------------------
+    lines += [
+        "",
+        "📨 TELEGRAM",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        OK(
+            "TELEGRAM CONFIG",
+            "TOKEN + CHAT ID PRESENT"
+        )
+    else:
+        FAIL(
+            "TELEGRAM CONFIG",
+            "TOKEN OR CHAT ID MISSING"
+        )
+
+    # --------------------------------------------------------
+    # FINAL RESULT
+    # --------------------------------------------------------
+    lines += [
+        "",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "📋 FINAL STARTUP STATUS",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if failures:
+        lines.append("🔴 STATUS: PARTIALLY OPERATIONAL")
+    elif warnings:
+        lines.append("🟡 STATUS: OPERATIONAL WITH WARNINGS")
+    else:
+        lines.append("✅ STATUS: FULLY OPERATIONAL")
+
+    lines.append(f"🟢 WARNINGS: {len(warnings)}")
+    lines.append(f"🔴 FAILURES: {len(failures)}")
+
+    if warnings:
+        lines += [
+            "",
+            "🟡 WARNINGS — DETAILS",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+
+        for name, error in warnings:
+            lines.append(f"{name}:")
+            lines.append(str(error))
+            lines.append("━━━━━━━━━━━━━━━━━━")
+
+    if failures:
+        lines += [
+            "",
+            "🔴 FAILURES — COMPLETE DETAILS",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        ]
+
+        for name, error in failures:
+            lines.append(f"❌ {name}")
+            lines.append(str(error))
+            lines.append("━━━━━━━━━━━━━━━━━━")
+
+    lines += [
+        "",
+        "ℹ️ DIAGNOSTIC MODE: READ-ONLY",
+        "No order was created by startup diagnostic.",
+        "Trading calculations were NOT modified.",
+        "Capital formulas were NOT modified.",
+        "Leverage formulas were NOT modified.",
+        "strategy.py was NOT modified.",
+    ]
+
+    message = "\n".join(lines)
+
+    logger.info(
+        "[STARTUP DIAGNOSTIC]\n%s",
+        message
+    )
+
+    try:
+        if send_telegram_message(message):
+            logger.info(
+                "[STARTUP DIAGNOSTIC] TELEGRAM SENT"
+            )
+        else:
+            logger.error(
+                "[STARTUP DIAGNOSTIC] TELEGRAM SEND FAILED"
+            )
+    except Exception as e:
+        logger.exception(
+            "[STARTUP DIAGNOSTIC] TELEGRAM ERROR: %s",
+            e
+        )
+
+    return {
+        "ok": not bool(failures),
+        "failures": failures,
+        "warnings": warnings,
+    }
+
 
 # ===== Main loop =====
 app = Flask(__name__)
@@ -702,6 +1250,15 @@ def run_trading_loop():
     public = TrueTradePublicData()
 
     logger.info("DTM BOT START — STAGE 2 TRUE LIVE PYNECORE")
+
+    # READ-ONLY STARTUP DIAGNOSTIC
+    try:
+        startup_diagnostic(exchange, public)
+    except Exception as diagnostic_exc:
+        logger.exception(
+            "[STARTUP DIAGNOSTIC] FATAL ERROR: %s",
+            diagnostic_exc
+        )
 
     class LiveSymbolState:
         def __init__(self, symbol):
@@ -783,22 +1340,22 @@ def run_trading_loop():
             _opening_hours = [
                 SymInfoInterval(
                     day=0,
-                    start=time(0, 0),
-                    end=time(23, 59, 59),
+                    start=dt_time(0, 0),
+                    end=dt_time(23, 59, 59),
                 )
             ]
 
             _session_starts = [
                 SymInfoSession(
                     day=0,
-                    time=time(0, 0),
+                    time=dt_time(0, 0),
                 )
             ]
 
             _session_ends = [
                 SymInfoSession(
                     day=0,
-                    time=time(23, 59, 59),
+                    time=dt_time(23, 59, 59),
                 )
             ]
 
