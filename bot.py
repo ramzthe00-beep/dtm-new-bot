@@ -10,6 +10,18 @@ import logging
 import requests
 import pandas as pd
 from strategy import calculate_signals
+from datetime import datetime, timezone, timedelta
+
+# ===== TIMEZONE CONSTANTS =====
+IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
+UTC_TZ = timezone.utc
+
+def format_iran_time(dt=None):
+    if dt is None:
+        dt = datetime.now(UTC_TZ)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC_TZ)
+    return dt.astimezone(IRAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 API_KEY = os.getenv("API_KEY", "pXJ3uOI3y7iPHxIgefQJ30PikXHqbQyVV9Ouj-_K")
 API_SECRET = os.getenv("API_SECRET", "4cd23e00385ea761250034b420c86f40c4edb8e27c285c21572dbadf7e927b09")
@@ -25,6 +37,11 @@ PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2, "BNBUSDT": 2}
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
+
+# ===== لاگ اولیه برای اطمینان از اجرا =====
+logger.info("=" * 60)
+logger.info("BOT STARTING...")
+logger.info("=" * 60)
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -97,36 +114,102 @@ class PrivateExchange:
         self.base = BASE_URL
         self.session = requests.Session()
         self._last_response = None
+        self.connected = False
+        
     def _sign(self, method, uri, ts):
         payload = f"{ts}{method.upper()}{uri}"
         return hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    
     def _request(self, method, uri, data=None):
+        # IMPORTANT: never reuse a previous HTTP response
+        self._last_response = None
+
         ts = str(int(time.time()*1000))
         sig = self._sign(method, uri, ts)
-        headers = {"X-API-Key": self.api_key, "X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"}
-        r = self.session.request(
-            method,
-            f"{self.base}{uri}",
-            headers=headers,
-            json=data,
-            timeout=15,
+
+        headers = {
+            "X-API-Key": self.api_key,
+            "X-Timestamp": ts,
+            "X-Signature": sig,
+            "Content-Type": "application/json"
+        }
+
+        url = f"{self.base}{uri}"
+
+        # ===== FULL EXCHANGE REQUEST LOG =====
+        logger.info(
+            "[EXCHANGE REQUEST] %s %s | DATA=%s",
+            method.upper(),
+            url,
+            json.dumps(data, ensure_ascii=False) if data else None
         )
 
-        # IMPORTANT:
-        # Keep the complete exchange response BEFORE any exception
-        # is raised. This does NOT change calculations or order logic.
-        self._last_response = r
+        try:
+            r = self.session.request(
+                method,
+                url,
+                headers=headers,
+                json=data,
+                timeout=15
+            )
 
-        if not r.ok:
-            r.raise_for_status()
+            self._last_response = r
 
-        return r.json()
+            # ===== FULL EXCHANGE RESPONSE LOG =====
+            logger.info(
+                "[EXCHANGE RESPONSE] %s %s | HTTP=%s | BODY=%s",
+                method.upper(),
+                uri,
+                r.status_code,
+                r.text
+            )
+
+            # Keep the COMPLETE raw exchange response visible in log
+            logger.info(
+                "[EXCHANGE RAW RESPONSE COMPLETE] "
+                "method=%s | uri=%s | status=%s | body=%s",
+                method.upper(),
+                uri,
+                r.status_code,
+                r.text,
+            )
+
+            if not r.ok:
+                self.connected = False
+
+                logger.error(
+                    "[EXCHANGE ERROR] %s %s | HTTP=%s | BODY=%s",
+                    method.upper(),
+                    uri,
+                    r.status_code,
+                    r.text
+                )
+
+                r.raise_for_status()
+
+            self.connected = True
+
+            try:
+                return r.json()
+            except ValueError:
+                return {"raw": r.text}
+
+        except Exception as e:
+            logger.error(
+                "[EXCHANGE REQUEST EXCEPTION] %s %s | ERROR=%s",
+                method.upper(),
+                uri,
+                repr(e)
+            )
+            raise
+
     def test_connection(self):
         try:
             self._request("GET", "/futures/positions")
             return True
         except Exception:
             return False
+    
     def fetch_balance(self):
         try:
             data = self._request("GET", "/futures/assets")
@@ -137,10 +220,12 @@ class PrivateExchange:
             return 0.0
         except Exception:
             return 0.0
+    
     def _round_price(self, price, symbol):
         tick = TICK_SIZES.get(symbol.upper(), 0.01)
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         return round(round(float(price)/tick)*tick, prec)
+    
     def create_order(self, symbol, side, capital, leverage):
         """
         ایجاد سفارش بازار با ساختار صحیح مطابق مستندات API
@@ -302,8 +387,6 @@ class PrivateExchange:
             
             return None
 
-
-
 # ================= RAILWAY HTTP HEALTH SERVER =================
 
 STOP_EVENT = threading.Event()
@@ -369,12 +452,33 @@ def _handle_shutdown(signum, frame):
 # ================================================================
 
 def startup_diagnostic(exchange, public):
+    """
+    READ-ONLY startup diagnostic.
+
+    This function:
+      - NEVER creates an order
+      - NEVER changes trading calculations
+      - NEVER changes capital formulas
+      - NEVER changes leverage formulas
+      - NEVER changes strategy.py
+      - checks APIs, market data, configuration and engine readiness
+      - sends the complete diagnostic to Telegram
+    """
+    
+    # ===== لاگ شروع دیاگنوستیک =====
+    logger.info("=" * 60)
+    logger.info("STARTUP DIAGNOSTIC BEGINNING...")
+    logger.info("=" * 60)
+
     report = [
         "🚀 DTM BOT STARTUP DIAGNOSTIC",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "MODE: READ-ONLY",
         "REAL ORDER: 🚫 NOT SENT",
     ]
+
+    failures = []
+    warnings = []
 
     def add(title, ok, details=""):
         status = "✅ ACTIVE" if ok else "❌ FAILED"
