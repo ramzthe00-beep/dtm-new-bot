@@ -98,6 +98,11 @@ if not logger.handlers:
     sh.setFormatter(fmt)
     logger.addHandler(sh)
 
+# ===== لاگ اولیه برای اطمینان از اجرا =====
+logger.info("=" * 60)
+logger.info("DTM BOT STARTING...")
+logger.info("=" * 60)
+
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
@@ -627,7 +632,7 @@ class TrueTradePrivateExchange:
         
         Args:
             symbol: نام نماد (مثلاً ETHUSDT)
-            side: LONG یا SHORT
+            side: LONG یا SHORT (یا BUY/SELL که تبدیل می‌شوند)
             capital: مقدار سرمایه به USDT
             params: پارامترهای اختیاری (stopLoss, takeProfit, leverage)
         """
@@ -802,6 +807,11 @@ def startup_diagnostic(exchange, public):
       - checks APIs, market data, configuration and engine readiness
       - sends the complete diagnostic to Telegram
     """
+    
+    # ===== لاگ شروع دیاگنوستیک =====
+    logger.info("=" * 60)
+    logger.info("STARTUP DIAGNOSTIC BEGINNING...")
+    logger.info("=" * 60)
 
     lines = [
         "🚀 DTM BOT STARTUP DIAGNOSTIC",
