@@ -622,23 +622,40 @@ class TrueTradePrivateExchange:
         return round(round(float(price)/tick)*tick, prec)
 
     def create_order(self, symbol, side, capital, params=None):
+        """
+        ایجاد سفارش بازار با ساختار صحیح مطابق مستندات API
+        
+        Args:
+            symbol: نام نماد (مثلاً ETHUSDT)
+            side: LONG یا SHORT
+            capital: مقدار سرمایه به USDT
+            params: پارامترهای اختیاری (stopLoss, takeProfit, leverage)
+        """
         params = params or {}
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         
-        # تبدیل side به فرمت مورد نیاز API
+        # ============================================================
+        # تبدیل side به فرمت صحیح API
+        # API فقط LONG و SHORT را قبول دارد
+        # ============================================================
         side_upper = str(side).upper().strip()
         
+        # اگر side برابر با BUY یا LONG باشد → LONG
         if side_upper in ("BUY", "LONG"):
             api_side = "LONG"
+        # اگر side برابر با SELL یا SHORT باشد → SHORT
         elif side_upper in ("SELL", "SHORT"):
             api_side = "SHORT"
         else:
+            # در غیر این صورت همان مقدار ارسال می‌شود
             api_side = side_upper
         
         # استفاده از اهرم مناسب برای هر نماد
         leverage = params.get("leverage", LEVERAGE_MAP.get(symbol.upper(), 1))
         
-        # ساختار صحیح بر اساس کتابچه
+        # ============================================================
+        # ساختار صحیح درخواست مطابق مستندات API
+        # ============================================================
         od = {
             "symbol": str(symbol).upper(),
             "side": api_side,
@@ -654,32 +671,77 @@ class TrueTradePrivateExchange:
         if "takeProfit" in params and params["takeProfit"]:
             od["takeProfit"] = f"{self._round_price(params['takeProfit'], symbol):.{prec}f}"
         
+        # ============================================================
+        # لاگ کامل درخواست
+        # ============================================================
+        logger.info(
+            "[ORDER REQUEST] %s %s\n%s",
+            symbol.upper(),
+            api_side,
+            json.dumps(od, ensure_ascii=False, indent=2)
+        )
+        
+        # ارسال درخواست به تلگرام
+        request_msg = (
+            f"📤 ORDER REQUEST\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Symbol: {symbol.upper()}\n"
+            f"Side: {api_side}\n"
+            f"Leverage: {int(leverage)}\n"
+            f"Cost: {capital:.{prec}f}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Body:\n{json.dumps(od, ensure_ascii=False, indent=2)}"
+        )
+        send_telegram_message(request_msg)
+        
         try:
+            # ============================================================
+            # ارسال درخواست به API
+            # ============================================================
             result = self._request("POST", "/futures/positions", od)
             
             position_id = result.get("positionId") if isinstance(result, dict) else None
             
-            send_telegram_message(f"📥 سفارش ثبت شد — {symbol} {api_side} | Position ID: {position_id}")
+            # ============================================================
+            # لاگ موفقیت
+            # ============================================================
+            logger.info(
+                "[ORDER SUCCESS] %s %s\n%s",
+                symbol.upper(),
+                api_side,
+                json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result)
+            )
+            
+            success_msg = (
+                f"✅ ORDER SUCCESS\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Symbol: {symbol.upper()}\n"
+                f"Side: {api_side}\n"
+                f"Position ID: {position_id}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Response:\n{json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result)}"
+            )
+            send_telegram_message(success_msg)
+            
             return {"id": position_id}
             
         except Exception as e:
-            # ====================================================
-            # COMPLETE EXCHANGE ERROR — LOG ONLY
-            # No order calculation or request values are changed.
-            # ====================================================
+            # ============================================================
+            # لاگ کامل خطا
+            # ============================================================
             if self._last_response is not None:
                 response = self._last_response
-
+                
                 try:
                     error_data = response.json()
                 except Exception:
                     error_data = None
-
+                
                 error_text = (
                     f"HTTP STATUS: {response.status_code}\n"
                     f"RAW RESPONSE:\n{response.text}\n"
                 )
-
+                
                 if error_data is not None:
                     error_text += (
                         "PARSED JSON:\n"
@@ -689,33 +751,39 @@ class TrueTradePrivateExchange:
                             indent=2
                         )
                     )
-
+                
                 logger.error(
                     "[ORDER COMPLETE EXCHANGE ERROR]\n%s",
                     error_text
                 )
-
+                
             else:
                 error_text = (
                     "NO HTTP RESPONSE RECEIVED\n"
                     f"LOCAL EXCEPTION: {repr(e)}"
                 )
-
+                
                 logger.error(
                     "[ORDER NO HTTP RESPONSE] %s",
                     error_text
                 )
             
+            # ارسال خطا به تلگرام
             error_msg = (
-                f"❌ خطای سفارش {symbol} {api_side}\n"
+                f"❌ ORDER FAILED\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"📋 Body ارسالی:\n{json.dumps(od, ensure_ascii=False, indent=2)}\n"
+                f"Symbol: {symbol.upper()}\n"
+                f"Side: {api_side}\n"
+                f"Leverage: {int(leverage)}\n"
+                f"Cost: {capital:.{prec}f}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"🔴 خطا:\n{error_text}"
+                f"Request Body:\n{json.dumps(od, ensure_ascii=False, indent=2)}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🔴 ERROR:\n{error_text}"
             )
             send_telegram_message(error_msg)
+            
             raise
-
 
 # ============================================================
 # STARTUP DIAGNOSTIC — READ ONLY
