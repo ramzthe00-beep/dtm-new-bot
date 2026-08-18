@@ -40,18 +40,16 @@ def main(
     minCandleATRRatio=input.float(0.3, "Min Candle ATR Ratio", group=grp_candle),
     bigCandleAvgLen=input.int(14, "Big Candle Avg Len", group=grp_candle),
     bigCandleMultiplier=input.float(1.5, "Big Candle Mult", group=grp_candle),
-    enableMTF=input.bool(False, "Enable MTF Filter"),
-    mtfTimeframe=input.timeframe("240", "MTF Timeframe")
 ):
     leftBars: int = 5
     rightBars = 5 if pivotMode == 'استاندارد (5/5)' else 3
 
+    # PyneCore 6.8.7 — native RSI API
     rsiVal: Series = ta.rsi(close, rsiLen)
     macdLine: Series
     histLine: Series
     macdLine, signalLine, histLine = ta.macd(close, macdFast, macdSlow, macdSig)
     atr14 = ta.atr(14)
-    mtf_hist: Series = request.security(syminfo.tickerid, mtfTimeframe, histLine[1], lookahead=barmerge.lookahead_off)
 
     pivotHighPrice = ta.pivothigh(high, leftBars, rightBars)
     pivotLowPrice = ta.pivotlow(low, leftBars, rightBars)
@@ -131,26 +129,6 @@ def main(
     macdColorChangedForHighs = checkColorChange(ph_bar_1, ph_bar_2, True) if newPivotHigh and (not na(ph_bar_1)) else False
     macdColorChangedForLows = checkColorChange(pl_bar_1, pl_bar_2, False) if newPivotLow and (not na(pl_bar_1)) else False
 
-    def mtfColorChanged(barStart, barEnd, needRedPhase):
-        found: bool = False
-        if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
-            startOffset = bar_index - (barEnd - 1)
-            endOffset = bar_index - (barStart + 1)
-            if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
-                for j in pine_range(startOffset, endOffset):
-                    h = mtf_hist[j]
-                    if needRedPhase and h < 0:
-                        found = True
-                        break
-                    if not needRedPhase and h > 0:
-                        found = True
-                        break
-        return found
-
-    mtfColorChangedForHighs = mtfColorChanged(ph_bar_1, ph_bar_2, True) if newPivotHigh and (not na(ph_bar_1)) else False
-    mtfColorChangedForLows = mtfColorChanged(pl_bar_1, pl_bar_2, False) if newPivotLow and (not na(pl_bar_1)) else False
-    mtfFilterOkForBearish = not enableMTF or mtfColorChangedForHighs
-    mtfFilterOkForBullish = not enableMTF or mtfColorChangedForLows
 
     def isTrendingUp(refBar):
         result: bool = False
@@ -290,10 +268,10 @@ def main(
                 result = fibOk and paOk
         return result
 
-    finalClassicBearish = passesMinRequirement(classicBearishBase3, fibScoreBearish, priceActionBearishAtPivot) and mtfFilterOkForBearish
-    finalClassicBullish = passesMinRequirement(classicBullishBase3, fibScoreBullish, priceActionBullishAtPivot) and mtfFilterOkForBullish
-    finalHiddenBullish = passesMinRequirement(hiddenBullishBase3, fibScoreBullish, priceActionBullishAtPivot) and mtfFilterOkForBullish
-    finalHiddenBearish = passesMinRequirement(hiddenBearishBase3, fibScoreBearish, priceActionBearishAtPivot) and mtfFilterOkForBearish
+    finalClassicBearish = passesMinRequirement(classicBearishBase3, fibScoreBearish, priceActionBearishAtPivot)
+    finalClassicBullish = passesMinRequirement(classicBullishBase3, fibScoreBullish, priceActionBullishAtPivot)
+    finalHiddenBullish = passesMinRequirement(hiddenBullishBase3, fibScoreBullish, priceActionBullishAtPivot)
+    finalHiddenBearish = passesMinRequirement(hiddenBearishBase3, fibScoreBearish, priceActionBearishAtPivot)
 
 
     plotshape(finalClassicBearish, title='CD-', style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text='CD-', offset=-rightBars)
@@ -402,10 +380,6 @@ def main(
         "volume_analysis": False,
 
         # MTF is explicitly disabled by the current configuration.
-        "mtf_enabled": enableMTF,
-        "mtf_timeframe": mtfTimeframe,
-        "mtf_bearish_ok": mtfFilterOkForBearish,
-        "mtf_bullish_ok": mtfFilterOkForBullish,
 
         # Confirmation / decision trace
         "min_confirmations": minConfirmations,
@@ -556,6 +530,114 @@ def calculate_signals(df):
         logger.error(f"calculate_signals error: {e}", exc_info=True)
         return None, None
         
+
+# ============================================================
+# WRAPPER — compatibility layer for bot.py
+# Does NOT modify PyneCore strategy logic.
+# ============================================================
+
+def calculate_signals(df):
+    import logging
+    from pathlib import Path
+    from datetime import time as dt_time
+    from pynecore.core.ohlcv import OHLCV
+    from pynecore.core.syminfo import SymInfo, SymInfoInterval, SymInfoSession
+    from pynecore.core.script_runner import ScriptRunner
+
+    logger = logging.getLogger("STRATEGY_WRAPPER")
+
+    try:
+        candles = []
+
+        for idx, row in df.iterrows():
+            ts = int(idx.timestamp() * 1000)
+
+            candles.append(
+                OHLCV(
+                    timestamp=ts,
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row.get("volume", 0)),
+                    is_closed=True,
+                )
+            )
+
+        if len(candles) < 50:
+            logger.warning("Too few candles: %d", len(candles))
+            return None, None
+
+        symbol = "BTCUSDT"
+
+        syminfo = SymInfo(
+            prefix="",
+            description=symbol,
+            ticker=symbol,
+            currency="USDT",
+            basecurrency="BTC",
+            period="15",
+            type="crypto",
+            volumetype="base",
+            mintick=0.01,
+            pricescale=100,
+            minmove=1,
+            pointvalue=1.0,
+            mincontract=0.0,
+            opening_hours=[
+                SymInfoInterval(
+                    day=0,
+                    start=dt_time(0, 0),
+                    end=dt_time(23, 59, 59),
+                )
+            ],
+            session_starts=[
+                SymInfoSession(day=0, time=dt_time(0, 0))
+            ],
+            session_ends=[
+                SymInfoSession(day=0, time=dt_time(23, 59, 59))
+            ],
+            timezone="UTC",
+        )
+
+        def candle_iterator():
+            yield from candles
+
+        runner = ScriptRunner(
+            Path(__file__).resolve(),
+            candle_iterator(),
+            syminfo,
+            last_bar_index=len(candles) - 1,
+        )
+
+        last_values = None
+
+        for result in runner.run_iter():
+            if len(result) >= 2 and isinstance(result[1], dict):
+                last_values = result[1]
+
+        if not last_values:
+            logger.warning("ScriptRunner returned no values")
+            return None, None
+
+        signal = last_values.get("signal")
+        entry = last_values.get("entry")
+
+        if signal not in ("LONG", "SHORT"):
+            signal = None
+
+        logger.info(
+            "calculate_signals result: signal=%s entry=%s",
+            signal,
+            entry,
+        )
+
+        return signal, entry
+
+    except Exception:
+        logger.exception("calculate_signals failed")
+        return None, None
+
 
 if __name__ == "__main__":
     from pynecore.standalone import run
