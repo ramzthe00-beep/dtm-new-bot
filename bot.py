@@ -1,4 +1,5 @@
 import os
+import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import threading
 import signal
@@ -25,15 +26,31 @@ PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2, "BNBUSDT": 2}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
 
-# ============================================================
-# TELEGRAM — اصلاح شده با data= به جای json=
-# ============================================================
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=15)
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=15)
+        if r.status_code == 200:
+            return True
+        else:
+            logger.error(f"[TELEGRAM] Failed to send message: {r.status_code} {r.text[:300]}")
+            return False
     except Exception as e:
-        logger.error(f"Telegram error: {e}")
+        logger.error(f"[TELEGRAM] Failed to send message: {e}")
+        return False
+
+def send_telegram_long(text):
+    """Send long text to Telegram, splitting into chunks if needed."""
+    text = str(text)
+    if len(text) <= 4000:
+        return send_telegram(text)
+    
+    parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
+    ok = True
+    for i, part in enumerate(parts):
+        ok = send_telegram(part) and ok
+        time.sleep(0.5)
+    return ok
 
 class PublicData:
     def __init__(self):
@@ -73,9 +90,6 @@ class PublicData:
             logger.error(f"Data error: {e}")
             return pd.DataFrame()
 
-# ============================================================
-# PRIVATE EXCHANGE — اصلاح شده با full_uri برای امضا
-# ============================================================
 class PrivateExchange:
     def __init__(self):
         self.api_key = API_KEY
@@ -83,42 +97,36 @@ class PrivateExchange:
         self.base = BASE_URL
         self.session = requests.Session()
         self._last_response = None
-
-    def _sign(self, method, full_uri, ts):
-        # طبق کتابچه صرافی، URI باید شامل Query String نیز باشد
-        payload = f"{ts}{method.upper()}{full_uri}"
+    def _sign(self, method, uri, ts):
+        payload = f"{ts}{method.upper()}{uri}"
         return hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-
     def _request(self, method, uri, data=None):
-        # full_uri همان uri است (بدون تغییر)
-        # اما اگر uri حاوی Query String باشد، همان امضا می‌شود
-        full_uri = uri
         ts = str(int(time.time()*1000))
-        sig = self._sign(method, full_uri, ts)
+        sig = self._sign(method, uri, ts)
         headers = {"X-API-Key": self.api_key, "X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"}
         r = self.session.request(
             method,
-            f"{self.base}{full_uri}",
+            f"{self.base}{uri}",
             headers=headers,
             json=data,
             timeout=15,
         )
 
+        # IMPORTANT:
+        # Keep the complete exchange response BEFORE any exception
+        # is raised. This does NOT change calculations or order logic.
         self._last_response = r
 
         if not r.ok:
             r.raise_for_status()
 
         return r.json()
-
     def test_connection(self):
         try:
-            # استفاده از full_uri با Query String برای امضای صحیح
-            self._request("GET", "/futures/positions?active=true")
+            self._request("GET", "/futures/positions")
             return True
         except Exception:
             return False
-
     def fetch_balance(self):
         try:
             data = self._request("GET", "/futures/assets")
@@ -129,29 +137,149 @@ class PrivateExchange:
             return 0.0
         except Exception:
             return 0.0
-
     def _round_price(self, price, symbol):
         tick = TICK_SIZES.get(symbol.upper(), 0.01)
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         return round(round(float(price)/tick)*tick, prec)
-
     def create_order(self, symbol, side, capital, leverage):
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
+        
+        # تبدیل side به فرمت استاندارد API
+        side_upper = str(side).upper().strip()
+        if side_upper in ("BUY", "LONG"):
+            api_side = "LONG"
+        elif side_upper in ("SELL", "SHORT"):
+            api_side = "SHORT"
+        else:
+            api_side = side_upper
+        
         od = {
             "symbol": symbol.upper(),
-            "side": side.upper(),
+            "side": api_side,
             "tradeType": "MARKET",
-            "leverage": leverage,
+            "leverage": int(leverage),
             "cost": f"{capital:.{prec}f}",
             "walletType": "debit"
         }
-        send_telegram(f"📤 ثبت سفارش {symbol} {side} اهرم {leverage} | هزینه {capital:.{prec}f}")
+        
+        # ===== FULL ORDER REQUEST LOG =====
+        logger.info(
+            "[ORDER REQUEST] %s\n%s",
+            symbol.upper(),
+            json.dumps(od, ensure_ascii=False, indent=2)
+        )
+        
+        # ===== FULL ORDER REQUEST TO TELEGRAM =====
+        request_msg = (
+            f"📤 ORDER REQUEST\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Symbol: {symbol.upper()}\n"
+            f"Side: {api_side}\n"
+            f"Leverage: {int(leverage)}\n"
+            f"Cost: {capital:.{prec}f}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Body:\n{json.dumps(od, ensure_ascii=False, indent=2)}"
+        )
+        if not send_telegram_long(request_msg):
+            logger.error("[TELEGRAM] Failed to send ORDER REQUEST")
+        
         try:
             result = self._request("POST", "/futures/positions", od)
-            send_telegram(f"📥 سفارش ثبت شد {symbol} {side}")
+            
+            position_id = result.get("positionId") if isinstance(result, dict) else None
+            
+            # ===== FULL ORDER SUCCESS LOG =====
+            logger.info(
+                "[ORDER SUCCESS] %s %s\n%s",
+                symbol.upper(),
+                api_side,
+                json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result)
+            )
+            
+            # ===== FULL ORDER SUCCESS TO TELEGRAM =====
+            success_msg = (
+                f"✅ ORDER SUCCESS\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Symbol: {symbol.upper()}\n"
+                f"Side: {api_side}\n"
+                f"Position ID: {position_id}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Response:\n{json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result)}"
+            )
+            if not send_telegram_long(success_msg):
+                logger.error("[TELEGRAM] Failed to send ORDER SUCCESS")
+            
             return result
+            
         except Exception as e:
-            send_telegram(f"❌ خطای سفارش {symbol} {side}\n{e}")
+            # ===== FULL EXCHANGE ERROR EXTRACTION =====
+            response = self._last_response
+            
+            if response is not None:
+                http_status = response.status_code
+                raw_response = response.text
+                
+                try:
+                    parsed_json = response.json()
+                    parsed_text = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+                except Exception:
+                    parsed_text = "(Response is not valid JSON)"
+                
+                complete_error = (
+                    f"HTTP STATUS: {http_status}\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"RAW RESPONSE:\n{raw_response}\n"
+                    f"━━━━━━━━━━━━━━━━━━\n"
+                    f"PARSED JSON:\n{parsed_text}"
+                )
+            else:
+                complete_error = "NO HTTP RESPONSE RECEIVED"
+            
+            local_exception = repr(e)
+            
+            # ===== FULL ORDER FAILED LOG =====
+            logger.error(
+                "[ORDER FAILED] %s %s\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "Symbol: %s\n"
+                "Side: %s\n"
+                "Leverage: %s\n"
+                "Cost: %s\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "Request Body:\n%s\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "🔴 COMPLETE EXCHANGE ERROR:\n%s\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "LOCAL EXCEPTION: %s",
+                symbol.upper(),
+                api_side,
+                symbol.upper(),
+                api_side,
+                int(leverage),
+                f"{capital:.{prec}f}",
+                json.dumps(od, ensure_ascii=False, indent=2),
+                complete_error,
+                local_exception
+            )
+            
+            # ===== FULL ORDER FAILED TO TELEGRAM =====
+            failed_msg = (
+                f"❌ ORDER FAILED\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Symbol: {symbol.upper()}\n"
+                f"Side: {api_side}\n"
+                f"Leverage: {int(leverage)}\n"
+                f"Cost: {capital:.{prec}f}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Request Body:\n{json.dumps(od, ensure_ascii=False, indent=2)}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🔴 COMPLETE EXCHANGE ERROR:\n{complete_error}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"LOCAL EXCEPTION: {local_exception}"
+            )
+            if not send_telegram_long(failed_msg):
+                logger.error("[TELEGRAM] Failed to send ORDER FAILED")
+            
             return None
 
 
@@ -444,10 +572,9 @@ def startup_diagnostic(exchange, public):
     try:
         exchange._last_response = None
 
-        # استفاده از full_uri با Query String برای امضای صحیح
         positions = exchange._request(
             "GET",
-            "/futures/positions?active=true"
+            "/futures/positions"
         )
 
         add(
@@ -592,7 +719,7 @@ def startup_diagnostic(exchange, public):
     )
 
     try:
-        send_telegram(final_report)
+        send_telegram_long(final_report)
         logger.info(
             "[STARTUP DIAGNOSTIC] TELEGRAM SENT"
         )
