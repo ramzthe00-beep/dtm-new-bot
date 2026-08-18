@@ -25,10 +25,13 @@ PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2, "BNBUSDT": 2}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
 
+# ============================================================
+# TELEGRAM — اصلاح شده با data= به جای json=
+# ============================================================
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=15)
+        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=15)
     except Exception as e:
         logger.error(f"Telegram error: {e}")
 
@@ -70,6 +73,9 @@ class PublicData:
             logger.error(f"Data error: {e}")
             return pd.DataFrame()
 
+# ============================================================
+# PRIVATE EXCHANGE — اصلاح شده با full_uri برای امضا
+# ============================================================
 class PrivateExchange:
     def __init__(self):
         self.api_key = API_KEY
@@ -77,36 +83,42 @@ class PrivateExchange:
         self.base = BASE_URL
         self.session = requests.Session()
         self._last_response = None
-    def _sign(self, method, uri, ts):
-        payload = f"{ts}{method.upper()}{uri}"
+
+    def _sign(self, method, full_uri, ts):
+        # طبق کتابچه صرافی، URI باید شامل Query String نیز باشد
+        payload = f"{ts}{method.upper()}{full_uri}"
         return hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+
     def _request(self, method, uri, data=None):
+        # full_uri همان uri است (بدون تغییر)
+        # اما اگر uri حاوی Query String باشد، همان امضا می‌شود
+        full_uri = uri
         ts = str(int(time.time()*1000))
-        sig = self._sign(method, uri, ts)
+        sig = self._sign(method, full_uri, ts)
         headers = {"X-API-Key": self.api_key, "X-Timestamp": ts, "X-Signature": sig, "Content-Type": "application/json"}
         r = self.session.request(
             method,
-            f"{self.base}{uri}",
+            f"{self.base}{full_uri}",
             headers=headers,
             json=data,
             timeout=15,
         )
 
-        # IMPORTANT:
-        # Keep the complete exchange response BEFORE any exception
-        # is raised. This does NOT change calculations or order logic.
         self._last_response = r
 
         if not r.ok:
             r.raise_for_status()
 
         return r.json()
+
     def test_connection(self):
         try:
-            self._request("GET", "/futures/positions")
+            # استفاده از full_uri با Query String برای امضای صحیح
+            self._request("GET", "/futures/positions?active=true")
             return True
         except Exception:
             return False
+
     def fetch_balance(self):
         try:
             data = self._request("GET", "/futures/assets")
@@ -117,10 +129,12 @@ class PrivateExchange:
             return 0.0
         except Exception:
             return 0.0
+
     def _round_price(self, price, symbol):
         tick = TICK_SIZES.get(symbol.upper(), 0.01)
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         return round(round(float(price)/tick)*tick, prec)
+
     def create_order(self, symbol, side, capital, leverage):
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         od = {
@@ -430,9 +444,10 @@ def startup_diagnostic(exchange, public):
     try:
         exchange._last_response = None
 
+        # استفاده از full_uri با Query String برای امضای صحیح
         positions = exchange._request(
             "GET",
-            "/futures/positions"
+            "/futures/positions?active=true"
         )
 
         add(
@@ -655,4 +670,3 @@ if __name__ == "__main__":
         STOP_EVENT.set()
         health_thread.join(timeout=3)
         logger.info("DTM PROCESS EXIT")
-
