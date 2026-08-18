@@ -426,6 +426,136 @@ def main(
     }
 
 
+# ============================================================
+# WRAPPER برای سازگاری با bot.py
+# این تابع فقط main() را صدا می‌زند و خروجی را به فرمت (signal, entry) برمی‌گرداند
+# به محاسبات PyneCore دست نمی‌زند
+# ============================================================
+
+def calculate_signals(df):
+    """
+    Wrapper برای سازگاری با bot.py
+    ورودی: df دیتافریم با ستون‌های open, high, low, close
+    خروجی: (signal, entry) که signal می‌تواند 'LONG' یا 'SHORT' یا None باشد
+    """
+    import logging
+    from pathlib import Path
+    from datetime import time as dt_time
+    from pynecore.core.ohlcv import OHLCV
+    from pynecore.core.syminfo import SymInfo, SymInfoInterval, SymInfoSession
+    from pynecore.core.script_runner import ScriptRunner
+    
+    logger = logging.getLogger("STRATEGY_WRAPPER")
+    
+    try:
+        # ============================================================
+        # مرحله 1: تبدیل دیتافریم به OHLCV
+        # ============================================================
+        candles = []
+        for idx, row in df.iterrows():
+            ts = int(idx.timestamp() * 1000)
+            candle = OHLCV(
+                timestamp=ts,
+                open=float(row['open']),
+                high=float(row['high']),
+                low=float(row['low']),
+                close=float(row['close']),
+                volume=float(row.get('volume', 0))
+            )
+            candles.append(candle)
+        
+        if len(candles) < 50:
+            logger.warning(f"Too few candles: {len(candles)}, need at least 50")
+            return None, None
+        
+        # ============================================================
+        # مرحله 2: ساخت SymInfo (با نماد پیش‌فرض)
+        # چون enableMTF=False است، syminfo.tickerid در محاسبات تأثیری ندارد
+        # ============================================================
+        symbol = "BTCUSDT"
+        _basecurrency = symbol.replace("USDT", "")
+        _mintick = 0.01
+        _pricescale = max(1, int(round(1.0 / _mintick)))
+        
+        _opening_hours = [SymInfoInterval(day=0, start=dt_time(0, 0), end=dt_time(23, 59, 59))]
+        _session_starts = [SymInfoSession(day=0, time=dt_time(0, 0))]
+        _session_ends = [SymInfoSession(day=0, time=dt_time(23, 59, 59))]
+        
+        syminfo = SymInfo(
+            prefix="",
+            description=symbol,
+            ticker=symbol,
+            currency="USDT",
+            basecurrency=_basecurrency,
+            period="1",
+            type="crypto",
+            volumetype="base",
+            mintick=_mintick,
+            pricescale=_pricescale,
+            minmove=1,
+            pointvalue=1.0,
+            mincontract=0.0,
+            opening_hours=_opening_hours,
+            session_starts=_session_starts,
+            session_ends=_session_ends,
+            timezone="UTC",
+        )
+        
+        # ============================================================
+        # مرحله 3: ایجاد iterator از candles
+        # ============================================================
+        def candle_iterator():
+            for c in candles:
+                yield c
+        
+        # ============================================================
+        # مرحله 4: اجرای استراتژی با ScriptRunner
+        # ============================================================
+        strategy_path = Path(__file__).resolve()
+        runner = ScriptRunner(
+            strategy_path,
+            candle_iterator(),
+            syminfo,
+            last_bar_index=len(candles) - 1,
+        )
+        
+        # ============================================================
+        # مرحله 5: دریافت آخرین سیگنال و قیمت ورود
+        # بر اساس ساختار تأیید شده:
+        # result = (OHLCV, strategy_dict, [])
+        # strategy_dict شامل کلیدهای 'signal' و 'entry' است
+        # ============================================================
+        signal = None
+        entry = None
+        
+        for result in runner.run_iter():
+            if result and len(result) >= 2:
+                # result[1] دیکشنری خروجی استراتژی است
+                strategy_dict = result[1]
+                if isinstance(strategy_dict, dict):
+                    signal = strategy_dict.get("signal")
+                    entry = strategy_dict.get("entry")
+                    # اگر signal پیدا شد، از حلقه خارج شو (آخرین کندل کافی است)
+                    if signal is not None:
+                        break
+        
+        # ============================================================
+        # مرحله 6: تبدیل signal به فرمت استاندارد
+        # ============================================================
+        if signal in ("BUY", "LONG"):
+            signal = "LONG"
+        elif signal in ("SELL", "SHORT"):
+            signal = "SHORT"
+        else:
+            signal = None
+        
+        logger.info(f"calculate_signals result: signal={signal}, entry={entry}")
+        return signal, entry
+        
+    except Exception as e:
+        logger.error(f"calculate_signals error: {e}", exc_info=True)
+        return None, None
+        
 
 if __name__ == "__main__":
     from pynecore.standalone import run
