@@ -142,17 +142,36 @@ class PrivateExchange:
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         return round(round(float(price)/tick)*tick, prec)
     def create_order(self, symbol, side, capital, leverage):
+        """
+        ایجاد سفارش بازار با ساختار صحیح مطابق مستندات API
+        
+        Args:
+            symbol: نام نماد (مثلاً ETHUSDT)
+            side: LONG یا SHORT (یا BUY/SELL که تبدیل می‌شوند)
+            capital: مقدار سرمایه به USDT
+            leverage: مقدار اهرم
+        """
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         
-        # تبدیل side به فرمت استاندارد API
+        # ============================================================
+        # تبدیل side به فرمت صحیح API
+        # API فقط LONG و SHORT را قبول دارد
+        # ============================================================
         side_upper = str(side).upper().strip()
+        
+        # اگر side برابر با BUY یا LONG باشد → LONG
         if side_upper in ("BUY", "LONG"):
             api_side = "LONG"
+        # اگر side برابر با SELL یا SHORT باشد → SHORT
         elif side_upper in ("SELL", "SHORT"):
             api_side = "SHORT"
         else:
+            # در غیر این صورت همان مقدار ارسال می‌شود
             api_side = side_upper
         
+        # ============================================================
+        # ساختار صحیح درخواست مطابق مستندات API
+        # ============================================================
         od = {
             "symbol": symbol.upper(),
             "side": api_side,
@@ -164,8 +183,9 @@ class PrivateExchange:
         
         # ===== FULL ORDER REQUEST LOG =====
         logger.info(
-            "[ORDER REQUEST] %s\n%s",
+            "[ORDER REQUEST] %s %s\n%s",
             symbol.upper(),
+            api_side,
             json.dumps(od, ensure_ascii=False, indent=2)
         )
         
