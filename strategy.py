@@ -400,131 +400,134 @@ def main(
     }
 
 
-# ===    
 # ============================================================
-# WRAPPER برای سازگاری با bot.py
-# این تابع فقط main() را صدا می‌زند و خروجی را به فرمت (signal, entry) برمی‌گرداند
-# به محاسبات PyneCore دست نمی‌زند
+# WRAPPER — compatibility layer for bot.py
+# Does NOT modify PyneCore strategy logic.
 # ============================================================
 
 def calculate_signals(df):
-    """
-    Wrapper برای سازگاری با bot.py
-    ورودی: df دیتافریم با ستون‌های open, high, low, close
-    خروجی: (signal, entry) که signal می‌تواند 'LONG' یا 'SHORT' یا None باشد
-    """
     import logging
     from pathlib import Path
     from datetime import time as dt_time
     from pynecore.core.ohlcv import OHLCV
     from pynecore.core.syminfo import SymInfo, SymInfoInterval, SymInfoSession
     from pynecore.core.script_runner import ScriptRunner
-    
+
     logger = logging.getLogger("STRATEGY_WRAPPER")
-    
+
     try:
-        # ============================================================
-        # مرحله 1: تبدیل دیتافریم به OHLCV
-        # ============================================================
         candles = []
+
         for idx, row in df.iterrows():
             ts = int(idx.timestamp() * 1000)
-            candle = OHLCV(
-                timestamp=ts,
-                open=float(row['open']),
-                high=float(row['high']),
-                low=float(row['low']),
-                close=float(row['close']),
-                volume=float(row.get('volume', 0))
+
+            candles.append(
+                OHLCV(
+                    timestamp=ts,
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row.get("volume", 0)),
+                    is_closed=True,
+                )
             )
-            candles.append(candle)
-        
+
         if len(candles) < 50:
-            logger.warning(f"Too few candles: {len(candles)}, need at least 50")
+            logger.warning("Too few candles: %d", len(candles))
             return None, None
-        
-        # ============================================================
-        # مرحله 2: ساخت SymInfo (نماد دلخواه، چون MTF غیرفعال است)
-        # ============================================================
+
         symbol = "BTCUSDT"
-        _basecurrency = symbol.replace("USDT", "")
-        _mintick = 0.01
-        _pricescale = max(1, int(round(1.0 / _mintick)))
-        
-        _opening_hours = [SymInfoInterval(day=0, start=dt_time(0, 0), end=dt_time(23, 59, 59))]
-        _session_starts = [SymInfoSession(day=0, time=dt_time(0, 0))]
-        _session_ends = [SymInfoSession(day=0, time=dt_time(23, 59, 59))]
-        
+
         syminfo = SymInfo(
             prefix="",
             description=symbol,
             ticker=symbol,
             currency="USDT",
-            basecurrency=_basecurrency,
-            period="1",
+            basecurrency="BTC",
+            period="15",
             type="crypto",
             volumetype="base",
-            mintick=_mintick,
-            pricescale=_pricescale,
+            mintick=0.01,
+            pricescale=100,
             minmove=1,
             pointvalue=1.0,
             mincontract=0.0,
-            opening_hours=_opening_hours,
-            session_starts=_session_starts,
-            session_ends=_session_ends,
+            opening_hours=[
+                SymInfoInterval(
+                    day=0,
+                    start=dt_time(0, 0),
+                    end=dt_time(23, 59, 59),
+                )
+            ],
+            session_starts=[
+                SymInfoSession(day=0, time=dt_time(0, 0))
+            ],
+            session_ends=[
+                SymInfoSession(day=0, time=dt_time(23, 59, 59))
+            ],
             timezone="UTC",
         )
-        
-        # ============================================================
-        # مرحله 3: ایجاد iterator از candles
-        # ============================================================
+
+        inputs = {
+            "pivotMode": "سریع (5/3)",
+            "rsiLen": 14,
+            "macdFast": 12,
+            "macdSlow": 26,
+            "macdSig": 9,
+            "trendLookback": 20,
+            "trendSlopeMinPct": 0.05,
+            "minConfirmations": "۳ تعییدیه (حداقل مجاز)",
+            "enableHidden": True,
+            "fibUse618": True,
+            "fibUse786": True,
+            "fibTolerancePct": 0.5,
+            "fibTrendSearchBars": 100,
+            "shadowToBodyRatio": 2.0,
+            "maxOppositeShadowPct": 20.0,
+            "minCandleATRRatio": 0.3,
+            "bigCandleAvgLen": 14,
+            "bigCandleMultiplier": 1.5,
+        }
+
         def candle_iterator():
-            for c in candles:
-                yield c
-        
-        # ============================================================
-        # مرحله 4: اجرای استراتژی با ScriptRunner
-        # ============================================================
-        strategy_path = Path(__file__).resolve()
+            yield from candles
+
         runner = ScriptRunner(
-            strategy_path,
+            Path(__file__).resolve(),
             candle_iterator(),
             syminfo,
             last_bar_index=len(candles) - 1,
+            inputs=inputs,
         )
-        
-        # ============================================================
-        # مرحله 5: دریافت آخرین سیگنال و قیمت ورود
-        # ============================================================
-        signal = None
-        entry = None
-        
-        for result in runner.run_iter():
-            if result and len(result) >= 2:
-                strategy_dict = result[1]
-                if isinstance(strategy_dict, dict):
-                    signal = strategy_dict.get("signal")
-                    entry = strategy_dict.get("entry")
-                    if signal is not None:
-                        break
-        
-        # ============================================================
-        # مرحله 6: تبدیل signal به فرمت استاندارد (LONG/SHORT)
-        # ============================================================
-        if signal in ("BUY", "LONG"):
-            signal = "LONG"
-        elif signal in ("SELL", "SHORT"):
-            signal = "SHORT"
-        else:
-            signal = None
-        
-        logger.info(f"calculate_signals result: signal={signal}, entry={entry}")
-        return signal, entry
-        
-    except Exception as e:
-        logger.error(f"calculate_signals error: {e}", exc_info=True)
-        return None, None
 
+        last_values = None
+
+        for result in runner.run_iter():
+            if len(result) >= 2 and isinstance(result[1], dict):
+                last_values = result[1]
+
+        if not last_values:
+            logger.warning("ScriptRunner returned no values")
+            return None, None
+
+        signal = last_values.get("signal")
+        entry = last_values.get("entry")
+
+        if signal not in ("LONG", "SHORT"):
+            signal = None
+
+        logger.info(
+            "calculate_signals result: signal=%s entry=%s",
+            signal,
+            entry,
+        )
+
+        return signal, entry
+
+    except Exception:
+        logger.exception("calculate_signals failed")
+        return None, None
 
 
 if __name__ == "__main__":
