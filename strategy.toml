@@ -1,0 +1,221 @@
+# Indicator / Strategy / Library Settings
+
+[script]
+#overlay = true
+#format = "inherit"
+#precision =
+#scale =
+#pyramiding = 3
+#calc_on_order_fills = false
+#calc_on_every_tick = false
+#max_bars_back = 0
+#timeframe =
+#timeframe_gaps = true
+#explicit_plot_zorder = false
+#max_lines_count = 50
+#max_labels_count = 50
+#max_boxes_count = 50
+#calc_bars_count = 0
+#max_polylines_count = 50
+#dynamic_requests = false
+#behind_chart = true
+#backtest_fill_limits_assumption = 0
+#default_qty_type = "fixed"
+#default_qty_value = 1
+#initial_capital = 500
+#currency = "NONE"
+#slippage = 0
+#commission_type = "percent"
+#commission_value = 0.1
+#process_orders_on_close = true
+#close_entries_rule = "FIFO"
+#margin_long = 100.0
+#margin_short = 100.0
+#risk_free_rate = 2.0
+#use_bar_magnifier = true
+#fill_orders_on_standard_ohlc = false
+
+# Input Settings
+
+[inputs.pivotMode]
+# Input metadata, cannot be modified
+# input_type: "string"
+#     defval: "سریع (5/3)"
+#      title: "روش Pivot"
+#      group: "Pivot"
+#    confirm: false
+#    options: ('استاندارد (5/5)', 'سریع (5/3)')
+# Change here to modify the input value
+value = "سریع (5/3)"
+
+[inputs.rsiLen]
+# Input metadata, cannot be modified
+# input_type: "int"
+#     defval: 14
+#      title: "RSI"
+#      group: "Indicators"
+#    confirm: false
+# Change here to modify the input value
+value = 14
+
+[inputs.macdFast]
+# Input metadata, cannot be modified
+# input_type: "int"
+#     defval: 12
+#      title: "MACD Fast"
+#      group: "Indicators"
+#    confirm: false
+# Change here to modify the input value
+value = 12
+
+[inputs.macdSlow]
+# Input metadata, cannot be modified
+# input_type: "int"
+#     defval: 26
+#      title: "MACD Slow"
+#      group: "Indicators"
+#    confirm: false
+# Change here to modify the input value
+value = 26
+
+[inputs.macdSig]
+# Input metadata, cannot be modified
+# input_type: "int"
+#     defval: 9
+#      title: "MACD Signal"
+#      group: "Indicators"
+#    confirm: false
+# Change here to modify the input value
+value = 9
+
+[inputs.trendLookback]
+# Input metadata, cannot be modified
+# input_type: "int"
+#     defval: 20
+#      title: "Trend Lookback"
+#      group: "Trend"
+#    confirm: false
+# Change here to modify the input value
+value = 20
+
+[inputs.trendSlopeMinPct]
+# Input metadata, cannot be modified
+# input_type: "float"
+#     defval: 0.05
+#      title: "Min Slope %"
+#       step: 0.01
+#      group: "Trend"
+#    confirm: false
+# Change here to modify the input value
+value = 0.05
+
+[inputs.minConfirmations]
+# Input metadata, cannot be modified
+# input_type: "string"
+#     defval: "۳ تعییدیه (حداقل مجاز)"
+#      title: "حداقل شرط"
+#      group: "Min Confirmations"
+#    confirm: false
+#    options: ('۳ تعییدیه (حداقل مجاز)', '۳ تعییدیه + فیبوناچی (۴ امتیاز) [Custom]', '۳ تعییدیه + پرایس\u200cاکشن (۴ امتیاز) [Custom]', '۵ امتیاز کامل (ایده\u200cآل)')
+# Change here to modify the input value
+value = "۳ تعییدیه (حداقل مجاز)"
+
+[inputs.enableHidden]
+# Input metadata, cannot be modified
+# input_type: "bool"
+#     defval: true
+#      title: "Enable Hidden Divergence"
+#    confirm: false
+# Change here to modify the input value
+value = true
+
+[inputs.fibUse618]
+# Input metadata, cannot be modified
+# input_type: "bool"
+#     defval: true
+#      title: "Use 0.618"
+#      group: "Fibonacci"
+#    confirm: false
+# Change here to modify the input value
+value = true
+
+[inputs.fibUse786]
+# Input metadata, cannot be modified
+# input_type: "bool"
+#     defval: true
+#      title: "Use 0.786"
+#      group: "Fibonacci"
+#    confirm: false
+# Change here to modify the input value
+value = true
+
+[inputs.fibTolerancePct]
+# Input metadata, cannot be modified
+# input_type: "float"
+#     defval: 0.5
+#      title: "Fib Tolerance %"
+#       step: 0.1
+#      group: "Fibonacci"
+#    confirm: false
+# Change here to modify the input value
+value = 0.5
+
+[inputs.fibTrendSearchBars]
+# Input metadata, cannot be modified
+# input_type: "int"
+#     defval: 100
+#      title: "Fib Search Bars"
+#      group: "Fibonacci"
+#    confirm: false
+# Change here to modify the input value
+value = 100
+
+[inputs.shadowToBodyRatio]
+# Input metadata, cannot be modified
+# input_type: "float"
+#     defval: 2.0
+#      title: "Shadow/Body Ratio"
+#      group: "Price Action"
+#    confirm: false
+# Change here to modify the input value
+value = 2.0
+
+[inputs.maxOppositeShadowPct]
+# Input metadata, cannot be modified
+# input_type: "float"
+#     defval: 20.0
+#      title: "Max Opposite Shadow %"
+#      group: "Price Action"
+#    confirm: false
+# Change here to modify the input value
+value = 20.0
+
+[inputs.minCandleATRRatio]
+# Input metadata, cannot be modified
+# input_type: "float"
+#     defval: 0.3
+#      title: "Min Candle ATR Ratio"
+#      group: "Price Action"
+#    confirm: false
+# Change here to modify the input value
+value = 0.3
+
+[inputs.bigCandleAvgLen]
+# Input metadata, cannot be modified
+# input_type: "int"
+#     defval: 14
+#      title: "Big Candle Avg Len"
+#      group: "Price Action"
+#    confirm: false
+# Change here to modify the input value
+value = 14
+
+[inputs.bigCandleMultiplier]
+# Input metadata, cannot be modified
+# input_type: "float"
+#     defval: 1.5
+#      title: "Big Candle Mult"
+#      group: "Price Action"
+#    confirm: false
+# Change here to modify the input value
+value = 1.5

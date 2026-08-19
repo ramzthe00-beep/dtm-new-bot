@@ -9,7 +9,7 @@ import hashlib
 import logging
 import requests
 import pandas as pd
-from strategy_wrapper import calculate_signals
+from strategy import calculate_signals
 from datetime import datetime, timezone, timedelta
 
 # ===== TIMEZONE CONSTANTS =====
@@ -627,7 +627,7 @@ def startup_diagnostic(exchange, public):
     report.append("━━━━━━━━━━━━━━━━━━━━━━")
 
     try:
-        from strategy_wrapper import calculate_signals as _calculate_signals
+        from strategy import calculate_signals as _calculate_signals
         calculate_signals_fn = _calculate_signals
 
         add(
