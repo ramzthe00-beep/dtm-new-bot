@@ -400,6 +400,7 @@ def main(
     }
 
 
+# ===    
 # ============================================================
 # WRAPPER برای سازگاری با bot.py
 # این تابع فقط main() را صدا می‌زند و خروجی را به فرمت (signal, entry) برمی‌گرداند
@@ -443,8 +444,7 @@ def calculate_signals(df):
             return None, None
         
         # ============================================================
-        # مرحله 2: ساخت SymInfo (با نماد پیش‌فرض)
-        # چون enableMTF=False است، syminfo.tickerid در محاسبات تأثیری ندارد
+        # مرحله 2: ساخت SymInfo (نماد دلخواه، چون MTF غیرفعال است)
         # ============================================================
         symbol = "BTCUSDT"
         _basecurrency = symbol.replace("USDT", "")
@@ -495,26 +495,21 @@ def calculate_signals(df):
         
         # ============================================================
         # مرحله 5: دریافت آخرین سیگنال و قیمت ورود
-        # بر اساس ساختار تأیید شده:
-        # result = (OHLCV, strategy_dict, [])
-        # strategy_dict شامل کلیدهای 'signal' و 'entry' است
         # ============================================================
         signal = None
         entry = None
         
         for result in runner.run_iter():
             if result and len(result) >= 2:
-                # result[1] دیکشنری خروجی استراتژی است
                 strategy_dict = result[1]
                 if isinstance(strategy_dict, dict):
                     signal = strategy_dict.get("signal")
                     entry = strategy_dict.get("entry")
-                    # اگر signal پیدا شد، از حلقه خارج شو (آخرین کندل کافی است)
                     if signal is not None:
                         break
         
         # ============================================================
-        # مرحله 6: تبدیل signal به فرمت استاندارد
+        # مرحله 6: تبدیل signal به فرمت استاندارد (LONG/SHORT)
         # ============================================================
         if signal in ("BUY", "LONG"):
             signal = "LONG"
@@ -529,114 +524,7 @@ def calculate_signals(df):
     except Exception as e:
         logger.error(f"calculate_signals error: {e}", exc_info=True)
         return None, None
-        
 
-# ============================================================
-# WRAPPER — compatibility layer for bot.py
-# Does NOT modify PyneCore strategy logic.
-# ============================================================
-
-def calculate_signals(df):
-    import logging
-    from pathlib import Path
-    from datetime import time as dt_time
-    from pynecore.core.ohlcv import OHLCV
-    from pynecore.core.syminfo import SymInfo, SymInfoInterval, SymInfoSession
-    from pynecore.core.script_runner import ScriptRunner
-
-    logger = logging.getLogger("STRATEGY_WRAPPER")
-
-    try:
-        candles = []
-
-        for idx, row in df.iterrows():
-            ts = int(idx.timestamp() * 1000)
-
-            candles.append(
-                OHLCV(
-                    timestamp=ts,
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=float(row.get("volume", 0)),
-                    is_closed=True,
-                )
-            )
-
-        if len(candles) < 50:
-            logger.warning("Too few candles: %d", len(candles))
-            return None, None
-
-        symbol = "BTCUSDT"
-
-        syminfo = SymInfo(
-            prefix="",
-            description=symbol,
-            ticker=symbol,
-            currency="USDT",
-            basecurrency="BTC",
-            period="15",
-            type="crypto",
-            volumetype="base",
-            mintick=0.01,
-            pricescale=100,
-            minmove=1,
-            pointvalue=1.0,
-            mincontract=0.0,
-            opening_hours=[
-                SymInfoInterval(
-                    day=0,
-                    start=dt_time(0, 0),
-                    end=dt_time(23, 59, 59),
-                )
-            ],
-            session_starts=[
-                SymInfoSession(day=0, time=dt_time(0, 0))
-            ],
-            session_ends=[
-                SymInfoSession(day=0, time=dt_time(23, 59, 59))
-            ],
-            timezone="UTC",
-        )
-
-        def candle_iterator():
-            yield from candles
-
-        runner = ScriptRunner(
-            Path(__file__).resolve(),
-            candle_iterator(),
-            syminfo,
-            last_bar_index=len(candles) - 1,
-        )
-
-        last_values = None
-
-        for result in runner.run_iter():
-            if len(result) >= 2 and isinstance(result[1], dict):
-                last_values = result[1]
-
-        if not last_values:
-            logger.warning("ScriptRunner returned no values")
-            return None, None
-
-        signal = last_values.get("signal")
-        entry = last_values.get("entry")
-
-        if signal not in ("LONG", "SHORT"):
-            signal = None
-
-        logger.info(
-            "calculate_signals result: signal=%s entry=%s",
-            signal,
-            entry,
-        )
-
-        return signal, entry
-
-    except Exception:
-        logger.exception("calculate_signals failed")
-        return None, None
 
 
 if __name__ == "__main__":
