@@ -45,10 +45,10 @@ def main(
     rightBars = 5 if pivotMode == 'استاندارد (5/5)' else 3
 
     # PyneCore 6.8.7 — native RSI API
-    rsiVal: Series = ta.rsi(close, length=rsiLen)
+    rsiVal: Series = ta.rsi(source=close, length=rsiLen)
     macdLine: Series
     histLine: Series
-    macdLine, signalLine, histLine = ta.macd(close, fastlen=macdFast, slowlen=macdSlow, siglen=macdSig)
+    macdLine, signalLine, histLine = ta.macd(source=close, fastlen=macdFast, slowlen=macdSlow, siglen=macdSig)
     atr14 = ta.atr(length=14)
 
     pivotHighPrice = ta.pivothigh(high, leftBars, rightBars)
