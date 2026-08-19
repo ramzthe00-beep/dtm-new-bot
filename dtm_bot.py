@@ -1385,6 +1385,7 @@ def run_trading_loop():
                 }
 
             self.last_closed_ts = ts
+            self.feed_queue.put(candle)
             return True
 
         def iterator(self):
@@ -1446,7 +1447,7 @@ def run_trading_loop():
                 ticker=self.symbol,
                 currency="USDT",
                 basecurrency=_basecurrency,
-                period="15",
+                period="1",
                 type="crypto",
                 volumetype="base",
                 mintick=_mintick,
@@ -1464,11 +1465,33 @@ def run_trading_loop():
                 Path(__file__).resolve().parent / "strategy.py"
             )
 
+            inputs = {
+                "pivotMode": "سریع (5/3)",
+                "rsiLen": 14,
+                "macdFast": 12,
+                "macdSlow": 26,
+                "macdSig": 9,
+                "trendLookback": 20,
+                "trendSlopeMinPct": 0.05,
+                "minConfirmations": "۳ تعییدیه (حداقل مجاز)",
+                "enableHidden": True,
+                "fibUse618": True,
+                "fibUse786": True,
+                "fibTolerancePct": 0.5,
+                "fibTrendSearchBars": 100,
+                "shadowToBodyRatio": 2.0,
+                "maxOppositeShadowPct": 20.0,
+                "minCandleATRRatio": 0.3,
+                "bigCandleAvgLen": 14,
+                "bigCandleMultiplier": 1.5,
+            }
+
             self.runner = ScriptRunner(
                 strategy_path,
                 self.iterator(),
                 syminfo,
                 last_bar_index=len(self.buffer) - 1,
+                inputs=inputs,
             )
 
             self.started = True
@@ -1773,7 +1796,6 @@ def run_trading_loop():
 
                         if state.add_closed_candle(row):
                             candle = state.buffer[-1]
-                            state.feed_queue.put(candle)
 
                             logger.info(
                                 f"{symbol}: "

@@ -437,15 +437,15 @@ def calculate_signals(df):
             logger.warning("Too few candles: %d", len(candles))
             return None, None
 
-        symbol = "BTCUSDT"
+        symbol = "BNBUSDT"
 
         syminfo = SymInfo(
             prefix="",
             description=symbol,
             ticker=symbol,
             currency="USDT",
-            basecurrency="BTC",
-            period="15",
+            basecurrency="BNBC",
+            period="1",
             type="crypto",
             volumetype="base",
             mintick=0.01,
