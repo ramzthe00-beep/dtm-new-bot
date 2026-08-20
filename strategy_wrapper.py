@@ -20,8 +20,16 @@ logger = logging.getLogger("STRATEGY_WRAPPER")
 
 STRATEGY_PATH = Path(__file__).resolve().parent / "strategy.py"
 
+# مطابق TICK_SIZES / PRICE_PRECISION در bot.py
+SYMBOL_TICK_INFO = {
+    "LTCUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "LTC"},
+    "DOGEUSDT": {"mintick": 0.00001, "pricescale": 100000, "basecurrency": "DOGE"},
+    "ETHUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "ETH"},
+    "BNBUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "BNB"},
+}
 
-def calculate_signals(df):
+
+def calculate_signals(df, symbol="BNBUSDT"):
     import logging
     from pathlib import Path
     from datetime import time as dt_time
@@ -53,19 +61,23 @@ def calculate_signals(df):
             logger.warning("Too few candles: %d", len(candles))
             return None, None
 
-        symbol = "BNBUSDT"
+        symbol = symbol.upper()
+        tick_info = SYMBOL_TICK_INFO.get(
+            symbol,
+            {"mintick": 0.01, "pricescale": 100, "basecurrency": symbol.replace("USDT", "")}
+        )
 
         syminfo = SymInfo(
             prefix="",
             description=symbol,
             ticker=symbol,
             currency="USDT",
-            basecurrency="BNBC",
+            basecurrency=tick_info["basecurrency"],
             period="1",
             type="crypto",
             volumetype="base",
-            mintick=0.01,
-            pricescale=100,
+            mintick=tick_info["mintick"],
+            pricescale=tick_info["pricescale"],
             minmove=1,
             pointvalue=1.0,
             mincontract=0.0,
@@ -120,7 +132,13 @@ def calculate_signals(df):
         last_values = None
 
         for result in runner.run_iter():
-            if len(result) >= 2 and isinstance(result[1], dict):
+            # نکته اصلاح‌شده:
+            # run_iter() برای اسکریپت‌های نوع strategy یک تاپل را برمی‌گرداند
+            # (candle, plot, new_closed_trades) که عنصر دوم (plot) شیء
+            # dict-like است اما لزوماً نمونه‌ی خالص کلاس dict پایتون نیست.
+            # چک قبلی isinstance(result[1], dict) به همین دلیل همیشه False
+            # می‌شد و last_values هیچ‌وقت مقداردهی نمی‌شد (خروجی همیشه None).
+            if len(result) >= 2 and result[1] is not None:
                 last_values = result[1]
 
         if not last_values:
@@ -144,4 +162,3 @@ def calculate_signals(df):
     except Exception:
         logger.exception("calculate_signals failed")
         return None, None
-
