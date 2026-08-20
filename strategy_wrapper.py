@@ -273,7 +273,13 @@ Value: {str(last_values)[:500]}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
         logger.info(result_msg)
-        _send_telegram(result_msg)
+          # ارسال به تلگرام فقط برای ۴ بار اول
+        if not hasattr(calculate_signals, "_telegram_counter"):
+            calculate_signals._telegram_counter = 0
+        
+        if calculate_signals._telegram_counter < 4:
+            _send_telegram(result_msg)
+            calculate_signals._telegram_counter += 1
 
         return signal, entry
 
