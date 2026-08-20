@@ -172,8 +172,7 @@ def calculate_signals(df, symbol="BNBUSDT"):
                     "result_1_value": str(result[1])[:200] if len(result) >= 2 and result[1] is not None else "None/Empty",
                 })
             
-            if len(result) >= 2 and result[1] :
-                # بررسی اینکه آیا result[1] یک دیکشنری (یا dict-like) است
+            if len(result) >= 2 and result[1]:
                 if isinstance(result[1], dict):
                     last_values = result[1]
                 else:
