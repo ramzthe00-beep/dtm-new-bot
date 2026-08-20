@@ -654,7 +654,8 @@ def startup_diagnostic(exchange, public):
                 df = public.fetch_ohlcv(symbol)
 
                 if df is not None and not df.empty:
-                    sig, entry = calculate_signals_fn(df)
+                    sig, entry = calculate_signals_fn(df, symbol)
+                    
 
                     logger.info(
                         "[STARTUP DIAGNOSTIC] "
@@ -887,7 +888,7 @@ def loop():
                 df = public.fetch_ohlcv(symbol)
                 if df.empty:
                     continue
-                sig, entry = calculate_signals(df)
+                sig, entry = calculate_signals(df, symbol)
                 logger.info(f"{symbol}: signal={sig}, entry={entry}, candles={len(df)}")
                 if sig and balance > 0:
                     leverage = LEVERAGE_MAP.get(symbol, 50)
