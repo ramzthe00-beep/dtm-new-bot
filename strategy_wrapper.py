@@ -152,9 +152,10 @@ def calculate_signals(df, symbol="BNBUSDT"):
         )
 
         # ============================================================
-        # حلقه تشخیصی با شمارش دیکشنری‌های خالی
+        # حلقه تشخیصی با کپی مستقل از دیکشنری
         # ============================================================
         last_values = None
+        found_valid = False          # پرچم مستقل، به‌جای تکیه بر truthiness دیکشنری
         result_count = 0
         empty_count = 0
         empty_indices = []
@@ -173,7 +174,9 @@ def calculate_signals(df, symbol="BNBUSDT"):
             )
 
             if is_valid_dict:
-                last_values = result[1]
+                # کپیِ مستقل (snapshot)، نه رفرنس زنده
+                last_values = dict(result[1])
+                found_valid = True
             elif len(result) >= 2 and isinstance(result[1], dict):
                 # دیکشنری هست ولی خالی {}
                 empty_count += 1
@@ -195,9 +198,9 @@ def calculate_signals(df, symbol="BNBUSDT"):
         # ============================================================
         # گزارش کامل
         # ============================================================
-        logger.info(f"Total results: {result_count} | Empty dicts: {empty_count} | Empty at indices (first 20): {empty_indices}")
+        logger.info(f"Total results: {result_count} | Empty dicts: {empty_count} | Empty at indices (first 20): {empty_indices} | Found valid: {found_valid}")
 
-        if not last_values:
+        if not found_valid:            # به‌جای `if not last_values:`
             error_msg = f"""
 🔴 ERROR: No valid dictionary found in ScriptRunner output
 
@@ -206,6 +209,7 @@ def calculate_signals(df, symbol="BNBUSDT"):
   - Total results: {result_count}
   - Empty dicts: {empty_count}
   - Empty indices (first 20): {empty_indices}
+  - Found valid: {found_valid}
   - Symbol: {symbol}
   - Candles: {len(candles)}
 
@@ -213,13 +217,14 @@ def calculate_signals(df, symbol="BNBUSDT"):
 {json.dumps(debug_info, indent=2, ensure_ascii=False)}
 
 🔧 INTERPRETATION:
-  - If empty_count == 1 and empty_indices == [500]:
-    → Only the last candle is empty. Fix: use 'if result[1]:' instead of 'is not None'.
+  - If found_valid is False, but debug_info shows valid dicts:
+    → The dict object was cleared after the loop (reference issue).
+    → Fixed by using `dict(result[1])` to create an independent copy.
 
   - If empty_count > 1:
-    → An error occurred inside main() (e.g., index out of range in checkColorChange or isTrendingUp).
+    → An error occurred inside main() (e.g., index out of range).
     → PyneCore returned {{}} instead of raising an exception.
-    → Check strategy.py for index bounds (histLine[j], close[offset], etc.).
+    → Check strategy.py for index bounds.
 
   - If empty_count == 0:
     → No issue found.
@@ -263,6 +268,7 @@ Value: {str(last_values)[:500]}
   Total Results: {result_count}
   Empty dicts: {empty_count}
   Empty indices (first 20): {empty_indices}
+  Found valid: {found_valid}
   Last Values Keys: {list(last_values.keys())[:10] if isinstance(last_values, dict) else 'N/A'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
