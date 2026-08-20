@@ -77,6 +77,22 @@ def calculate_signals(df, symbol="BNBUSDT"):
                 )
             )
 
+        # ============================================================
+        # مهم: حذف کندل آخر (درحال‌شکل‌گیری)
+        # ============================================================
+        # آخرین ردیف df معمولاً کندل درحال‌شکل‌گیری (هنوز نبسته) است،
+        # چون fetch_ohlcv با to=now صدا زده می‌شود. ta.pivothigh/pivotlow به
+        # rightBars کندلِ *بعد* از پیوت نیاز دارند که شامل همین کندل جاری هم
+        # می‌شود؛ اگر این کندل هنوز نهایی نشده باشد، تأیید/رد Pivot می‌تواند
+        # هر بار polling نتیجه‌ی متفاوتی بدهد. Pine واقعی فقط روی کندل بسته‌شده
+        # (alert.freq_once_per_bar_close) قضاوت می‌کند، پس ما هم باید همین کار
+        # را بکنیم: آخرین کندل ناقص را کنار می‌گذاریم.
+        if len(candles) > 1:
+            candles = candles[:-1]
+            logger.info(f"Removed last (incomplete) candle. Remaining candles: {len(candles)}")
+        else:
+            logger.warning("Only one candle available, cannot remove last candle")
+
         if len(candles) < 50:
             msg = f"Too few candles: {len(candles)}"
             logger.warning(msg)
