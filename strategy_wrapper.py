@@ -151,73 +151,78 @@ def calculate_signals(df, symbol="BNBUSDT"):
             inputs=inputs,
         )
 
+        # ============================================================
+        # حلقه تشخیصی با شمارش دیکشنری‌های خالی
+        # ============================================================
         last_values = None
         result_count = 0
+        empty_count = 0
+        empty_indices = []
         debug_info = []
 
         for result in runner.run_iter():
             result_count += 1
-            
+
             # ============================================================
-            # دیباگ کامل برای ۵ کندل اول و هر ۱۰۰ کندل
+            # تشخیص دیکشنری معتبر (نه None و نه خالی)
             # ============================================================
-            if result_count <= 5 or result_count % 100 == 0:
+            is_valid_dict = (
+                len(result) >= 2
+                and isinstance(result[1], dict)
+                and len(result[1]) > 0
+            )
+
+            if is_valid_dict:
+                last_values = result[1]
+            elif len(result) >= 2 and isinstance(result[1], dict):
+                # دیکشنری هست ولی خالی {}
+                empty_count += 1
+                if len(empty_indices) < 20:
+                    empty_indices.append(result_count)
+
+            # ============================================================
+            # دیباگ برای کندل‌های خاص
+            # ============================================================
+            if result_count <= 5 or result_count % 100 == 0 or result_count > 495:
                 debug_info.append({
                     "index": result_count,
                     "len": len(result),
-                    "types": [type(x).__name__ for x in result],
                     "result_1_type": type(result[1]).__name__ if len(result) >= 2 else "N/A",
-                    "result_1_is_dict": isinstance(result[1], dict) if len(result) >= 2 else False,
-                    "result_1_is_not_none": result[1] is not None if len(result) >= 2 else False,
-                    "result_1_value": str(result[1])[:200] if len(result) >= 2 and result[1] is not None else "None/Empty",
+                    "result_1_len": len(result[1]) if len(result) >= 2 and isinstance(result[1], dict) else "N/A",
+                    "result_1_value": str(result[1])[:200] if len(result) >= 2 and result[1] else "EMPTY/None",
                 })
-            
-            if len(result) >= 2 and result[1]:
-                if isinstance(result[1], dict):
-                    last_values = result[1]
-                else:
-                    # اگر dict-like است ولی زیرکلاس dict نیست، سعی می‌کنیم به دیکشنری تبدیل کنیم
-                    try:
-                        # برخی از اشیاء dict-like متد to_dict دارند
-                        if hasattr(result[1], 'to_dict'):
-                            last_values = result[1].to_dict()
-                        else:
-                            # سعی می‌کنیم با vars() یا dir() اطلاعات بگیریم
-                            last_values = dict(result[1]) if hasattr(result[1], '__dict__') else result[1]
-                    except Exception as conv_err:
-                        logger.warning(f"Could not convert result[1] to dict: {conv_err}")
-                        last_values = result[1]
 
         # ============================================================
-        # گزارش کامل دیباگ
+        # گزارش کامل
         # ============================================================
-        logger.info(f"Total results from run_iter: {result_count}")
-        
+        logger.info(f"Total results: {result_count} | Empty dicts: {empty_count} | Empty at indices (first 20): {empty_indices}")
+
         if not last_values:
             error_msg = f"""
-🔴 ERROR: ScriptRunner returned no values
+🔴 ERROR: No valid dictionary found in ScriptRunner output
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 📊 STATISTICS:
   - Total results: {result_count}
+  - Empty dicts: {empty_count}
+  - Empty indices (first 20): {empty_indices}
   - Symbol: {symbol}
   - Candles: {len(candles)}
-  - Last values: {last_values}
 
-📋 DEBUG INFO (first 5 results):
-{json.dumps(debug_info[:5], indent=2, ensure_ascii=False)}
+📋 DEBUG INFO:
+{json.dumps(debug_info, indent=2, ensure_ascii=False)}
 
-🔧 POSSIBLE CAUSES:
-  1. result[1] is None for all iterations
-  2. result[1] is not a dict-like object
-  3. ScriptRunner is not producing any output
-  4. Strategy.py is not returning a dictionary
-  5. Input parameters are not being passed correctly
+🔧 INTERPRETATION:
+  - If empty_count == 1 and empty_indices == [500]:
+    → Only the last candle is empty. Fix: use 'if result[1]:' instead of 'is not None'.
 
-📁 CHECK:
-  - Check strategy.py return statement
-  - Check if @script.strategy decorator is correct
-  - Check if inputs match strategy parameters
+  - If empty_count > 1:
+    → An error occurred inside main() (e.g., index out of range in checkColorChange or isTrendingUp).
+    → PyneCore returned {{}} instead of raising an exception.
+    → Check strategy.py for index bounds (histLine[j], close[offset], etc.).
+
+  - If empty_count == 0:
+    → No issue found.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
             logger.warning(error_msg)
@@ -239,8 +244,6 @@ def calculate_signals(df, symbol="BNBUSDT"):
 
 Type: {type(last_values).__name__}
 Value: {str(last_values)[:500]}
-
-This may indicate that result[1] is not a dict-like object.
 """
             logger.warning(error_msg)
             _send_telegram(error_msg)
@@ -258,6 +261,8 @@ This may indicate that result[1] is not a dict-like object.
   Signal: {signal}
   Entry: {entry}
   Total Results: {result_count}
+  Empty dicts: {empty_count}
+  Empty indices (first 20): {empty_indices}
   Last Values Keys: {list(last_values.keys())[:10] if isinstance(last_values, dict) else 'N/A'}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
