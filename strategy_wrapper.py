@@ -143,6 +143,20 @@ def calculate_signals(df, symbol="BNBUSDT"):
         def candle_iterator():
             yield from candles
 
+        # ============================================================
+        # 🔍 تست pine_range — فقط برای دیباگ (قابل حذف بعد از تست)
+        # ============================================================
+        try:
+            from pynecore import pine_range
+            test_result = list(pine_range(2, 5))
+            logger.info(f"🔍 TEST pine_range(2, 5) = {test_result}")
+            if test_result == [2, 3, 4, 5]:
+                logger.info("✅ pine_range is INCLUSIVE (like Pine Script)")
+            else:
+                logger.warning(f"⚠️ pine_range is NOT inclusive! Expected [2,3,4,5], got {test_result}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not test pine_range: {e}")
+
         runner = ScriptRunner(
             STRATEGY_PATH,
             candle_iterator(),
@@ -273,7 +287,8 @@ Value: {str(last_values)[:500]}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
         logger.info(result_msg)
-          # ارسال به تلگرام فقط برای ۴ بار اول
+        
+        # ارسال به تلگرام فقط برای ۴ بار اول
         if not hasattr(calculate_signals, "_telegram_counter"):
             calculate_signals._telegram_counter = 0
         
