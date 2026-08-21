@@ -23,8 +23,8 @@ def format_iran_time(dt=None):
         dt = dt.replace(tzinfo=UTC_TZ)
     return dt.astimezone(IRAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-API_KEY = os.getenv("API_KEY", "pXJ3uOI3y7iPHxIgefQJ30PikXHqbQyVV9Ouj-_K")
-API_SECRET = os.getenv("API_SECRET", "4cd23e00385ea761250034b420c86f40c4edb8e27c285c21572dbadf7e927b09")
+API_KEY = os.getenv("API_KEY", "ETBfSMVmS7uy1DE233xE8sUk3KFnfuhaG_ig95Ki")
+API_SECRET = os.getenv("API_SECRET", "607daf22a6e02defcfcd43b721ef5af32428ab602f4fb19a653b2a06e9beae7d")
 BASE_URL = os.getenv("BASE_URL", "https://apiv2.thetruetrade.io")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
