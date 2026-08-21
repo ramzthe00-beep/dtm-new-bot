@@ -42,7 +42,7 @@ def main(
     bigCandleMultiplier=input.float(1.5, "Big Candle Mult", group=grp_candle),
 ):
     leftBars: int = 5
-    rightBars = 5 if pivotMode == 'استاندارد (5/5)' else 3
+    rightBars = 3
 
     # PyneCore 6.8.7 — native RSI API
     rsiVal: Series = ta.rsi(source=close, length=rsiLen)
