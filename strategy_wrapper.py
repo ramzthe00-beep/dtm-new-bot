@@ -54,7 +54,7 @@ def _is_na(x):
     return x is None or (isinstance(x, float) and _math.isnan(x))
 
 
-def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=5):
+def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
     """
     استاپ/تارگت سفارشی — کاملاً مستقل از منطق واگرایی strategy.py.
     
