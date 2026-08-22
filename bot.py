@@ -978,6 +978,22 @@ def loop():
                             f"  → استاپ_واقعی=${actual_stop_dollar:.4f}\n"
                             f"  → سود_واقعی=${profit_str}"  # ✅ درست
                         )
+
+                    else:  # ✅ این ۱۵ خط را اضافه کنید
+                        capital = required_capital
+                        actual_stop_dollar = TARGET_RISK
+                        actual_profit_dollar = (target_pct / stop_pct) * TARGET_RISK if target_pct > 0 else None
+                        
+                        profit_str = f"{actual_profit_dollar:.4f}" if actual_profit_dollar else "N/A"
+                        r_str = f"{target_pct / stop_pct:.2f}" if target_pct > 0 else "N/A"
+                        
+                        logger.info(
+                            f"{symbol}: ✅ سرمایه کافی است\n"
+                            f"  → سرمایه={capital:.4f}\n"
+                            f"  → استاپ_دلاری=${actual_stop_dollar:.4f}\n"
+                            f"  → سود_دلاری=${profit_str}\n"
+                            f"  → R={r_str}"
+                        )
     
                     
                     # Step 4: ارسال سفارش
