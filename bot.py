@@ -965,28 +965,20 @@ def loop():
                     
                     # Step 3: مدیریت موجودی ناکافی
                     if balance < required_capital:
-                        capital = balance * 0.98  # ۹۸٪ موجودی
+                        capital = balance * 0.98
                         actual_stop_dollar = capital * stop_pct * allowed_leverage
                         actual_profit_dollar = capital * target_pct * allowed_leverage if target_pct > 0 else None
-                        
+    
+                        # ✅ تبدیل جداگانه به رشته
+                        profit_str = f"{actual_profit_dollar:.4f}" if actual_profit_dollar else "N/A"
+    
                         logger.info(
                             f"{symbol}: ⚠️ موجودی کافی نیست ({balance:.4f} < {required_capital:.4f})\n"
                             f"  → سرمایه_عملی={capital:.4f}\n"
                             f"  → استاپ_واقعی=${actual_stop_dollar:.4f}\n"
-                            f"  → سود_واقعی=${actual_profit_dollar:.4f if actual_profit_dollar else 'N/A'}"
+                            f"  → سود_واقعی=${profit_str}"  # ✅ درست
                         )
-                    else:
-                        capital = required_capital
-                        actual_stop_dollar = TARGET_RISK  # همیشه ۲ دلار
-                        actual_profit_dollar = (target_pct / stop_pct) * TARGET_RISK if target_pct > 0 else None
-                        
-                        logger.info(
-                            f"{symbol}: ✅ سرمایه کافی است\n"
-                            f"  → سرمایه={capital:.4f}\n"
-                            f"  → استاپ_دلاری=${actual_stop_dollar:.4f}\n"
-                            f"  → سود_دلاری=${actual_profit_dollar:.4f if actual_profit_dollar else 'N/A'}\n"
-                            f"  → R={target_pct / stop_pct if target_pct > 0 else 'N/A'}"
-                        )
+    
                     
                     # Step 4: ارسال سفارش
                     exchange.create_order(
