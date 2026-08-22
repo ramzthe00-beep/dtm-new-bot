@@ -13,6 +13,8 @@ from pathlib import Path
 from datetime import time as dt_time
 import json
 import traceback
+import time as _time
+import math as _math
 
 from pynecore.core.ohlcv import OHLCV
 from pynecore.core.syminfo import SymInfo, SymInfoInterval, SymInfoSession
@@ -47,6 +49,91 @@ def _send_telegram(text):
         return False
 
 
+def _is_na(x):
+    """بررسی NaN یا None"""
+    return x is None or (isinstance(x, float) and _math.isnan(x))
+
+
+def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=5):
+    """
+    استاپ/تارگت سفارشی — کاملاً مستقل از منطق واگرایی strategy.py.
+    
+    LONG:  استاپ = پایین‌ترین دره از ۲ دره واگرایی - بافر
+           تارگت خام = بالاترین قله بین آن دو دره
+           اگر R:R < 2 → تارگت بالا برده می‌شود تا R:R = 2
+    
+    SHORT: استاپ = بالاترین قله از ۲ قله واگرایی + بافر
+           تارگت خام = پایین‌ترین دره بین آن دو قله
+           اگر R:R < 2 → تارگت پایین برده می‌شود تا R:R = 2
+    """
+    def _valid(x):
+        return x is not None and not (isinstance(x, float) and _math.isnan(x))
+
+    entry = last_values.get("entry")
+    if not _valid(entry):
+        return None, None, None
+
+    buffer_abs = buffer_ticks * mintick
+
+    if signal == "LONG":
+        low1 = last_values.get("previous_pivot_low_price")
+        low2 = last_values.get("pivot_low_price")
+        bar1 = last_values.get("previous_pivot_low_index")
+        bar2 = last_values.get("pivot_low_index")
+        
+        if not (_valid(low1) and _valid(low2) and _valid(bar1) and _valid(bar2)):
+            logger.warning(f"[SL/TP] LONG: missing pivot data low1={low1} low2={low2} bar1={bar1} bar2={bar2}")
+            return None, None, None
+
+        stop = min(low1, low2) - buffer_abs
+
+        lo, hi = sorted((int(bar1), int(bar2)))
+        lo, hi = max(lo, 0), min(hi, len(candles) - 1)
+        if hi < lo:
+            return None, None, None
+        
+        # پیدا کردن بالاترین قله بین دو دره
+        mid_peak = max(c.high for c in candles[lo:hi + 1])
+
+        risk = entry - stop
+        if risk <= 0:
+            return None, None, None
+
+        rr = (mid_peak - entry) / risk
+        target = mid_peak if rr >= 2 else entry + 2 * risk
+        return stop, target, max(rr, 2.0)
+
+    elif signal == "SHORT":
+        high1 = last_values.get("previous_pivot_high_price")
+        high2 = last_values.get("pivot_high_price")
+        bar1 = last_values.get("previous_pivot_high_index")
+        bar2 = last_values.get("pivot_high_index")
+        
+        if not (_valid(high1) and _valid(high2) and _valid(bar1) and _valid(bar2)):
+            logger.warning(f"[SL/TP] SHORT: missing pivot data high1={high1} high2={high2} bar1={bar1} bar2={bar2}")
+            return None, None, None
+
+        stop = max(high1, high2) + buffer_abs
+
+        lo, hi = sorted((int(bar1), int(bar2)))
+        lo, hi = max(lo, 0), min(hi, len(candles) - 1)
+        if hi < lo:
+            return None, None, None
+        
+        # پیدا کردن پایین‌ترین دره بین دو قله
+        mid_trough = min(c.low for c in candles[lo:hi + 1])
+
+        risk = stop - entry
+        if risk <= 0:
+            return None, None, None
+
+        rr = (entry - mid_trough) / risk
+        target = mid_trough if rr >= 2 else entry - 2 * risk
+        return stop, target, max(rr, 2.0)
+
+    return None, None, None
+
+
 def calculate_signals(df, symbol="BNBUSDT"):
     import logging
     from pathlib import Path
@@ -78,18 +165,26 @@ def calculate_signals(df, symbol="BNBUSDT"):
             )
 
         # ============================================================
-        # مهم: حذف کندل آخر (درحال‌شکل‌گیری)
+        # تشخیص کندل ناقص بر اساس timestamp (نه حذف کورکورانه)
         # ============================================================
-        # آخرین ردیف df معمولاً کندل درحال‌شکل‌گیری (هنوز نبسته) است،
-        # چون fetch_ohlcv با to=now صدا زده می‌شود. ta.pivothigh/pivotlow به
-        # rightBars کندلِ *بعد* از پیوت نیاز دارند که شامل همین کندل جاری هم
-        # می‌شود؛ اگر این کندل هنوز نهایی نشده باشد، تأیید/رد Pivot می‌تواند
-        # هر بار polling نتیجه‌ی متفاوتی بدهد. Pine واقعی فقط روی کندل بسته‌شده
-        # (alert.freq_once_per_bar_close) قضاوت می‌کند، پس ما هم باید همین کار
-        # را بکنیم: آخرین کندل ناقص را کنار می‌گذاریم.
         if len(candles) > 1:
-            candles = candles[:-1]
-            logger.info(f"Removed last (incomplete) candle. Remaining candles: {len(candles)}")
+            last_open_ts = candles[-1].timestamp / 1000.0  # unix seconds — زمان بازشدن آخرین کندل
+            candle_age = _time.time() - last_open_ts
+
+            if candle_age < 60:
+                # واقعاً هنوز کامل نشده
+                dropped_ts = candles[-1].timestamp
+                candles = candles[:-1]
+                logger.info(
+                    f"Removed last (incomplete) candle | age={candle_age:.1f}s | "
+                    f"dropped_open_ts={dropped_ts} | Remaining: {len(candles)}"
+                )
+            else:
+                # صرافی خودش کندل ناقص رو برنگردونده — نباید دوباره حذفش کنیم
+                logger.info(
+                    f"Last candle already closed (age={candle_age:.1f}s) — NOT dropping. "
+                    f"Remaining: {len(candles)}"
+                )
         else:
             logger.warning("Only one candle available, cannot remove last candle")
 
@@ -97,7 +192,7 @@ def calculate_signals(df, symbol="BNBUSDT"):
             msg = f"Too few candles: {len(candles)}"
             logger.warning(msg)
             _send_telegram(f"⚠️ WARNING: {msg}")
-            return None, None
+            return None, None, None, None
 
         symbol = symbol.upper()
         tick_info = SYMBOL_TICK_INFO.get(
@@ -262,7 +357,7 @@ def calculate_signals(df, symbol="BNBUSDT"):
 """
             logger.warning(error_msg)
             _send_telegram(error_msg)
-            return None, None
+            return None, None, None, None
 
         # ============================================================
         # استخراج سیگنال از last_values
@@ -287,6 +382,40 @@ Value: {str(last_values)[:500]}
             signal = None
 
         # ============================================================
+        # لاگ تشخیصی برای پیوت‌های جدید (چرا سیگنال نمی‌ده)
+        # ============================================================
+        try:
+            if not _is_na(last_values.get("pivot_low")) or not _is_na(last_values.get("pivot_high")):
+                logger.info(
+                    "[PIVOT DEBUG] %s | new_low=%s new_high=%s | "
+                    "CD+base=%s HD+base=%s trend_up_ok=%s | "
+                    "CD-base=%s HD-base=%s trend_down_ok=%s | final_signal=%s",
+                    symbol,
+                    last_values.get("pivot_low"), last_values.get("pivot_high"),
+                    last_values.get("classic_bullish_base"), last_values.get("hidden_bullish_base"),
+                    last_values.get("trend_bullish_ok"),
+                    last_values.get("classic_bearish_base"), last_values.get("hidden_bearish_base"),
+                    last_values.get("trend_bearish_ok"),
+                    signal,
+                )
+        except Exception as e:
+            logger.warning(f"[PIVOT DEBUG] Failed to log: {e}")
+
+        # ============================================================
+        # محاسبه استاپ و تارگت
+        # ============================================================
+        stop_price, target_price, rr_value = None, None, None
+        
+        if signal in ("LONG", "SHORT"):
+            stop_price, target_price, rr_value = _compute_stop_target(
+                candles, signal, last_values, tick_info["mintick"], buffer_ticks=5
+            )
+            logger.info(
+                f"[SL/TP] {symbol} {signal} | entry={entry} | stop={stop_price} | "
+                f"target={target_price} | R:R={rr_value}"
+            )
+
+        # ============================================================
         # گزارش نتیجه نهایی
         # ============================================================
         result_msg = f"""
@@ -295,6 +424,9 @@ Value: {str(last_values)[:500]}
   Symbol: {symbol}
   Signal: {signal}
   Entry: {entry}
+  Stop Loss: {stop_price}
+  Take Profit: {target_price}
+  R:R: {rr_value}
   Total Results: {result_count}
   Empty dicts: {empty_count}
   Empty indices (first 20): {empty_indices}
@@ -312,7 +444,7 @@ Value: {str(last_values)[:500]}
             _send_telegram(result_msg)
             calculate_signals._telegram_counter += 1
 
-        return signal, entry
+        return signal, entry, stop_price, target_price
 
     except Exception as e:
         # ============================================================
@@ -339,4 +471,4 @@ Value: {str(last_values)[:500]}
 """
         logger.error(error_msg)
         _send_telegram(error_msg)
-        return None, None
+        return None, None, None, None
