@@ -11,6 +11,7 @@ import requests
 import pandas as pd
 from strategy_wrapper import calculate_signals
 from datetime import datetime, timezone, timedelta
+import math
 
 # ===== TIMEZONE CONSTANTS =====
 IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
@@ -22,6 +23,7 @@ def format_iran_time(dt=None):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC_TZ)
     return dt.astimezone(IRAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
+
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
 BASE_URL = os.getenv("BASE_URL", "https://apiv2.thetruetrade.io")
@@ -225,7 +227,7 @@ class PrivateExchange:
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         return round(round(float(price)/tick)*tick, prec)
     
-    def create_order(self, symbol, side, capital, leverage):
+    def create_order(self, symbol, side, capital, leverage, take_profit=None, stop_loss=None):
         """
         ایجاد سفارش بازار با ساختار صحیح مطابق مستندات API
         
@@ -234,6 +236,8 @@ class PrivateExchange:
             side: LONG یا SHORT (یا BUY/SELL که تبدیل می‌شوند)
             capital: مقدار سرمایه به USDT
             leverage: مقدار اهرم
+            take_profit: قیمت تارگت (اختیاری)
+            stop_loss: قیمت استاپ لاس (اختیاری)
         """
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         
@@ -265,6 +269,17 @@ class PrivateExchange:
             "walletType": "debit"
         }
         
+        # ============================================================
+        # اضافه کردن استاپ و تارگت اگر موجود باشند
+        # ============================================================
+        if take_profit is not None and not math.isnan(take_profit) and take_profit > 0:
+            od["takeProfit"] = f"{self._round_price(take_profit, symbol):.{prec}f}"
+            logger.info(f"[TP] Take Profit set at {self._round_price(take_profit, symbol):.{prec}f}")
+        
+        if stop_loss is not None and not math.isnan(stop_loss) and stop_loss > 0:
+            od["stopLoss"] = f"{self._round_price(stop_loss, symbol):.{prec}f}"
+            logger.info(f"[SL] Stop Loss set at {self._round_price(stop_loss, symbol):.{prec}f}")
+        
         # ===== FULL ORDER REQUEST LOG =====
         logger.info(
             "[ORDER REQUEST] %s %s\n%s",
@@ -281,6 +296,8 @@ class PrivateExchange:
             f"Side: {api_side}\n"
             f"Leverage: {int(leverage)}\n"
             f"Cost: {capital:.{prec}f}\n"
+            f"Stop Loss: {od.get('stopLoss', 'N/A')}\n"
+            f"Take Profit: {od.get('takeProfit', 'N/A')}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"Body:\n{json.dumps(od, ensure_ascii=False, indent=2)}"
         )
@@ -349,6 +366,8 @@ class PrivateExchange:
                 "Side: %s\n"
                 "Leverage: %s\n"
                 "Cost: %s\n"
+                "Stop Loss: %s\n"
+                "Take Profit: %s\n"
                 "━━━━━━━━━━━━━━━━━━\n"
                 "Request Body:\n%s\n"
                 "━━━━━━━━━━━━━━━━━━\n"
@@ -361,6 +380,8 @@ class PrivateExchange:
                 api_side,
                 int(leverage),
                 f"{capital:.{prec}f}",
+                od.get('stopLoss', 'N/A'),
+                od.get('takeProfit', 'N/A'),
                 json.dumps(od, ensure_ascii=False, indent=2),
                 complete_error,
                 local_exception
@@ -374,6 +395,8 @@ class PrivateExchange:
                 f"Side: {api_side}\n"
                 f"Leverage: {int(leverage)}\n"
                 f"Cost: {capital:.{prec}f}\n"
+                f"Stop Loss: {od.get('stopLoss', 'N/A')}\n"
+                f"Take Profit: {od.get('takeProfit', 'N/A')}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"Request Body:\n{json.dumps(od, ensure_ascii=False, indent=2)}\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -653,21 +676,24 @@ def startup_diagnostic(exchange, public):
                 df = public.fetch_ohlcv(symbol)
 
                 if df is not None and not df.empty:
-                    sig, entry = calculate_signals_fn(df, symbol)
+                    # دریافت ۴ مقدار از strategy_wrapper
+                    sig, entry, stop_price, target_price = calculate_signals_fn(df, symbol)
                     
 
                     logger.info(
                         "[STARTUP DIAGNOSTIC] "
-                        "%s signal=%r entry=%r",
+                        "%s signal=%r entry=%r stop=%r target=%r",
                         symbol,
                         sig,
                         entry,
+                        stop_price,
+                        target_price,
                     )
 
                     strategy_ok = True
                     report.append(
                         f"STRATEGY TEST {symbol}: "
-                        f"✅ OK | signal={sig!r} | entry={entry!r}"
+                        f"✅ OK | signal={sig!r} | entry={entry!r} | stop={stop_price!r} | target={target_price!r}"
                     )
                     break
 
@@ -887,12 +913,49 @@ def loop():
                 df = public.fetch_ohlcv(symbol)
                 if df.empty:
                     continue
-                sig, entry = calculate_signals(df, symbol)
-                logger.info(f"{symbol}: signal={sig}, entry={entry}, candles={len(df)}")
-                if sig and balance > 0:
-                    leverage = LEVERAGE_MAP.get(symbol, 50)
-                    capital = min(balance * 0.98, TARGET_RISK)
-                    exchange.create_order(symbol, sig, capital, leverage)
+                
+                # دریافت ۴ مقدار از strategy_wrapper
+                sig, entry, stop_price, target_price = calculate_signals(df, symbol)
+                
+                logger.info(f"{symbol}: signal={sig}, entry={entry}, stop={stop_price}, target={target_price}, candles={len(df)}")
+                
+                if sig and balance > 0 and stop_price is not None and entry is not None:
+                    allowed_leverage = LEVERAGE_MAP.get(symbol, 50)
+                    
+                    # محاسبه درصد استاپ
+                    if sig == "LONG":
+                        stop_pct = abs(entry - stop_price) / entry if entry > 0 else 0
+                    else:  # SHORT
+                        stop_pct = abs(stop_price - entry) / entry if entry > 0 else 0
+                    
+                    if stop_pct <= 0:
+                        logger.warning(f"{symbol}: invalid stop_pct={stop_pct}, skip order")
+                        continue
+                    
+                    # محاسبه سرمایه مورد نیاز برای ریسک ۲ دلاری
+                    # فرمول: capital = TARGET_RISK / stop_pct
+                    required_capital = TARGET_RISK / stop_pct
+                    
+                    # اگر سرمایه مورد نیاز از موجودی بیشتر باشد، با کل موجودی وارد می‌شویم
+                    if balance < required_capital:
+                        capital = balance * 0.98  # ۹۸٪ موجودی
+                        actual_risk = capital * stop_pct * allowed_leverage
+                        logger.info(
+                            f"{symbol}: موجودی کافی نیست ({balance:.4f} < {required_capital:.4f}) → "
+                            f"capital={capital:.4f}, ریسک واقعی≈${actual_risk:.4f}"
+                        )
+                    else:
+                        capital = required_capital
+                        logger.info(
+                            f"{symbol}: سرمایه محاسبه‌شده: {capital:.4f} | "
+                            f"ریسک هدف: ${TARGET_RISK} | استاپ: {stop_pct*100:.2f}%"
+                        )
+                    
+                    # ارسال سفارش با استاپ و تارگت
+                    exchange.create_order(
+                        symbol, sig, capital, allowed_leverage,
+                        take_profit=target_price, stop_loss=stop_price
+                    )
                     balance = exchange.fetch_balance()
             STOP_EVENT.wait(60)
         except Exception as e:
