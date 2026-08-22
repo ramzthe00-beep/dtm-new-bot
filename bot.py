@@ -882,6 +882,7 @@ def startup_diagnostic(exchange, public):
 
     return final_report
 
+
 def loop():
     public = PublicData()
     exchange = PrivateExchange()
@@ -922,36 +923,72 @@ def loop():
                 if sig and balance > 0 and stop_price is not None and entry is not None:
                     allowed_leverage = LEVERAGE_MAP.get(symbol, 50)
                     
-                    # محاسبه درصد استاپ
+                    # ============================================================
+                    # محاسبه درصد استاپ و تارگت
+                    # ============================================================
                     if sig == "LONG":
                         stop_pct = abs(entry - stop_price) / entry if entry > 0 else 0
+                        if target_price is not None and not math.isnan(target_price) and target_price > 0:
+                            target_pct = abs(target_price - entry) / entry if entry > 0 else 0
+                        else:
+                            target_pct = 0
                     else:  # SHORT
                         stop_pct = abs(stop_price - entry) / entry if entry > 0 else 0
+                        if target_price is not None and not math.isnan(target_price) and target_price > 0:
+                            target_pct = abs(entry - target_price) / entry if entry > 0 else 0
+                        else:
+                            target_pct = 0
                     
                     if stop_pct <= 0:
                         logger.warning(f"{symbol}: invalid stop_pct={stop_pct}, skip order")
                         continue
                     
-                    # محاسبه سرمایه مورد نیاز برای ریسک ۲ دلاری
-                    # فرمول: capital = TARGET_RISK / stop_pct
-                    required_capital = TARGET_RISK / stop_pct
+                    # ============================================================
+                    # فرمول دقیق محاسبه سرمایه (طبق درخواست شما)
+                    # ============================================================
+                    # Step 1: محاسبه اهرم قدیمی
+                    old_leverage = 1.0 / stop_pct
                     
-                    # اگر سرمایه مورد نیاز از موجودی بیشتر باشد، با کل موجودی وارد می‌شویم
+                    # Step 2: محاسبه سرمایه موردنیاز
+                    if old_leverage > allowed_leverage:
+                        required_capital = (old_leverage / allowed_leverage) * TARGET_RISK
+                        logger.info(
+                            f"{symbol}: اهرم قدیمی={old_leverage:.1f} > اهرم مجاز={allowed_leverage} → "
+                            f"سرمایه_موردنیاز={required_capital:.4f}"
+                        )
+                    else:
+                        required_capital = TARGET_RISK
+                        logger.info(
+                            f"{symbol}: اهرم قدیمی={old_leverage:.1f} ≤ اهرم مجاز={allowed_leverage} → "
+                            f"سرمایه_موردنیاز={required_capital:.4f}"
+                        )
+                    
+                    # Step 3: مدیریت موجودی ناکافی
                     if balance < required_capital:
                         capital = balance * 0.98  # ۹۸٪ موجودی
-                        actual_risk = capital * stop_pct * allowed_leverage
+                        actual_stop_dollar = capital * stop_pct * allowed_leverage
+                        actual_profit_dollar = capital * target_pct * allowed_leverage if target_pct > 0 else None
+                        
                         logger.info(
-                            f"{symbol}: موجودی کافی نیست ({balance:.4f} < {required_capital:.4f}) → "
-                            f"capital={capital:.4f}, ریسک واقعی≈${actual_risk:.4f}"
+                            f"{symbol}: ⚠️ موجودی کافی نیست ({balance:.4f} < {required_capital:.4f})\n"
+                            f"  → سرمایه_عملی={capital:.4f}\n"
+                            f"  → استاپ_واقعی=${actual_stop_dollar:.4f}\n"
+                            f"  → سود_واقعی=${actual_profit_dollar:.4f if actual_profit_dollar else 'N/A'}"
                         )
                     else:
                         capital = required_capital
+                        actual_stop_dollar = TARGET_RISK  # همیشه ۲ دلار
+                        actual_profit_dollar = (target_pct / stop_pct) * TARGET_RISK if target_pct > 0 else None
+                        
                         logger.info(
-                            f"{symbol}: سرمایه محاسبه‌شده: {capital:.4f} | "
-                            f"ریسک هدف: ${TARGET_RISK} | استاپ: {stop_pct*100:.2f}%"
+                            f"{symbol}: ✅ سرمایه کافی است\n"
+                            f"  → سرمایه={capital:.4f}\n"
+                            f"  → استاپ_دلاری=${actual_stop_dollar:.4f}\n"
+                            f"  → سود_دلاری=${actual_profit_dollar:.4f if actual_profit_dollar else 'N/A'}\n"
+                            f"  → R={target_pct / stop_pct if target_pct > 0 else 'N/A'}"
                         )
                     
-                    # ارسال سفارش با استاپ و تارگت
+                    # Step 4: ارسال سفارش
                     exchange.create_order(
                         symbol, sig, capital, allowed_leverage,
                         take_profit=target_price, stop_loss=stop_price
@@ -961,6 +998,7 @@ def loop():
         except Exception as e:
             logger.exception("Loop error")
             STOP_EVENT.wait(60)
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "10000"))
