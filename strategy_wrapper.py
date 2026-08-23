@@ -192,7 +192,7 @@ def calculate_signals(df, symbol="BNBUSDT"):
             msg = f"Too few candles: {len(candles)}"
             logger.warning(msg)
             _send_telegram(f"⚠️ WARNING: {msg}")
-            return []
+            return None, None, None, None
 
         symbol = symbol.upper()
         tick_info = SYMBOL_TICK_INFO.get(
@@ -275,17 +275,18 @@ def calculate_signals(df, symbol="BNBUSDT"):
             last_bar_index=len(candles) - 1,
             inputs=inputs,
         )
+
         # ============================================================
-        # حلقه‌ی اصلی — اسکن *همه‌ی* کندل‌ها، نه فقط آخری
+        # حلقه تشخیصی با کپی مستقل از دیکشنری
         # ============================================================
-        all_results = []             # [(index, timestamp_ms, values_dict), ...]
-        found_valid = False
+        last_values = None
+        found_valid = False          # پرچم مستقل، به‌جای تکیه بر truthiness دیکشنری
         result_count = 0
         empty_count = 0
         empty_indices = []
         debug_info = []
 
-        for i, result in enumerate(runner.run_iter()):
+        for result in runner.run_iter():
             result_count += 1
 
             # ============================================================
@@ -299,10 +300,8 @@ def calculate_signals(df, symbol="BNBUSDT"):
 
             if is_valid_dict:
                 # کپیِ مستقل (snapshot)، نه رفرنس زنده
-                values = dict(result[1])
+                last_values = dict(result[1])
                 found_valid = True
-                ts = candles[i].timestamp if i < len(candles) else None
-                all_results.append((i, ts, values))
             elif len(result) >= 2 and isinstance(result[1], dict):
                 # دیکشنری هست ولی خالی {}
                 empty_count += 1
@@ -321,11 +320,6 @@ def calculate_signals(df, symbol="BNBUSDT"):
                     "result_1_value": str(result[1])[:200] if len(result) >= 2 and result[1] else "EMPTY/None",
                 })
 
-        # ============================================================
-        # آخرین مقدار معتبر (برای گزارش و دیباگ)
-        # ============================================================
-        last_values = all_results[-1][2] if all_results else None
-    
         # ============================================================
         # گزارش کامل
         # ============================================================
@@ -363,57 +357,63 @@ def calculate_signals(df, symbol="BNBUSDT"):
 """
             logger.warning(error_msg)
             _send_telegram(error_msg)
-            return []
+            return None, None, None, None
 
         # ============================================================
-        # استخراج *همه‌ی* کندل‌هایی که signal=LONG/SHORT داشته‌اند
-        # (نه فقط آخرین کندل) — برای هر کدام، SL/TP از روی همون
-        # snapshot دقیق خودشون محاسبه می‌شود
+        # استخراج سیگنال از last_values
         # ============================================================
-        signals = []
-        for i, ts, values in all_results:
-            sig = values.get("signal")
-            if sig not in ("LONG", "SHORT"):
-                continue
+        signal = None
+        entry = None
+        
+        if isinstance(last_values, dict):
+            signal = last_values.get("signal")
+            entry = last_values.get("entry")
+        else:
+            error_msg = f"""
+⚠️ WARNING: last_values is not a dictionary
 
-            entry = values.get("entry")
-            stop_price, target_price, rr_value = _compute_stop_target(
-                candles, sig, values, tick_info["mintick"], buffer_ticks=5
-            )
-            logger.info(
-                f"[SL/TP] {symbol} {sig} @bar={i} ts={ts} | entry={entry} | "
-                f"stop={stop_price} | target={target_price} | R:R={rr_value}"
-            )
-            signals.append({
-                "timestamp": ts,
-                "signal": sig,
-                "entry": entry,
-                "stop": stop_price,
-                "target": target_price,
-                "rr": rr_value,
-            })
+Type: {type(last_values).__name__}
+Value: {str(last_values)[:500]}
+"""
+            logger.warning(error_msg)
+            _send_telegram(error_msg)
+
+        if signal not in ("LONG", "SHORT"):
+            signal = None
 
         # ============================================================
         # لاگ تشخیصی برای پیوت‌های جدید (چرا سیگنال نمی‌ده)
         # ============================================================
         try:
-            if isinstance(last_values, dict) and (
-                not _is_na(last_values.get("pivot_low")) or not _is_na(last_values.get("pivot_high"))
-            ):
+            if not _is_na(last_values.get("pivot_low")) or not _is_na(last_values.get("pivot_high")):
                 logger.info(
                     "[PIVOT DEBUG] %s | new_low=%s new_high=%s | "
                     "CD+base=%s HD+base=%s trend_up_ok=%s | "
-                    "CD-base=%s HD-base=%s trend_down_ok=%s | last_bar_signal=%s",
+                    "CD-base=%s HD-base=%s trend_down_ok=%s | final_signal=%s",
                     symbol,
                     last_values.get("pivot_low"), last_values.get("pivot_high"),
                     last_values.get("classic_bullish_base"), last_values.get("hidden_bullish_base"),
                     last_values.get("trend_bullish_ok"),
                     last_values.get("classic_bearish_base"), last_values.get("hidden_bearish_base"),
                     last_values.get("trend_bearish_ok"),
-                    last_values.get("signal"),
+                    signal,
                 )
         except Exception as e:
             logger.warning(f"[PIVOT DEBUG] Failed to log: {e}")
+
+        # ============================================================
+        # محاسبه استاپ و تارگت
+        # ============================================================
+        stop_price, target_price, rr_value = None, None, None
+        
+        if signal in ("LONG", "SHORT"):
+            stop_price, target_price, rr_value = _compute_stop_target(
+                candles, signal, last_values, tick_info["mintick"], buffer_ticks=5
+            )
+            logger.info(
+                f"[SL/TP] {symbol} {signal} | entry={entry} | stop={stop_price} | "
+                f"target={target_price} | R:R={rr_value}"
+            )
 
         # ============================================================
         # گزارش نتیجه نهایی
@@ -422,8 +422,11 @@ def calculate_signals(df, symbol="BNBUSDT"):
 ✅ calculate_signals result:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Symbol: {symbol}
-  Signals found in this window: {len(signals)}
-  Last signal: {signals[-1] if signals else None}
+  Signal: {signal}
+  Entry: {entry}
+  Stop Loss: {stop_price}
+  Take Profit: {target_price}
+  R:R: {rr_value}
   Total Results: {result_count}
   Empty dicts: {empty_count}
   Empty indices (first 20): {empty_indices}
@@ -432,16 +435,16 @@ def calculate_signals(df, symbol="BNBUSDT"):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
         logger.info(result_msg)
-
+        
         # ارسال به تلگرام فقط برای ۴ بار اول
         if not hasattr(calculate_signals, "_telegram_counter"):
             calculate_signals._telegram_counter = 0
-
+        
         if calculate_signals._telegram_counter < 4:
             _send_telegram(result_msg)
             calculate_signals._telegram_counter += 1
 
-        return signals
+        return signal, entry, stop_price, target_price
 
     except Exception as e:
         # ============================================================
@@ -468,4 +471,4 @@ def calculate_signals(df, symbol="BNBUSDT"):
 """
         logger.error(error_msg)
         _send_telegram(error_msg)
-        return []
+        return None, None, None, None
