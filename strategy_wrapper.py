@@ -275,18 +275,17 @@ def calculate_signals(df, symbol="BNBUSDT"):
             last_bar_index=len(candles) - 1,
             inputs=inputs,
         )
-
         # ============================================================
-        # حلقه تشخیصی با کپی مستقل از دیکشنری
+        # حلقه‌ی اصلی — اسکن *همه‌ی* کندل‌ها، نه فقط آخری
         # ============================================================
-        last_values = None
-        found_valid = False          # پرچم مستقل، به‌جای تکیه بر truthiness دیکشنری
+        all_results = []             # [(index, timestamp_ms, values_dict), ...]
+        found_valid = False
         result_count = 0
         empty_count = 0
         empty_indices = []
         debug_info = []
 
-        for result in runner.run_iter():
+        for i, result in enumerate(runner.run_iter()):
             result_count += 1
 
             # ============================================================
@@ -300,13 +299,15 @@ def calculate_signals(df, symbol="BNBUSDT"):
 
             if is_valid_dict:
                 # کپیِ مستقل (snapshot)، نه رفرنس زنده
-                last_values = dict(result[1])
+                values = dict(result[1])
                 found_valid = True
+                ts = candles[i].timestamp if i < len(candles) else None
+                all_results.append((i, ts, values))
             elif len(result) >= 2 and isinstance(result[1], dict):
                 # دیکشنری هست ولی خالی {}
                 empty_count += 1
                 if len(empty_indices) < 20:
-                    empty_indices.append(result_count)
+                   empty_indices.append(result_count)
 
             # ============================================================
             # دیباگ برای کندل‌های خاص
@@ -320,6 +321,11 @@ def calculate_signals(df, symbol="BNBUSDT"):
                     "result_1_value": str(result[1])[:200] if len(result) >= 2 and result[1] else "EMPTY/None",
                 })
 
+         # ============================================================
+         # آخرین مقدار معتبر (برای گزارش و دیباگ)
+         # ============================================================
+         last_values = all_results[-1][2] if all_results else None
+    
         # ============================================================
         # گزارش کامل
         # ============================================================
