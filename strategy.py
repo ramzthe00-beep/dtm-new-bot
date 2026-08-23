@@ -8,7 +8,7 @@ Compile Pine Scripts online at PyneSys: https://pynesys.io
 from pynecore import pine_range
 from pynecore.lib import (
     bar_index, barmerge, close, color, high, input, location, low, math, na,
-    open, plotshape, request, script, shape, size, strategy, syminfo, ta, time
+    open, plotshape, request, script, shape, size, strategy, syminfo, ta
 )
 from pynecore.types import Persistent, Series
 
@@ -156,19 +156,6 @@ def main(
     trendOkForBearish = isTrendingUp(ph_bar_1) if newPivotHigh and (not na(ph_bar_1)) else False
     trendOkForBullish = isTrendingDown(pl_bar_1) if newPivotLow and (not na(pl_bar_1)) else False
 
-    def _trendSlopePct(refBar):
-        result: float = na(float)
-        if not na(refBar):
-            offset = bar_index - refBar
-            if offset >= 0 and offset + trendLookback < 5000:
-                slope = ta.linreg(close[offset], trendLookback, 0) - ta.linreg(close[offset + trendLookback], trendLookback, 0)
-                avgPrice = ta.sma(close[offset], trendLookback)
-                result = (slope / avgPrice) * 100 if avgPrice != 0 else 0.0
-        return result
-
-    trendSlopeBearishPct = _trendSlopePct(ph_bar_1) if newPivotHigh and (not na(ph_bar_1)) else na(float)
-    trendSlopeBullishPct = _trendSlopePct(pl_bar_1) if newPivotLow and (not na(pl_bar_1)) else na(float)
-
     def findTrendStartLow(refBar):
         result: float = na(float)
         if not na(refBar):
@@ -269,39 +256,6 @@ def main(
     hiddenBearishCond3_MACDh = priceLowerHigh and histHigherHighOnPeaks and bothPeaksGreen and macdColorChangedForHighs
     hiddenBearishBase3 = enableHidden and priceLowerHigh and hiddenBearishCond3_MACDh and hiddenBearishCond1_RSI and hiddenBearishCond2_MACDl
 
-    # ---------------------------------------------------------------------------------
-    # لاگ تشخیصی DIVCHECK — روی هر Pivot جدید (چه سیگنال نهایی بدهد چه ندهد)
-    # فقط برای لاگ، هیچ اثری روی تصمیم‌گیری ندارد
-    # ---------------------------------------------------------------------------------
-    if newPivotHigh:
-        p1TimeH = ta.time[bar_index - ph_bar_1] if not na(ph_bar_1) else na
-        p2TimeH = ta.time[bar_index - ph_bar_2] if not na(ph_bar_2) else na
-        # لاگ در خروجی استاندارد (چاپ می‌شود)
-        print(f"[DIVCHECK] {syminfo.tickerid} type=H "
-              f"p1={ph_price_1}@{p1TimeH} "
-              f"p2={ph_price_2}@{p2TimeH} "
-              f"rsi1={ph_rsi_1} rsi2={ph_rsi_2} "
-              f"macd1={ph_macdline_1} macd2={ph_macdline_2} "
-              f"hist1={ph_hist_1} hist2={ph_hist_2} "
-              f"bothPeaksGreen={bothPeaksGreen} colorChgHigh={macdColorChangedForHighs} "
-              f"trendOkBear={trendOkForBearish} "
-              f"CD-base={classicBearishBase3} HD-base={hiddenBearishBase3} "
-              f"final={finalClassicBearish or finalHiddenBearish}")
-
-    if newPivotLow:
-        p1TimeL = ta.time[bar_index - pl_bar_1] if not na(pl_bar_1) else na
-        p2TimeL = ta.time[bar_index - pl_bar_2] if not na(pl_bar_2) else na
-        print(f"[DIVCHECK] {syminfo.tickerid} type=L "
-              f"p1={pl_price_1}@{p1TimeL} "
-              f"p2={pl_price_2}@{p2TimeL} "
-              f"rsi1={pl_rsi_1} rsi2={pl_rsi_2} "
-              f"macd1={pl_macdline_1} macd2={pl_macdline_2} "
-              f"hist1={pl_hist_1} hist2={pl_hist_2} "
-              f"bothTroughsRed={bothTroughsRed} colorChgLow={macdColorChangedForLows} "
-              f"trendOkBull={trendOkForBullish} "
-              f"CD+base={classicBullishBase3} HD+base={hiddenBullishBase3} "
-              f"final={finalClassicBullish or finalHiddenBullish}")
-
     def passesMinRequirement(base3, fibOk, paOk):
         result: bool = False
         if base3:
@@ -356,21 +310,6 @@ def main(
         "trend_slope_min_pct": trendSlopeMinPct,
         "trend_bearish_ok": trendOkForBearish,
         "trend_bullish_ok": trendOkForBullish,
-        "trend_slope_bearish_pct": trendSlopeBearishPct,
-        "trend_slope_bullish_pct": trendSlopeBullishPct,
-
-        "ph_rsi_1": ph_rsi_1, "ph_rsi_2": ph_rsi_2,
-        "ph_macdline_1": ph_macdline_1, "ph_macdline_2": ph_macdline_2,
-        "ph_hist_1": ph_hist_1, "ph_hist_2": ph_hist_2,
-
-        "pl_rsi_1": pl_rsi_1, "pl_rsi_2": pl_rsi_2,
-        "pl_macdline_1": pl_macdline_1, "pl_macdline_2": pl_macdline_2,
-        "pl_hist_1": pl_hist_1, "pl_hist_2": pl_hist_2,
-
-        "both_peaks_green": bothPeaksGreen,
-        "both_troughs_red": bothTroughsRed,
-        "macd_color_changed_highs": macdColorChangedForHighs,
-        "macd_color_changed_lows": macdColorChangedForLows,
 
         # Pivots
         "left_bars": leftBars,
