@@ -192,7 +192,7 @@ def calculate_signals(df, symbol="BNBUSDT"):
             msg = f"Too few candles: {len(candles)}"
             logger.warning(msg)
             _send_telegram(f"⚠️ WARNING: {msg}")
-            return None, None, None, None
+            return []
 
         symbol = symbol.upper()
         tick_info = SYMBOL_TICK_INFO.get(
@@ -307,7 +307,7 @@ def calculate_signals(df, symbol="BNBUSDT"):
                 # دیکشنری هست ولی خالی {}
                 empty_count += 1
                 if len(empty_indices) < 20:
-                   empty_indices.append(result_count)
+                    empty_indices.append(result_count)
 
             # ============================================================
             # دیباگ برای کندل‌های خاص
@@ -321,10 +321,10 @@ def calculate_signals(df, symbol="BNBUSDT"):
                     "result_1_value": str(result[1])[:200] if len(result) >= 2 and result[1] else "EMPTY/None",
                 })
 
-         # ============================================================
-         # آخرین مقدار معتبر (برای گزارش و دیباگ)
-         # ============================================================
-         last_values = all_results[-1][2] if all_results else None
+        # ============================================================
+        # آخرین مقدار معتبر (برای گزارش و دیباگ)
+        # ============================================================
+        last_values = all_results[-1][2] if all_results else None
     
         # ============================================================
         # گزارش کامل
@@ -363,63 +363,57 @@ def calculate_signals(df, symbol="BNBUSDT"):
 """
             logger.warning(error_msg)
             _send_telegram(error_msg)
-            return None, None, None, None
+            return []
 
         # ============================================================
-        # استخراج سیگنال از last_values
+        # استخراج *همه‌ی* کندل‌هایی که signal=LONG/SHORT داشته‌اند
+        # (نه فقط آخرین کندل) — برای هر کدام، SL/TP از روی همون
+        # snapshot دقیق خودشون محاسبه می‌شود
         # ============================================================
-        signal = None
-        entry = None
-        
-        if isinstance(last_values, dict):
-            signal = last_values.get("signal")
-            entry = last_values.get("entry")
-        else:
-            error_msg = f"""
-⚠️ WARNING: last_values is not a dictionary
+        signals = []
+        for i, ts, values in all_results:
+            sig = values.get("signal")
+            if sig not in ("LONG", "SHORT"):
+                continue
 
-Type: {type(last_values).__name__}
-Value: {str(last_values)[:500]}
-"""
-            logger.warning(error_msg)
-            _send_telegram(error_msg)
-
-        if signal not in ("LONG", "SHORT"):
-            signal = None
+            entry = values.get("entry")
+            stop_price, target_price, rr_value = _compute_stop_target(
+                candles, sig, values, tick_info["mintick"], buffer_ticks=5
+            )
+            logger.info(
+                f"[SL/TP] {symbol} {sig} @bar={i} ts={ts} | entry={entry} | "
+                f"stop={stop_price} | target={target_price} | R:R={rr_value}"
+            )
+            signals.append({
+                "timestamp": ts,
+                "signal": sig,
+                "entry": entry,
+                "stop": stop_price,
+                "target": target_price,
+                "rr": rr_value,
+            })
 
         # ============================================================
         # لاگ تشخیصی برای پیوت‌های جدید (چرا سیگنال نمی‌ده)
         # ============================================================
         try:
-            if not _is_na(last_values.get("pivot_low")) or not _is_na(last_values.get("pivot_high")):
+            if isinstance(last_values, dict) and (
+                not _is_na(last_values.get("pivot_low")) or not _is_na(last_values.get("pivot_high"))
+            ):
                 logger.info(
                     "[PIVOT DEBUG] %s | new_low=%s new_high=%s | "
                     "CD+base=%s HD+base=%s trend_up_ok=%s | "
-                    "CD-base=%s HD-base=%s trend_down_ok=%s | final_signal=%s",
+                    "CD-base=%s HD-base=%s trend_down_ok=%s | last_bar_signal=%s",
                     symbol,
                     last_values.get("pivot_low"), last_values.get("pivot_high"),
                     last_values.get("classic_bullish_base"), last_values.get("hidden_bullish_base"),
                     last_values.get("trend_bullish_ok"),
                     last_values.get("classic_bearish_base"), last_values.get("hidden_bearish_base"),
                     last_values.get("trend_bearish_ok"),
-                    signal,
+                    last_values.get("signal"),
                 )
         except Exception as e:
             logger.warning(f"[PIVOT DEBUG] Failed to log: {e}")
-
-        # ============================================================
-        # محاسبه استاپ و تارگت
-        # ============================================================
-        stop_price, target_price, rr_value = None, None, None
-        
-        if signal in ("LONG", "SHORT"):
-            stop_price, target_price, rr_value = _compute_stop_target(
-                candles, signal, last_values, tick_info["mintick"], buffer_ticks=5
-            )
-            logger.info(
-                f"[SL/TP] {symbol} {signal} | entry={entry} | stop={stop_price} | "
-                f"target={target_price} | R:R={rr_value}"
-            )
 
         # ============================================================
         # گزارش نتیجه نهایی
@@ -428,11 +422,8 @@ Value: {str(last_values)[:500]}
 ✅ calculate_signals result:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Symbol: {symbol}
-  Signal: {signal}
-  Entry: {entry}
-  Stop Loss: {stop_price}
-  Take Profit: {target_price}
-  R:R: {rr_value}
+  Signals found in this window: {len(signals)}
+  Last signal: {signals[-1] if signals else None}
   Total Results: {result_count}
   Empty dicts: {empty_count}
   Empty indices (first 20): {empty_indices}
@@ -441,16 +432,16 @@ Value: {str(last_values)[:500]}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
         logger.info(result_msg)
-        
+
         # ارسال به تلگرام فقط برای ۴ بار اول
         if not hasattr(calculate_signals, "_telegram_counter"):
             calculate_signals._telegram_counter = 0
-        
+
         if calculate_signals._telegram_counter < 4:
             _send_telegram(result_msg)
             calculate_signals._telegram_counter += 1
 
-        return signal, entry, stop_price, target_price
+        return signals
 
     except Exception as e:
         # ============================================================
@@ -477,4 +468,4 @@ Value: {str(last_values)[:500]}
 """
         logger.error(error_msg)
         _send_telegram(error_msg)
-        return None, None, None, None
+        return []
