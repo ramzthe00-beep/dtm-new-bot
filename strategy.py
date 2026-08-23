@@ -274,8 +274,8 @@ def main(
     # فقط برای لاگ، هیچ اثری روی تصمیم‌گیری ندارد
     # ---------------------------------------------------------------------------------
     if newPivotHigh:
-        p1TimeH = time[bar_index - ph_bar_1] if not na(ph_bar_1) else na
-        p2TimeH = time[bar_index - ph_bar_2] if not na(ph_bar_2) else na
+        p1TimeH = ta.time[bar_index - ph_bar_1] if not na(ph_bar_1) else na
+        p2TimeH = ta.time[bar_index - ph_bar_2] if not na(ph_bar_2) else na
         # لاگ در خروجی استاندارد (چاپ می‌شود)
         print(f"[DIVCHECK] {syminfo.tickerid} type=H "
               f"p1={ph_price_1}@{p1TimeH} "
@@ -289,8 +289,8 @@ def main(
               f"final={finalClassicBearish or finalHiddenBearish}")
 
     if newPivotLow:
-        p1TimeL = time[bar_index - pl_bar_1] if not na(pl_bar_1) else na
-        p2TimeL = time[bar_index - pl_bar_2] if not na(pl_bar_2) else na
+        p1TimeL = ta.time[bar_index - pl_bar_1] if not na(pl_bar_1) else na
+        p2TimeL = ta.time[bar_index - pl_bar_2] if not na(pl_bar_2) else na
         print(f"[DIVCHECK] {syminfo.tickerid} type=L "
               f"p1={pl_price_1}@{p1TimeL} "
               f"p2={pl_price_2}@{p2TimeL} "
