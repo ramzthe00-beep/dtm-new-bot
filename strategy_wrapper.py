@@ -206,10 +206,22 @@ class LiveStrategyRunner:
     def _consume(self):
         """مصرف خروجی‌های ScriptRunner در یک ترد جداگانه"""
         try:
-            for _, result in self._runner.run_iter():
-                if result and isinstance(result, dict) and len(result) > 0:
+            for item in self._runner.run_iter():
+                values = None
+                # اگر item یک tuple/list است
+                if isinstance(item, (list, tuple)):
+                    # عنصر آخر را امتحان کن (معمولاً دیکشنری است)
+                    for elem in reversed(item):
+                        if isinstance(elem, dict) and len(elem) > 0:
+                            values = elem
+                            break
+                # اگر item خودش دیکشنری است
+                elif isinstance(item, dict) and len(item) > 0:
+                    values = item
+                
+                if values:
                     with self._lock:
-                        self._latest_values = dict(result)  # کپی مستقل
+                        self._latest_values = dict(values)  # کپی مستقل
         except Exception as e:
             logger.error(f"[LiveStrategyRunner] {self.symbol} consume error: {e}")
 
