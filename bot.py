@@ -290,7 +290,7 @@ class PrivateExchange:
         
         # ===== FULL ORDER REQUEST TO TELEGRAM =====
         request_msg = (
-            f"📤 ORDER REQUEST\n"
+            f"📤 عدم موفقیت در سفارش\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"Symbol: {symbol.upper()}\n"
             f"Side: {api_side}\n"
@@ -319,7 +319,7 @@ class PrivateExchange:
             
             # ===== FULL ORDER SUCCESS TO TELEGRAM =====
             success_msg = (
-                f"✅ ORDER SUCCESS\n"
+                f"✅ سفارش با موفقیت در صرافی ثبت شد\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"Symbol: {symbol.upper()}\n"
                 f"Side: {api_side}\n"
@@ -489,11 +489,11 @@ def startup_diagnostic(exchange, public):
     
     # ===== لاگ شروع دیاگنوستیک =====
     logger.info("=" * 60)
-    logger.info("STARTUP DIAGNOSTIC BEGINNING...")
+    logger.info("...شروع عیب‌یابی استارتاپ")
     logger.info("=" * 60)
 
     report = [
-        "🚀 DTM BOT STARTUP DIAGNOSTIC",
+        "🚀 عیب‌یابی راه‌اندازی ربات DTM",
         "━━━━━━━━━━━━━━━━━━━━━━",
         "MODE: READ-ONLY",
         "REAL ORDER: 🚫 NOT SENT",
@@ -544,7 +544,7 @@ def startup_diagnostic(exchange, public):
     # TELEGRAM
     # ------------------------------------------------------------
     try:
-        send_telegram("🧪 DTM startup diagnostic started")
+        send_telegram("🧪 Началось расхождение в стратегии DTM")
         add("TELEGRAM", True)
     except Exception as e:
         add(
@@ -805,7 +805,7 @@ def startup_diagnostic(exchange, public):
             )
 
             report.append(
-                "  cost: 🔒 CURRENT BOT CALCULATION "
+                "  cost: 🔒 محاسبه ربات فعلی "
                 "(NOT MODIFIED)"
             )
 
@@ -839,16 +839,16 @@ def startup_diagnostic(exchange, public):
         )
 
     report.append(
-        "TRADING FORMULAS: 🔒 NOT MODIFIED"
+        "فرمول‌های معاملاتی: 🔒 اصلاح نشده"
     )
     report.append(
-        "CAPITAL CALCULATION: 🔒 NOT MODIFIED"
+        "محاسبه سرمایه: 🔒 اصلاح نشده"
     )
     report.append(
-        "LEVERAGE CALCULATION: 🔒 NOT MODIFIED"
+        "محاسبه‌ی لوریج: 🔒 اصلاح نشده"
     )
     report.append(
-        "STRATEGY LOGIC: 🔒 NOT MODIFIED"
+        "منطق استراتژی: 🔒 اصلاح نشده"
     )
 
     # ------------------------------------------------------------
