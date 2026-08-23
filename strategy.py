@@ -8,7 +8,7 @@ Compile Pine Scripts online at PyneSys: https://pynesys.io
 from pynecore import pine_range
 from pynecore.lib import (
     bar_index, barmerge, close, color, high, input, location, low, math, na,
-    open, plotshape, request, script, shape, size, strategy, syminfo, ta
+    open, plotshape, request, script, shape, size, strategy, syminfo, ta, time
 )
 from pynecore.types import Persistent, Series
 
