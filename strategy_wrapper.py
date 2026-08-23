@@ -54,6 +54,19 @@ def _is_na(x):
     return x is None or (isinstance(x, float) and _math.isnan(x))
 
 
+def _valid_num(x):
+    return x is not None and not (isinstance(x, float) and x != x)
+
+
+def _fmt_time(candles, idx):
+    if idx is None or not _valid_num(idx):
+        return "NA"
+    i = int(idx)
+    if 0 <= i < len(candles):
+        return str(candles[i].timestamp)
+    return "OUT_OF_RANGE"
+
+
 def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
     """
     استاپ/تارگت سفارشی — کاملاً مستقل از منطق واگرایی strategy.py.
@@ -382,24 +395,48 @@ Value: {str(last_values)[:500]}
             signal = None
 
         # ============================================================
-        # لاگ تشخیصی برای پیوت‌های جدید (چرا سیگنال نمی‌ده)
+        # لاگ تشخیصی DIVCHECK — دقیقاً هم‌ساختار با پاین
         # ============================================================
         try:
-            if not _is_na(last_values.get("pivot_low")) or not _is_na(last_values.get("pivot_high")):
+            if not _is_na(last_values.get("pivot_high")):
+                b1 = last_values.get("previous_pivot_high_index")
+                b2 = last_values.get("pivot_high_index")
                 logger.info(
-                    "[PIVOT DEBUG] %s | new_low=%s new_high=%s | "
-                    "CD+base=%s HD+base=%s trend_up_ok=%s | "
-                    "CD-base=%s HD-base=%s trend_down_ok=%s | final_signal=%s",
+                    "[DIVCHECK] %s type=H p1=%s@%s p2=%s@%s rsi1=%s rsi2=%s macd1=%s macd2=%s "
+                    "hist1=%s hist2=%s bothPeaksGreen=%s colorChgHigh=%s trendOkBear=%s "
+                    "CD-base=%s HD-base=%s final=%s",
                     symbol,
-                    last_values.get("pivot_low"), last_values.get("pivot_high"),
-                    last_values.get("classic_bullish_base"), last_values.get("hidden_bullish_base"),
-                    last_values.get("trend_bullish_ok"),
-                    last_values.get("classic_bearish_base"), last_values.get("hidden_bearish_base"),
+                    last_values.get("previous_pivot_high_price"), _fmt_time(candles, b1),
+                    last_values.get("pivot_high_price"), _fmt_time(candles, b2),
+                    last_values.get("ph_rsi_1"), last_values.get("ph_rsi_2"),
+                    last_values.get("ph_macdline_1"), last_values.get("ph_macdline_2"),
+                    last_values.get("ph_hist_1"), last_values.get("ph_hist_2"),
+                    last_values.get("both_peaks_green"), last_values.get("macd_color_changed_highs"),
                     last_values.get("trend_bearish_ok"),
-                    signal,
+                    last_values.get("classic_bearish_base"), last_values.get("hidden_bearish_base"),
+                    (signal == "SHORT"),
+                )
+            if not _is_na(last_values.get("pivot_low")):
+                b1 = last_values.get("previous_pivot_low_index")
+                b2 = last_values.get("pivot_low_index")
+                logger.info(
+                    "[DIVCHECK] %s type=L p1=%s@%s p2=%s@%s rsi1=%s rsi2=%s macd1=%s macd2=%s "
+                    "hist1=%s hist2=%s bothTroughsRed=%s colorChgLow=%s trendOkBull=%s "
+                    "CD+base=%s HD+base=%s final=%s",
+                    symbol,
+                    last_values.get("previous_pivot_low_price"), _fmt_time(candles, b1),
+                    last_values.get("pivot_low_price"), _fmt_time(candles, b2),
+                    last_values.get("pl_rsi_1"), last_values.get("pl_rsi_2"),
+                    last_values.get("pl_macdline_1"), last_values.get("pl_macdline_2"),
+                    last_values.get("pl_hist_1"), last_values.get("pl_hist_2"),
+                    last_values.get("both_troughs_red"), last_values.get("macd_color_changed_lows"),
+                    last_values.get("trend_bullish_ok"),
+                    last_values.get("classic_bullish_base"), last_values.get("hidden_bullish_base"),
+                    (signal == "LONG"),
                 )
         except Exception as e:
-            logger.warning(f"[PIVOT DEBUG] Failed to log: {e}")
+            logger.warning(f"[DIVCHECK] Failed to log: {e}")
+            pass
 
         # ============================================================
         # محاسبه استاپ و تارگت
