@@ -74,18 +74,10 @@ class PublicData:
     def __init__(self):
         self.base = BASE_URL
         self.session = requests.Session()
-    
-    def fetch_ohlcv(self, symbol, limit=500):
-        """
-        دریافت داده‌های OHLCV
-        
-        Args:
-            symbol: نام نماد
-            limit: تعداد کندل‌های درخواستی (حداکثر ۱۰۰۰)
-        """
+    def fetch_ohlcv(self, symbol):
         now = int(time.time())
-        from_ts = now - limit * 60 - 60
-        uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution=1&from={from_ts}&to={now}&countback={limit}"
+        from_ts = now - HISTORY_BARS * 60 - 60
+        uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution=1&from={from_ts}&to={now}&countback={HISTORY_BARS}"
         try:
             r = self.session.get(f"{self.base}{uri}", timeout=20)
             r.raise_for_status()
@@ -111,7 +103,7 @@ class PublicData:
             df = df[~df.index.duplicated(keep='last')]
             df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
-            return df
+            return df.tail(HISTORY_BARS)
         except Exception as e:
             logger.error(f"Data error: {e}")
             return pd.DataFrame()
@@ -623,7 +615,7 @@ def startup_diagnostic(exchange, public):
 
     for symbol in SYMBOLS:
         try:
-            df = public.fetch_ohlcv(symbol, limit=100)
+            df = public.fetch_ohlcv(symbol)
 
             if df is not None and not df.empty:
                 market_ok += 1
@@ -681,7 +673,7 @@ def startup_diagnostic(exchange, public):
     if callable(calculate_signals_fn):
         for symbol in SYMBOLS:
             try:
-                df = public.fetch_ohlcv(symbol, limit=300)
+                df = public.fetch_ohlcv(symbol)
 
                 if df is not None and not df.empty:
                     # دریافت ۴ مقدار از strategy_wrapper
@@ -912,26 +904,6 @@ def loop():
     BASE_CAPITAL = 2.0          # مبنا = ۲ دلار
     BALANCE_USE_RATIO = 0.98    # ۹۸٪ موجودی در صورت کمبود
 
-    # ============================================================
-    # مقداردهی اولیه Runners با تاریخچه ۳۰۰ کندل (warm-up)
-    # ============================================================
-    INITIAL_HISTORY = 300  # ۳۰۰ کندل برای warm-up اولیه
-    
-    for symbol in SYMBOLS:
-        try:
-            logger.info(f"[Init] Fetching initial {INITIAL_HISTORY} candles for {symbol}")
-            df = public.fetch_ohlcv(symbol, limit=INITIAL_HISTORY)
-            if df.empty:
-                logger.warning(f"[Init] No data for {symbol}")
-                continue
-            
-            # اجرای اولیه برای ساخت Runner
-            sig, entry, stop_price, target_price = calculate_signals(df, symbol)
-            logger.info(f"[Init] {symbol} initial signal: {sig} | entry={entry} | stop={stop_price} | target={target_price}")
-            
-        except Exception as e:
-            logger.exception(f"[Init] Failed to initialize {symbol}: {e}")
-
     while not STOP_EVENT.is_set():
         try:
             if not exchange.test_connection():
@@ -942,10 +914,7 @@ def loop():
             balance = exchange.fetch_balance()
 
             for symbol in SYMBOLS:
-                # ============================================================
-                # دریافت ۱۰ کندل آخر (برای تشخیص کندل‌های جدید)
-                # ============================================================
-                df = public.fetch_ohlcv(symbol, limit=10)
+                df = public.fetch_ohlcv(symbol)
                 if df.empty:
                     continue
 
