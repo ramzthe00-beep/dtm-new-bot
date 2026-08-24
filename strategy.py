@@ -398,6 +398,25 @@ def main(
         "final_classic_bearish": finalClassicBearish,
         "final_hidden_bullish": finalHiddenBullish,
         "final_hidden_bearish": finalHiddenBearish,
+
+        # ====== کلیدهای جدید برای دیباگ (اضافه شده) ======
+        "ph_rsi_1": ph_rsi_1,
+        "ph_rsi_2": ph_rsi_2,
+        "ph_macdline_1": ph_macdline_1,
+        "ph_macdline_2": ph_macdline_2,
+        "ph_hist_1": ph_hist_1,
+        "ph_hist_2": ph_hist_2,
+        "pl_rsi_1": pl_rsi_1,
+        "pl_rsi_2": pl_rsi_2,
+        "pl_macdline_1": pl_macdline_1,
+        "pl_macdline_2": pl_macdline_2,
+        "pl_hist_1": pl_hist_1,
+        "pl_hist_2": pl_hist_2,
+        "both_peaks_green": bothPeaksGreen,
+        "both_troughs_red": bothTroughsRed,
+        "macd_color_changed_highs": macdColorChangedForHighs,
+        "macd_color_changed_lows": macdColorChangedForLows,
+    
     }
 
 
