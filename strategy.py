@@ -170,7 +170,7 @@ def main(
             offset = bar_index - refBar
             if offset >= 0 and offset + fibTrendSearchBars < 5000:
                 result = ta.highest(high[offset], fibTrendSearchBars)
-    return result
+        return result
 
     def checkFibLevel(fibStart, fibEnd, targetPrice, isBullish):
         ok: bool = False
