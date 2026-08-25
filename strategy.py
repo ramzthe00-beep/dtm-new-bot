@@ -157,44 +157,60 @@ def main(
     trendOkForBullish = isTrendingDown(pl_bar_1) if newPivotLow and (not na(pl_bar_1)) else False
 
     def findTrendStartLow(refBar):
+        
         result: float = na(float)
         if not na(refBar):
             offset = bar_index - refBar
-            if offset >= 0 and offset + fibTrendSearchBars < 5000:
-                result = ta.lowest(low[offset], fibTrendSearchBars)
+            if offset >= 0 and offset + fibTrendSearchBars <= 5000:
+                result = ta.lowest(low, fibTrendSearchBars)[offset]
         return result
 
     def findTrendStartHigh(refBar):
         result: float = na(float)
         if not na(refBar):
             offset = bar_index - refBar
-            if offset >= 0 and offset + fibTrendSearchBars < 5000:
-                result = ta.highest(high[offset], fibTrendSearchBars)
+            if offset >= 0 and offset + fibTrendSearchBars <= 5000:
+                result = ta.highest(high, fibTrendSearchBars)[offset]
         return result
 
-    def checkFibLevel(fibStart, fibEnd, targetPrice, isRetraceDown):
+    def checkFibLevel(fibStart, fibEnd, targetPrice, isBullish):
         ok: bool = False
-        if not na(fibStart) and (not na(fibEnd)) and (fibEnd != fibStart):
-            range_ = fibEnd - fibStart
-            tol = math.abs(range_) * (fibTolerancePct / 100.0)
-            level618 = fibEnd - range_ * 0.618 if isRetraceDown else fibEnd + math.abs(range_) * 0.618
-            level786 = fibEnd - range_ * 0.786 if isRetraceDown else fibEnd + math.abs(range_) * 0.786
+        if not na(fibStart) and not na(fibEnd) and fibEnd != fibStart:
+            range_ = math.abs(fibEnd - fibStart)
+            tol = range_ * (fibTolerancePct / 100.0)
+        
+            # موج صعودی: کف به سقف → اصلاح به سمت پایین
+            # موج نزولی: سقف به کف → اصلاح به سمت بالا
+            if isBullish:  # Bullish: از کف به سقف
+                level618 = fibEnd - range_ * 0.618
+                level786 = fibEnd - range_ * 0.786
+            else:          # Bearish: از سقف به کف
+                level618 = fibEnd + range_ * 0.618
+                level786 = fibEnd + range_ * 0.786
+        
             if fibUse618 and math.abs(targetPrice - level618) <= tol:
                 ok = True
             if fibUse786 and math.abs(targetPrice - level786) <= tol:
                 ok = True
         return ok
 
+
+    # Bearish Divergence - Fibonacci
     fibScoreBearish: bool = False
     if newPivotHigh and (not na(ph_bar_1)):
-        trendStart = findTrendStartLow(ph_bar_1)
-        fibScoreBearish = checkFibLevel(trendStart, ph_price_1, ph_price_2, True)
+        trendStart = findTrendStartLow(ph_bar_1)   # کف روند
+        fibScoreBearish = checkFibLevel(trendStart, ph_price_1, ph_price_2, False)  # isBullish = False
 
+    # Bullish Divergence - Fibonacci
     fibScoreBullish: bool = False
     if newPivotLow and (not na(pl_bar_1)):
-        trendStart = findTrendStartHigh(pl_bar_1)
-        fibScoreBullish = checkFibLevel(trendStart, pl_price_1, pl_price_2, False)
+        trendStart = findTrendStartHigh(pl_bar_1)  # سقف روند
+        fibScoreBullish = checkFibLevel(trendStart, pl_price_1, pl_price_2, True)   # isBullish = True
 
+    
+    # ============================================================
+    # محاسبه اندیکاتورهای کندلی
+    # ============================================================
     candleRange = high - low
     candleBody = math.abs(close - open)
     upperShadow = high - math.max(close, open)
@@ -202,15 +218,56 @@ def main(
     avgBody = ta.sma(math.abs(close - open), bigCandleAvgLen)
     sizeOk = candleRange >= minCandleATRRatio * atr14
 
-    bullishWick = candleRange > 0 and lowerShadow >= shadowToBodyRatio * candleBody and (upperShadow / candleRange * 100 <= maxOppositeShadowPct) and sizeOk
-    bigGreenCandle = close > open and candleBody >= bigCandleMultiplier * avgBody and sizeOk
-    priceActionBullish = bullishWick or bigGreenCandle
+    # ============================================================
+    # الگوهای صعودی (Bullish)
+    # ============================================================
+    bullishHammer = (
+        candleRange > 0
+        and lowerShadow >= shadowToBodyRatio * candleBody
+        and (upperShadow / candleRange * 100 <= maxOppositeShadowPct)
+        and sizeOk
+    )
 
-    bearishWick = candleRange > 0 and upperShadow >= shadowToBodyRatio * candleBody and (lowerShadow / candleRange * 100 <= maxOppositeShadowPct) and sizeOk
-    bearishHangingMan = candleRange > 0 and lowerShadow >= shadowToBodyRatio * candleBody and (upperShadow / candleRange * 100 <= maxOppositeShadowPct) and sizeOk
-    bigRedCandle = close < open and candleBody >= bigCandleMultiplier * avgBody and sizeOk
-    priceActionBearish = bearishWick or bearishHangingMan or bigRedCandle
+    bullishLargeBody = (
+        close > open
+        and candleBody >= bigCandleMultiplier * avgBody
+        and sizeOk
+    )
 
+    priceActionBullish = bullishHammer or bullishLargeBody
+
+    # ============================================================
+    # الگوهای نزولی (Bearish)
+    # ============================================================
+    bearishShootingStar = (
+        candleRange > 0
+        and upperShadow >= shadowToBodyRatio * candleBody
+        and (lowerShadow / candleRange * 100 <= maxOppositeShadowPct)
+        and sizeOk
+    )
+
+    bearishLowerWickRejection = (
+        candleRange > 0
+        and lowerShadow >= shadowToBodyRatio * candleBody
+        and (upperShadow / candleRange * 100 <= maxOppositeShadowPct)
+        and sizeOk
+    )
+
+    bearishLargeBody = (
+        close < open
+        and candleBody >= bigCandleMultiplier * avgBody
+        and sizeOk
+    )
+
+    priceActionBearish = (
+        bearishShootingStar
+        or bearishLowerWickRejection
+        or bearishLargeBody
+    )
+
+    # ============================================================
+    # ذخیره در کندل تأیید Pivot
+    # ============================================================
     priceActionBullishAtPivot = priceActionBullish
     priceActionBearishAtPivot = priceActionBearish
 
