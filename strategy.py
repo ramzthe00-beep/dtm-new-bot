@@ -427,10 +427,11 @@ def main(
         "lower_shadow": lowerShadow,
         "avg_body": avgBody,
         "size_ok": sizeOk,
-        "bullish_wick": bullishHammer,
-        "bearish_wick": bearishShootingStar,
-        "big_green_candle": bigGreenCandle,
-        "big_red_candle": bigRedCandle,
+        "bullish_wick": bullishHammer,              # ← تغییر
+        "bearish_wick": bearishShootingStar,       # ← تغییر
+        "bearish_hanging_man": bearishLowerWickRejection,  # ← تغییر
+        "big_green_candle": bullishLargeBody,      # ← تغییر
+        "big_red_candle": bearishLargeBody,        # ← تغییر
         "price_action_bullish": priceActionBullish,
         "price_action_bearish": priceActionBearish,
 
