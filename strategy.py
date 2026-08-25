@@ -157,21 +157,20 @@ def main(
     trendOkForBullish = isTrendingDown(pl_bar_1) if newPivotLow and (not na(pl_bar_1)) else False
 
     def findTrendStartLow(refBar):
-        
         result: float = na(float)
         if not na(refBar):
             offset = bar_index - refBar
-            if offset >= 0 and offset + fibTrendSearchBars <= 5000:
-                result = ta.lowest(low, fibTrendSearchBars)[offset]
+            if offset >= 0 and offset + fibTrendSearchBars < 5000:
+                result = ta.lowest(low[offset], fibTrendSearchBars)
         return result
 
     def findTrendStartHigh(refBar):
         result: float = na(float)
         if not na(refBar):
             offset = bar_index - refBar
-            if offset >= 0 and offset + fibTrendSearchBars <= 5000:
-                result = ta.highest(high, fibTrendSearchBars)[offset]
-        return result
+            if offset >= 0 and offset + fibTrendSearchBars < 5000:
+                result = ta.highest(high[offset], fibTrendSearchBars)
+    return result
 
     def checkFibLevel(fibStart, fibEnd, targetPrice, isBullish):
         ok: bool = False
