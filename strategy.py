@@ -28,7 +28,7 @@ def main(
     macdSlow=input.int(26, "MACD Slow", group=grp_ind),
     macdSig=input.int(9, "MACD Signal", group=grp_ind),
     trendLookback=input.int(20, "Trend Lookback", group=grp_trend),
-    trendSlopeMinPct=input.float(0.1, "Min Slope %", step=0.01, group=grp_trend),
+    trendSlopeMinPct=input.float(0.08, "Min Slope %", step=0.01, group=grp_trend),
     minConfirmations=input.string("۳ تعییدیه (حداقل مجاز)", "حداقل شرط", options=("۳ تعییدیه (حداقل مجاز)", "۳ تعییدیه + فیبوناچی (۴ امتیاز) [Custom]", "۳ تعییدیه + پرایس‌اکشن (۴ امتیاز) [Custom]", "۵ امتیاز کامل (ایده‌آل)"), group=grp_score),
     enableHidden=input.bool(True, "Enable Hidden Divergence"),
     fibUse618=input.bool(True, "Use 0.618", group=grp_fib),
