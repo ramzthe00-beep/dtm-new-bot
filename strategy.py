@@ -18,7 +18,14 @@ grp_trend: str = "Trend"
 grp_score: str = "Min Confirmations"
 grp_fib: str = "Fibonacci"
 grp_candle: str = "Price Action"
-
+# ============================================================
+# آستانه‌های فیلتر ترکیبی (بر اساس تحلیل ۳۲ سیگنال)
+# ============================================================
+RSI_MIN_GAP = 1.3          # با حاشیه امن ۱۵٪ (۱.۵۸۹ × ۰.۸۵)
+PRICE_MIN_GAP_PCT = 0.025  # با حاشیه امن ۱۵٪ (۰.۰۲۹۴ × ۰.۸۵)
+MACD_MIN_GAP = 0.00001     # تقریباً بی‌اثر، برای امنیت
+HIST_MIN_FIRST = 0.00001   # تقریباً بی‌اثر
+HIST_MIN_SECOND = 0.000001 # کاملاً بی‌اثر
 
 @script.strategy("DTM Divergence Light", overlay=True, initial_capital=500, default_qty_type=strategy.fixed, default_qty_value=1, commission_type=strategy.commission.percent, commission_value=0.1, pyramiding=3, process_orders_on_close=True, max_labels_count=50, max_lines_count=50)
 def main(
@@ -28,7 +35,7 @@ def main(
     macdSlow=input.int(26, "MACD Slow", group=grp_ind),
     macdSig=input.int(9, "MACD Signal", group=grp_ind),
     trendLookback=input.int(20, "Trend Lookback", group=grp_trend),
-    trendSlopeMinPct=input.float(0.08, "Min Slope %", step=0.01, group=grp_trend),
+    trendSlopeMinPct=input.float(0.05, "Min Slope %", step=0.01, group=grp_trend),
     minConfirmations=input.string("۳ تعییدیه (حداقل مجاز)", "حداقل شرط", options=("۳ تعییدیه (حداقل مجاز)", "۳ تعییدیه + فیبوناچی (۴ امتیاز) [Custom]", "۳ تعییدیه + پرایس‌اکشن (۴ امتیاز) [Custom]", "۵ امتیاز کامل (ایده‌آل)"), group=grp_score),
     enableHidden=input.bool(True, "Enable Hidden Divergence"),
     fibUse618=input.bool(True, "Use 0.618", group=grp_fib),
@@ -270,8 +277,8 @@ def main(
     priceActionBullishAtPivot = priceActionBullish
     priceActionBearishAtPivot = priceActionBearish
 
-    priceHigherHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 > ph_price_1)
-    rsiLowerHighOnPeaks = newPivotHigh and (not na(ph_rsi_1)) and (ph_rsi_2 < ph_rsi_1)
+    priceHigherHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 > ph_price_1) and (((ph_price_2 - ph_price_1) / ph_price_1) * 100 > PRICE_MIN_GAP_PCT)
+    rsiLowerHighOnPeaks = newPivotHigh and (not na(ph_rsi_1)) and ((ph_rsi_1 - ph_rsi_2) > RSI_MIN_GAP)
     macdLineLowerHighOnPeaks = newPivotHigh and (not na(ph_macdline_1)) and (ph_macdline_2 < ph_macdline_1)
     histLowerHighOnPeaks = newPivotHigh and (not na(ph_hist_1)) and (ph_hist_2 < ph_hist_1)
     bothPeaksGreen = newPivotHigh and (not na(ph_hist_1)) and (ph_hist_1 > 0) and (ph_hist_2 > 0)
@@ -281,8 +288,9 @@ def main(
     classicBearishCond3_MACDh = priceHigherHigh and histLowerHighOnPeaks and bothPeaksGreen and macdColorChangedForHighs
     classicBearishBase3 = priceHigherHigh and trendOkForBearish and classicBearishCond3_MACDh and classicBearishCond1_RSI and classicBearishCond2_MACDl
 
-    priceLowerLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 < pl_price_1)
-    rsiHigherLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and (pl_rsi_2 > pl_rsi_1)
+    
+    priceLowerLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 < pl_price_1) and (((pl_price_1 - pl_price_2) / pl_price_1) * 100 > PRICE_MIN_GAP_PCT)
+    rsiHigherLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and ((pl_rsi_2 - pl_rsi_1) > RSI_MIN_GAP)
     macdLineHigherLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 > pl_macdline_1)
     histHigherLowOnTroughs = newPivotLow and (not na(pl_hist_1)) and (pl_hist_2 > pl_hist_1)
     bothTroughsRed = newPivotLow and (not na(pl_hist_1)) and (pl_hist_1 < 0) and (pl_hist_2 < 0)
@@ -292,8 +300,9 @@ def main(
     classicBullishCond3_MACDh = priceLowerLow and histHigherLowOnTroughs and bothTroughsRed and macdColorChangedForLows
     classicBullishBase3 = priceLowerLow and trendOkForBullish and classicBullishCond3_MACDh and classicBullishCond1_RSI and classicBullishCond2_MACDl
 
-    priceHigherLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 > pl_price_1)
-    rsiLowerLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and (pl_rsi_2 < pl_rsi_1)
+    
+    priceHigherLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 > pl_price_1) and (((pl_price_2 - pl_price_1) / pl_price_1) * 100 > PRICE_MIN_GAP_PCT)
+    rsiLowerLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and ((pl_rsi_1 - pl_rsi_2) > RSI_MIN_GAP)
     macdLineLowerLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 < pl_macdline_1)
     histLowerLowOnTroughs = newPivotLow and (not na(pl_hist_1)) and (pl_hist_2 < pl_hist_1)
 
@@ -302,8 +311,9 @@ def main(
     hiddenBullishCond3_MACDh = priceHigherLow and histLowerLowOnTroughs and bothTroughsRed and macdColorChangedForLows
     hiddenBullishBase3 = enableHidden and priceHigherLow and hiddenBullishCond3_MACDh and hiddenBullishCond1_RSI and hiddenBullishCond2_MACDl
 
-    priceLowerHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 < ph_price_1)
-    rsiHigherHighOnPeaks = newPivotHigh and (not na(ph_rsi_1)) and (ph_rsi_2 > ph_rsi_1)
+    
+    priceLowerHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 < ph_price_1) and (((ph_price_1 - ph_price_2) / ph_price_1) * 100 > PRICE_MIN_GAP_PCT)
+    rsiHigherHighOnPeaks = newPivotHigh and (not na(ph_rsi_1)) and ((ph_rsi_2 - ph_rsi_1) > RSI_MIN_GAP)
     macdLineHigherHighOnPeaks = newPivotHigh and (not na(ph_macdline_1)) and (ph_macdline_2 > ph_macdline_1)
     histHigherHighOnPeaks = newPivotHigh and (not na(ph_hist_1)) and (ph_hist_2 > ph_hist_1)
 
