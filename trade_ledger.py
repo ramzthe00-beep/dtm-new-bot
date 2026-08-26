@@ -362,30 +362,31 @@ _last_sent = {}  # key -> "YYYY-MM-DD HH:MM" آخرین باری که آن گز�
 def _should_send(key, now_str):
     return _last_sent.get(key) != now_str
 
-
-def scheduler_loop(send_telegram_fn, stop_event,
+def scheduler_loop(send_telegram_fn, stop_event=None,
                     daily_times=("08:00", "13:00", "21:00"),
                     end_of_day_time="23:55"):
     """
-    این تابع باید در یک Thread جدا و به‌صورت daemon اجرا شود، مثلاً:
-        threading.Thread(target=trade_ledger.scheduler_loop,
-                          args=(send_telegram_long, STOP_EVENT), daemon=True).start()
+    زمان‌بند گزارش‌ها — یک Thread جدا
     """
     logger.info("[LEDGER] scheduler_loop started")
     
-    # 🔧 محافظت: اگر stop_event یک عدد یا چیز اشتباه است، تبدیلش کن
-    if not hasattr(stop_event, 'is_set'):
+    # 🔧 اگر stop_event ارسال نشده یا از نوع اشتباه است، یک نمونه جدید بساز
+    if stop_event is None or not hasattr(stop_event, 'is_set'):
         import threading
         stop_event = threading.Event()
-        logger.warning("[LEDGER] stop_event was not an Event, created new one")
+        logger.warning("[LEDGER] stop_event was invalid, created new Event")
     
-    while not stop_event.is_set():
+    while True:
         try:
+            # اگر stop_event تنظیم شده باشد، از حلقه خارج شو
+            if stop_event.is_set():
+                break
+                
             now = _now_iran()
             hhmm = now.strftime("%H:%M")
             date_str = now.strftime("%Y-%m-%d")
 
-            # گزارش‌های صبح/ظهر/شب (خلاصهٔ از ابتدای همان روز تا الان)
+            # گزارش‌های صبح/ظهر/شب
             if hhmm in daily_times:
                 key = f"daily_{hhmm}"
                 tag = f"{date_str}_{hhmm}"
@@ -409,7 +410,7 @@ def scheduler_loop(send_telegram_fn, stop_event,
                     except Exception as e:
                         logger.error(f"[LEDGER] end-of-day report error: {e}")
 
-            # گزارش ابتدای ماه (ماه تازه‌تمام‌شده + ماه قبل از آن)
+            # گزارش ابتدای ماه
             if now.day == 1 and hhmm == "09:00":
                 key = "monthly"
                 tag = now.strftime("%Y-%m")
@@ -424,7 +425,12 @@ def scheduler_loop(send_telegram_fn, stop_event,
         except Exception as e:
             logger.error(f"[LEDGER] scheduler_loop unexpected error: {e}")
 
-        stop_event.wait(30)  # ✅ این متد در threading.Event وجود دارد
+        # ۳۰ ثانیه صبر کن
+        try:
+            stop_event.wait(30)
+        except Exception:
+            import time
+            time.sleep(30)
 
 
 if __name__ == "__main__":
