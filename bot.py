@@ -12,6 +12,7 @@ import pandas as pd
 from strategy_wrapper import calculate_signals
 from datetime import datetime, timezone, timedelta
 import math
+import trade_ledger
 
 # ===== TIMEZONE CONSTANTS =====
 IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
@@ -882,7 +883,6 @@ def startup_diagnostic(exchange, public):
 
     return final_report
 
-
 def loop():
     public = PublicData()
     exchange = PrivateExchange()
@@ -918,12 +918,33 @@ def loop():
                 if df.empty:
                     continue
 
+                # ============================================================
+                # 📍 نقطه ۳: بروزرسانی معاملات باز
+                # ============================================================
+                trade_ledger.update_open_trades(symbol, "1", df)
+
                 sig, entry, stop_price, target_price = calculate_signals(df, symbol)
 
                 logger.info(
                     f"{symbol}: signal={sig}, entry={entry}, "
                     f"stop={stop_price}, target={target_price}, candles={len(df)}"
                 )
+
+                # ============================================================
+                # 📍 نقطه ۲: ثبت سیگنال در دفترچه (قبل از هر چک دیگری)
+                # ============================================================
+                if sig and entry is not None:
+                    trade_ledger.record_signal(
+                        symbol=symbol,
+                        timeframe="1",
+                        direction=sig,
+                        entry=entry,
+                        stop=stop_price,
+                        target=target_price,
+                        entry_time_ms=int(df.index[-1].timestamp() * 1000),
+                        leverage=LEVERAGE_MAP.get(symbol, 50),
+                        order_placed=None,
+                    )
 
                 if not sig or balance <= 0 or stop_price is None or entry is None:
                     continue
@@ -969,7 +990,6 @@ def loop():
                 # ۴) مدیریت موجودی
                 # ============================================================
                 if balance < required_capital:
-                    # موجودی ناکافی → ۹۸٪ موجودی
                     capital = balance * BALANCE_USE_RATIO
                     actual_stop_dollar = capital * stop_pct * allowed_leverage
                     actual_profit_dollar = (
@@ -978,7 +998,6 @@ def loop():
                     )
                     mode = "REDUCED_98"
                 else:
-                    # موجودی کافی → دقیقاً طبق فرمول
                     capital = required_capital
                     actual_stop_dollar = BASE_CAPITAL
                     actual_profit_dollar = (
@@ -1045,6 +1064,17 @@ if __name__ == "__main__":
     )
     health_thread.start()
 
+    # ============================================================
+    # 📍 نقطه ۴: ترد گزارش‌دهنده
+    # ============================================================
+    report_thread = threading.Thread(
+        target=trade_ledger.scheduler_loop,
+        args=(send_telegram_long, STOP_EVENT, 60),
+        name="report-scheduler",
+        daemon=True,
+    )
+    report_thread.start()
+
     logger.info("DTM WORKER START | HTTP port=%d", port)
 
     try:
@@ -1052,4 +1082,5 @@ if __name__ == "__main__":
     finally:
         STOP_EVENT.set()
         health_thread.join(timeout=3)
+        report_thread.join(timeout=3)
         logger.info("DTM PROCESS EXIT")
