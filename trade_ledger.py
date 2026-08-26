@@ -356,7 +356,6 @@ def report_current_and_previous_month():
 # زمان‌بند گزارش‌ها — یک Thread جدا که هر ۶۰ ثانیه چک می‌کند و در ساعات
 # مشخص (صبح/ظهر/شب، پایان روز، ابتدای ماه) دقیقاً یک‌بار گزارش می‌فرستد.
 # ---------------------------------------------------------------------------
-_STOP_EVENT_REF = None  # از bot.py مقداردهی می‌شود
 _last_sent = {}  # key -> "YYYY-MM-DD HH:MM" آخرین باری که آن گزارش ارسال شد
 
 
@@ -373,6 +372,13 @@ def scheduler_loop(send_telegram_fn, stop_event,
                           args=(send_telegram_long, STOP_EVENT), daemon=True).start()
     """
     logger.info("[LEDGER] scheduler_loop started")
+    
+    # 🔧 محافظت: اگر stop_event یک عدد یا چیز اشتباه است، تبدیلش کن
+    if not hasattr(stop_event, 'is_set'):
+        import threading
+        stop_event = threading.Event()
+        logger.warning("[LEDGER] stop_event was not an Event, created new one")
+    
     while not stop_event.is_set():
         try:
             now = _now_iran()
@@ -418,4 +424,8 @@ def scheduler_loop(send_telegram_fn, stop_event,
         except Exception as e:
             logger.error(f"[LEDGER] scheduler_loop unexpected error: {e}")
 
-        stop_event.wait(30)
+        stop_event.wait(30)  # ✅ این متد در threading.Event وجود دارد
+
+
+if __name__ == "__main__":
+    print("trade_ledger.py loaded successfully")
