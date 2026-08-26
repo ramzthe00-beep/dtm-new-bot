@@ -1069,7 +1069,7 @@ if __name__ == "__main__":
     # ============================================================
     report_thread = threading.Thread(
         target=trade_ledger.scheduler_loop,
-        args=(send_telegram_long, STOP_EVENT, 60),
+        args=(send_telegram_long, STOP_EVENT),
         name="report-scheduler",
         daemon=True,
     )
