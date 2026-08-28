@@ -21,7 +21,7 @@ grp_candle: str = "Price Action"
 # ============================================================
 # آستانه‌های فیلتر ترکیبی (بر اساس تحلیل ۳۲ سیگنال)
 # ============================================================
-RSI_MIN_GAP = 1.3          # با حاشیه امن ۱۵٪ (۱.۵۸۹ × ۰.۸۵)
+RSI_MIN_GAP = 0.02        # با حاشیه امن ۱۵٪ (۱.۵۸۹ × ۰.۸۵)
 PRICE_MIN_GAP_PCT = 0.025  # با حاشیه امن ۱۵٪ (۰.۰۲۹۴ × ۰.۸۵)
 MACD_MIN_GAP = 0.00001     # تقریباً بی‌اثر، برای امنیت
 HIST_MIN_FIRST = 0.00001   # تقریباً بی‌اثر
@@ -495,6 +495,26 @@ def main(
 
         "prominence_high": prominenceHigh,
         "prominence_low": prominenceLow,
+         # قیمت‌های خام برای Pivot High
+        "ph1_open": open[bar_index - ph_bar_1] if not na(ph_bar_1) else na(float),
+        "ph1_high": high[bar_index - ph_bar_1] if not na(ph_bar_1) else na(float),
+        "ph1_low": low[bar_index - ph_bar_1] if not na(ph_bar_1) else na(float),
+        "ph1_close": close[bar_index - ph_bar_1] if not na(ph_bar_1) else na(float),
+        "ph2_open": open[bar_index - ph_bar_2] if not na(ph_bar_2) else na(float),
+        "ph2_high": high[bar_index - ph_bar_2] if not na(ph_bar_2) else na(float),
+        "ph2_low": low[bar_index - ph_bar_2] if not na(ph_bar_2) else na(float),
+        "ph2_close": close[bar_index - ph_bar_2] if not na(ph_bar_2) else na(float),
+        # قیمت‌های خام برای Pivot Low
+        "pl1_open": open[bar_index - pl_bar_1] if not na(pl_bar_1) else na(float),
+        "pl1_high": high[bar_index - pl_bar_1] if not na(pl_bar_1) else na(float),
+        "pl1_low": low[bar_index - pl_bar_1] if not na(pl_bar_1) else na(float),
+        "pl1_close": close[bar_index - pl_bar_1] if not na(pl_bar_1) else na(float),
+        "pl2_open": open[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
+        "pl2_high": high[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
+        "pl2_low": low[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
+        "pl2_close": close[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
+    
+        "total_bars_fed": bar_index,
     }
 
 
