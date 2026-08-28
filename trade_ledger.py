@@ -201,7 +201,13 @@ def update_open_trades(symbol, timeframe, df):
             try:
                 last_checked = r.get("last_checked_ms", r["entry_time_ms"])
                 # فقط کندل‌های *بعد از* آخرین بررسی را نگاه کن
-                sub = df[df.index.view("int64") // 10**6 > last_checked]
+                # نکته مهم: نباید مستقیم df.index.view("int64") را بر ۱۰**۶ تقسیم کرد،
+                # چون دقت (resolution) ایندکس دیتافریم بسته به نسخهٔ pandas و نحوهٔ
+                # ساخته‌شدنش می‌تواند ثانیه/میلی‌ثانیه/میکروثانیه/نانوثانیه باشد، نه
+                # همیشه نانوثانیه. برای اطمینان، ابتدا صریحاً به datetime64[ns] تبدیل
+                # می‌کنیم تا محاسبهٔ میلی‌ثانیه همیشه درست باشد.
+                idx_ms = df.index.values.astype("datetime64[ns]").view("int64") // 10**6
+                sub = df[idx_ms > last_checked]
                 if sub.empty:
                     continue
 
