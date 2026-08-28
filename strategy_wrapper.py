@@ -401,6 +401,7 @@ Value: {str(last_values)[:500]}
             if not _is_na(last_values.get("pivot_high")):
                 b1 = last_values.get("previous_pivot_high_index")
                 b2 = last_values.get("pivot_high_index")
+                prom = last_values.get("prominence_high")  # چون is_bearish=True برای SHORT
                 logger.info(
                     "[DIVCHECK] %s type=H p1=%s@%s p2=%s@%s rsi1=%s rsi2=%s macd1=%s macd2=%s "
                     "hist1=%s hist2=%s bothPeaksGreen=%s colorChgHigh=%s trendOkBear=%s "
@@ -415,10 +416,12 @@ Value: {str(last_values)[:500]}
                     last_values.get("trend_bearish_ok"),
                     last_values.get("classic_bearish_base"), last_values.get("hidden_bearish_base"),
                     (signal == "SHORT"),
+                    prom,
                 )
             if not _is_na(last_values.get("pivot_low")):
                 b1 = last_values.get("previous_pivot_low_index")
                 b2 = last_values.get("pivot_low_index")
+                prom = last_values.get("prominence_low")  # چون is_bearish=False برای LONG
                 logger.info(
                     "[DIVCHECK] %s type=L p1=%s@%s p2=%s@%s rsi1=%s rsi2=%s macd1=%s macd2=%s "
                     "hist1=%s hist2=%s bothTroughsRed=%s colorChgLow=%s trendOkBull=%s "
@@ -433,6 +436,7 @@ Value: {str(last_values)[:500]}
                     last_values.get("trend_bullish_ok"),
                     last_values.get("classic_bullish_base"), last_values.get("hidden_bullish_base"),
                     (signal == "LONG"),
+                    prom,
                 )
         except Exception as e:
             logger.warning(f"[DIVCHECK] Failed to log: {e}")
