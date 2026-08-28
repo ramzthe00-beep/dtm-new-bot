@@ -105,6 +105,11 @@ def main(
         ph_rsi_2 = rsiAtPivotHigh
         ph_macdline_2 = macdLineAtPivotHigh
         ph_hist_2 = histAtPivotHigh
+        leftNeighborMaxHigh = ta.highest(high[rightBars + 1], leftBars)
+        rightNeighborMaxHigh = ta.highest(high, rightBars) if rightBars > 0 else na(float)
+        prominenceHigh = pivotHighPrice - math.max(leftNeighborMaxHigh, rightNeighborMaxHigh)
+    else:
+        prominenceHigh = na(float)
 
     if newPivotLow:
         pl_price_1 = pl_price_2
@@ -117,6 +122,11 @@ def main(
         pl_rsi_2 = rsiAtPivotLow
         pl_macdline_2 = macdLineAtPivotLow
         pl_hist_2 = histAtPivotLow
+        leftNeighborMinLow = ta.lowest(low[rightBars + 1], leftBars)
+        rightNeighborMinLow = ta.lowest(low, rightBars) if rightBars > 0 else na(float)
+        prominenceLow = math.min(leftNeighborMinLow, rightNeighborMinLow) - pivotLowPrice
+    else:
+        prominenceLow = na(float)
 
     def checkColorChange(barStart, barEnd, needRedPhase):
         found: bool = False
@@ -482,6 +492,9 @@ def main(
         "both_troughs_red": bothTroughsRed,
         "macd_color_changed_highs": macdColorChangedForHighs,
         "macd_color_changed_lows": macdColorChangedForLows,
+
+        "prominence_high": prominenceHigh,
+        "prominence_low": prominenceLow,
     }
 
 
