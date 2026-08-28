@@ -417,6 +417,11 @@ Value: {str(last_values)[:500]}
                     last_values.get("classic_bearish_base"), last_values.get("hidden_bearish_base"),
                     (signal == "SHORT"),
                     prom,
+                    last_values.get("ph1_open"), last_values.get("ph1_high"),
+                    last_values.get("ph1_low"), last_values.get("ph1_close"),
+                    last_values.get("ph2_open"), last_values.get("ph2_high"),
+                    last_values.get("ph2_low"), last_values.get("ph2_close"),
+                    last_values.get("total_bars_fed"),
                 )
             if not _is_na(last_values.get("pivot_low")):
                 b1 = last_values.get("previous_pivot_low_index")
@@ -437,6 +442,11 @@ Value: {str(last_values)[:500]}
                     last_values.get("classic_bullish_base"), last_values.get("hidden_bullish_base"),
                     (signal == "LONG"),
                     prom,
+                    last_values.get("pl1_open"), last_values.get("pl1_high"),
+                    last_values.get("pl1_low"), last_values.get("pl1_close"),
+                    last_values.get("pl2_open"), last_values.get("pl2_high"),
+                    last_values.get("pl2_low"), last_values.get("pl2_close"),
+                    last_values.get("total_bars_fed"),
                 )
         except Exception as e:
             logger.warning(f"[DIVCHECK] Failed to log: {e}")
