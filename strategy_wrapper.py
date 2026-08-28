@@ -397,6 +397,9 @@ Value: {str(last_values)[:500]}
         # ============================================================
         # لاگ تشخیصی DIVCHECK — دقیقاً هم‌ساختار با پاین
         # ============================================================
+        # ============================================================
+        #        لاگ تشخیصی DIVCHECK — دقیقاً هم‌ساختار با پاین
+        # ============================================================
         try:
             if not _is_na(last_values.get("pivot_high")):
                 b1 = last_values.get("previous_pivot_high_index")
@@ -405,7 +408,8 @@ Value: {str(last_values)[:500]}
                 logger.info(
                     "[DIVCHECK] %s type=H p1=%s@%s p2=%s@%s rsi1=%s rsi2=%s macd1=%s macd2=%s "
                     "hist1=%s hist2=%s bothPeaksGreen=%s colorChgHigh=%s trendOkBear=%s "
-                    "CD-base=%s HD-base=%s final=%s",
+                    "CD-base=%s HD-base=%s final=%s prom=%s "
+                    "ph1_o=%s ph1_h=%s ph1_l=%s ph1_c=%s ph2_o=%s ph2_h=%s ph2_l=%s ph2_c=%s bars=%s",
                     symbol,
                     last_values.get("previous_pivot_high_price"), _fmt_time(candles, b1),
                     last_values.get("pivot_high_price"), _fmt_time(candles, b2),
@@ -430,7 +434,8 @@ Value: {str(last_values)[:500]}
                 logger.info(
                     "[DIVCHECK] %s type=L p1=%s@%s p2=%s@%s rsi1=%s rsi2=%s macd1=%s macd2=%s "
                     "hist1=%s hist2=%s bothTroughsRed=%s colorChgLow=%s trendOkBull=%s "
-                    "CD+base=%s HD+base=%s final=%s",
+                    "CD+base=%s HD+base=%s final=%s prom=%s "
+                    "pl1_o=%s pl1_h=%s pl1_l=%s pl1_c=%s pl2_o=%s pl2_h=%s pl2_l=%s pl2_c=%s bars=%s",
                     symbol,
                     last_values.get("previous_pivot_low_price"), _fmt_time(candles, b1),
                     last_values.get("pivot_low_price"), _fmt_time(candles, b2),
@@ -447,10 +452,13 @@ Value: {str(last_values)[:500]}
                     last_values.get("pl2_open"), last_values.get("pl2_high"),
                     last_values.get("pl2_low"), last_values.get("pl2_close"),
                     last_values.get("total_bars_fed"),
-                )
-        except Exception as e:
-            logger.warning(f"[DIVCHECK] Failed to log: {e}")
-            pass
+               )
+       except Exception as e:
+           logger.warning(f"[DIVCHECK] Failed to log: {e}")
+           pass
+ 
+
+    
 
         # ============================================================
         # محاسبه استاپ و تارگت
