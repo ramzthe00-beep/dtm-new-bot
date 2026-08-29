@@ -30,8 +30,20 @@ API_SECRET = os.getenv("API_SECRET")
 BASE_URL = os.getenv("BASE_URL", "https://apiv2.thetruetrade.io")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
+# ============================================================
+# تنظیمات تایم‌فریم‌های چندگانه
+# ============================================================
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
-HISTORY_BARS = 500
+TIMEFRAMES = ["1", "5", "15"]  # تایم‌فریم‌های دقیقه‌ای
+HISTORY_BARS = 500  # تعداد کندل پایه
+
+# بازه چک کردن هر تایم‌فریم (ثانیه)
+CHECK_INTERVAL = {
+    "1": 60,     # هر ۱ دقیقه
+    "5": 300,    # هر ۵ دقیقه
+    "15": 900,   # هر ۱۵ دقیقه
+}
+
 LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75}
 TARGET_RISK = 2.0
 TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01}
@@ -75,16 +87,38 @@ class PublicData:
     def __init__(self):
         self.base = BASE_URL
         self.session = requests.Session()
-    def fetch_ohlcv(self, symbol):
+        
+    def fetch_ohlcv(self, symbol, timeframe="1"):
+        """
+        دریافت داده OHLCV با تایم‌فریم دلخواه
+        
+        Args:
+            symbol: نام نماد (مثلاً LTCUSDT)
+            timeframe: تایم‌فریم به دقیقه (1, 5, 15)
+        """
         now = int(time.time())
-        from_ts = now - HISTORY_BARS * 60 - 60
-        uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution=1&from={from_ts}&to={now}&countback={HISTORY_BARS}"
+        
+        # محاسبه تعداد کندل بر اساس تایم‌فریم
+        multiplier = int(timeframe)
+        bars_needed = HISTORY_BARS * multiplier * 2  # ضریب ۲ برای اطمینان
+        
+        from_ts = now - bars_needed * 60 - 60
+        uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution={timeframe}&from={from_ts}&to={now}&countback={HISTORY_BARS * multiplier}"
+        
         try:
             r = self.session.get(f"{self.base}{uri}", timeout=20)
             r.raise_for_status()
             data = r.json()
+            
             if data.get('s') != 'ok':
+                logger.warning(f"Data not ok for {symbol} {timeframe}m: {data.get('s')}")
                 return pd.DataFrame()
+                
+            # بررسی وجود داده
+            if not data.get('t') or len(data['t']) == 0:
+                logger.warning(f"No data for {symbol} {timeframe}m")
+                return pd.DataFrame()
+                
             t = data['t']
             o = data['o']
             h = data['h']
@@ -104,10 +138,16 @@ class PublicData:
             df = df[~df.index.duplicated(keep='last')]
             df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
-            return df.tail(HISTORY_BARS)
+            result = df.tail(HISTORY_BARS)
+            logger.info(f"Fetched {len(result)} candles for {symbol} {timeframe}m")
+            return result
+            
         except Exception as e:
-            logger.error(f"Data error: {e}")
+            logger.error(f"Data error for {symbol} {timeframe}m: {e}")
             return pd.DataFrame()
+
+
+
 
 class PrivateExchange:
     def __init__(self):
@@ -605,7 +645,6 @@ def startup_diagnostic(exchange, public):
             full_exchange_error() +
             f"\nLOCAL EXCEPTION: {repr(e)}"
         )
-
     # ------------------------------------------------------------
     # MARKET DATA
     # ------------------------------------------------------------
@@ -615,32 +654,36 @@ def startup_diagnostic(exchange, public):
     market_ok = 0
 
     for symbol in SYMBOLS:
-        try:
-            df = public.fetch_ohlcv(symbol)
+        for tf in TIMEFRAMES:
+            try:
+                df = public.fetch_ohlcv(symbol, tf)
 
-            if df is not None and not df.empty:
-                market_ok += 1
+                if df is not None and not df.empty:
+                    market_ok += 1
+                    report.append(
+                        f"{symbol} ({tf}m): ✅ ACTIVE "
+                        f"({len(df)} candles)"
+                    )
+                else:
+                    report.append(
+                        f"{symbol} ({tf}m): ❌ FAILED\n"
+                        "FULL ERROR: Empty OHLCV response"
+                    )
+
+            except Exception as e:
                 report.append(
-                    f"{symbol}: ✅ ACTIVE "
-                    f"({len(df)} candles)"
-                )
-            else:
-                report.append(
-                    f"{symbol}: ❌ FAILED\n"
-                    "FULL ERROR: Empty OHLCV response"
+                    f"{symbol} ({tf}m): ❌ FAILED\n"
+                    f"FULL ERROR: {repr(e)}"
                 )
 
-        except Exception as e:
-            report.append(
-                f"{symbol}: ❌ FAILED\n"
-                f"FULL ERROR: {repr(e)}"
-            )
-
+    total_checks = len(SYMBOLS) * len(TIMEFRAMES)
     add(
         "MARKET DATA SYSTEM",
-        market_ok == len(SYMBOLS),
-        f"Active symbols: {market_ok}/{len(SYMBOLS)}"
+        market_ok == total_checks,
+        f"Active symbols/timeframes: {market_ok}/{total_checks}"
     )
+
+
 
     # ------------------------------------------------------------
     # STRATEGY IMPORT
@@ -895,159 +938,190 @@ def loop():
     except Exception as e:
         logger.exception("[STARTUP DIAGNOSTIC] FATAL ERROR: %s", e)
 
-    send_telegram("ربات شروع شد")
-    logger.info("Worker bot started")
+    send_telegram("🤖 ربات شروع شد - تایم‌فریم‌های ۱، ۵ و ۱۵ دقیقه")
+    logger.info("Worker bot started with timeframes: %s", TIMEFRAMES)
 
     # ============================================================
     # ⚙️ تنظیمات ثابت — دقیقاً مطابق بک‌تست
     # ============================================================
-    BASE_CAPITAL = 2.0          # مبنا = ۲ دلار
-    BALANCE_USE_RATIO = 0.98    # ۹۸٪ موجودی در صورت کمبود
+    BASE_CAPITAL = 1.5         # مبنا = ۲ دلار
+    BALANCE_USE_RATIO = 0.70    # ۹۸٪ موجودی در صورت کمبود
+    
+    # ============================================================
+    # زمان‌بندی چک کردن تایم‌فریم‌های مختلف
+    # ============================================================
+    last_check = {tf: 0 for tf in TIMEFRAMES}
 
     while not STOP_EVENT.is_set():
         try:
             if not exchange.test_connection():
-                send_telegram("اتصال صرافی قطع است")
+                send_telegram("⚠️ اتصال صرافی قطع است")
                 STOP_EVENT.wait(60)
                 continue
 
             balance = exchange.fetch_balance()
-
-            for symbol in SYMBOLS:
-                df = public.fetch_ohlcv(symbol)
-                if df.empty:
+            current_time = time.time()
+            
+            # ============================================================
+            # حلقه روی تمام تایم‌فریم‌ها
+            # ============================================================
+            for timeframe in TIMEFRAMES:
+                # بررسی اینکه آیا زمان چک کردن این تایم‌فریم رسیده است
+                interval = CHECK_INTERVAL.get(timeframe, 60)
+                if current_time - last_check.get(timeframe, 0) < interval:
                     continue
+                
+                last_check[timeframe] = current_time
+                logger.info(f"🔄 Checking {timeframe}m timeframes...")
+                
+                for symbol in SYMBOLS:
+                    try:
+                        # دریافت داده با تایم‌فریم مشخص
+                        df = public.fetch_ohlcv(symbol, timeframe)
+                        if df.empty:
+                            logger.warning(f"Empty data for {symbol} {timeframe}m")
+                            continue
 
-                # ============================================================
-                # 📍 نقطه ۳: بروزرسانی معاملات باز
-                # ============================================================
-                trade_ledger.update_open_trades(symbol, "1", df)
+                        # ============================================================
+                        # 📍 نقطه ۳: بروزرسانی معاملات باز با تایم‌فریم
+                        # ============================================================
+                        trade_ledger.update_open_trades(symbol, timeframe, df)
 
-                sig, entry, stop_price, target_price = calculate_signals(df, symbol)
+                        # ============================================================
+                        # اجرای استراتژی روی تایم‌فریم
+                        # ============================================================
+                        sig, entry, stop_price, target_price = calculate_signals(df, symbol, timeframe)
 
-                logger.info(
-                    f"{symbol}: signal={sig}, entry={entry}, "
-                    f"stop={stop_price}, target={target_price}, candles={len(df)}"
-                )
+                        logger.info(
+                            f"[{timeframe}m] {symbol}: signal={sig}, entry={entry}, "
+                            f"stop={stop_price}, target={target_price}, candles={len(df)}"
+                        )
 
-                # ============================================================
-                # 📍 نقطه ۲: ثبت سیگنال در دفترچه (قبل از هر چک دیگری)
-                # ============================================================
-                if sig and entry is not None:
-                    trade_ledger.record_signal(
-                        symbol=symbol,
-                        timeframe="1",
-                        direction=sig,
-                        entry=entry,
-                        stop=stop_price,
-                        target=target_price,
-                        entry_time_ms=int(df.index[-1].timestamp() * 1000),
-                        leverage=LEVERAGE_MAP.get(symbol, 50),
-                        order_placed=None,
-                    )
+                        # ============================================================
+                        # 📍 نقطه ۲: ثبت سیگنال در دفترچه (با تایم‌فریم)
+                        # ============================================================
+                        if sig and entry is not None:
+                            trade_ledger.record_signal(
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                direction=sig,
+                                entry=entry,
+                                stop=stop_price,
+                                target=target_price,
+                                entry_time_ms=int(df.index[-1].timestamp() * 1000),
+                                leverage=LEVERAGE_MAP.get(symbol, 50),
+                                order_placed=None,
+                            )
 
-                if not sig or balance <= 0 or stop_price is None or entry is None:
-                    continue
+                        if not sig or balance <= 0 or stop_price is None or entry is None:
+                            continue
 
-                allowed_leverage = LEVERAGE_MAP.get(symbol, 50)
+                        allowed_leverage = LEVERAGE_MAP.get(symbol, 50)
 
-                # ============================================================
-                # ۱) محاسبه درصد استاپ
-                # ============================================================
-                if sig == "LONG":
-                    stop_pct = abs(entry - stop_price) / entry if entry > 0 else 0
-                else:  # SHORT
-                    stop_pct = abs(stop_price - entry) / entry if entry > 0 else 0
+                        # ============================================================
+                        # ۱) محاسبه درصد استاپ
+                        # ============================================================
+                        if sig == "LONG":
+                            stop_pct = abs(entry - stop_price) / entry if entry > 0 else 0
+                        else:  # SHORT
+                            stop_pct = abs(stop_price - entry) / entry if entry > 0 else 0
 
-                if stop_pct <= 0:
-                    logger.warning(f"{symbol}: invalid stop_pct={stop_pct}, skip")
-                    continue
+                        if stop_pct <= 0:
+                            logger.warning(f"{symbol}: invalid stop_pct={stop_pct}, skip")
+                            continue
 
-                # ============================================================
-                # ۲) محاسبه درصد تارگت
-                # ============================================================
-                if target_price is not None and not math.isnan(target_price) and target_price > 0:
-                    if sig == "LONG":
-                        target_pct = abs(target_price - entry) / entry
-                    else:  # SHORT
-                        target_pct = abs(entry - target_price) / entry
-                else:
-                    target_pct = 0
+                        # ============================================================
+                        # ۲) محاسبه درصد تارگت
+                        # ============================================================
+                        if target_price is not None and not math.isnan(target_price) and target_price > 0:
+                            if sig == "LONG":
+                                target_pct = abs(target_price - entry) / entry
+                            else:  # SHORT
+                                target_pct = abs(entry - target_price) / entry
+                        else:
+                            target_pct = 0
 
-                # ============================================================
-                # ۳) فرمول دقیق بک‌تست — محاسبه سرمایه
-                # ============================================================
-                old_leverage = 1.0 / stop_pct
+                        # ============================================================
+                        # ۳) فرمول دقیق بک‌تست — محاسبه سرمایه
+                        # ============================================================
+                        old_leverage = 1.0 / stop_pct
 
-                if old_leverage > allowed_leverage:
-                    required_capital = (old_leverage / allowed_leverage) * BASE_CAPITAL
-                    leverage_mode = "INCREASED"
-                else:
-                    required_capital = BASE_CAPITAL
-                    leverage_mode = "BASE"
+                        if old_leverage > allowed_leverage:
+                            required_capital = (old_leverage / allowed_leverage) * BASE_CAPITAL
+                            leverage_mode = "INCREASED"
+                        else:
+                            required_capital = BASE_CAPITAL
+                            leverage_mode = "BASE"
 
-                # ============================================================
-                # ۴) مدیریت موجودی
-                # ============================================================
-                if balance < required_capital:
-                    capital = balance * BALANCE_USE_RATIO
-                    actual_stop_dollar = capital * stop_pct * allowed_leverage
-                    actual_profit_dollar = (
-                        capital * target_pct * allowed_leverage
-                        if target_pct > 0 else None
-                    )
-                    mode = "REDUCED_98"
-                else:
-                    capital = required_capital
-                    actual_stop_dollar = BASE_CAPITAL
-                    actual_profit_dollar = (
-                        (target_pct / stop_pct) * BASE_CAPITAL
-                        if target_pct > 0 else None
-                    )
-                    mode = "FULL"
+                        # ============================================================
+                        # ۴) مدیریت موجودی
+                        # ============================================================
+                        if balance < required_capital:
+                            capital = balance * BALANCE_USE_RATIO
+                            actual_stop_dollar = capital * stop_pct * allowed_leverage
+                            actual_profit_dollar = (
+                                capital * target_pct * allowed_leverage
+                                if target_pct > 0 else None
+                            )
+                            mode = "REDUCED_98"
+                        else:
+                            capital = required_capital
+                            actual_stop_dollar = BASE_CAPITAL
+                            actual_profit_dollar = (
+                                (target_pct / stop_pct) * BASE_CAPITAL
+                                if target_pct > 0 else None
+                            )
+                            mode = "FULL"
 
-                # ============================================================
-                # ۵) محاسبه R
-                # ============================================================
-                r_value = (target_pct / stop_pct) if target_pct > 0 else None
+                        # ============================================================
+                        # ۵) محاسبه R
+                        # ============================================================
+                        r_value = (target_pct / stop_pct) if target_pct > 0 else None
 
-                # ============================================================
-                # ۶) لاگ نهایی — شفاف و دقیق
-                # ============================================================
-                profit_str = f"{actual_profit_dollar:.4f}" if actual_profit_dollar else "N/A"
-                r_str = f"{r_value:.2f}" if r_value else "N/A"
+                        # ============================================================
+                        # ۶) لاگ نهایی — شفاف و دقیق
+                        # ============================================================
+                        profit_str = f"{actual_profit_dollar:.4f}" if actual_profit_dollar else "N/A"
+                        r_str = f"{r_value:.2f}" if r_value else "N/A"
 
-                logger.info(
-                    f"[{symbol}] سیگنال={sig} | ورود={entry}\n"
-                    f"  درصد استاپ={stop_pct:.6f} | درصد تارگت={target_pct:.6f}\n"
-                    f"  اهرم قدیمی={old_leverage:.2f} | اهرم مجاز={allowed_leverage}\n"
-                    f"  سرمایه موردنیاز={required_capital:.4f} | حالت اهرم={leverage_mode}\n"
-                    f"  موجودی={balance:.4f} | حالت سرمایه={mode}\n"
-                    f"  سرمایه ارسالی={capital:.4f}\n"
-                    f"  استاپ دلاری=${actual_stop_dollar:.4f}\n"
-                    f"  سود دلاری=${profit_str}\n"
-                    f"  R={r_str}"
-                )
+                        logger.info(
+                            f"[{timeframe}m][{symbol}] سیگنال={sig} | ورود={entry}\n"
+                            f"  درصد استاپ={stop_pct:.6f} | درصد تارگت={target_pct:.6f}\n"
+                            f"  اهرم قدیمی={old_leverage:.2f} | اهرم مجاز={allowed_leverage}\n"
+                            f"  سرمایه موردنیاز={required_capital:.4f} | حالت اهرم={leverage_mode}\n"
+                            f"  موجودی={balance:.4f} | حالت سرمایه={mode}\n"
+                            f"  سرمایه ارسالی={capital:.4f}\n"
+                            f"  استاپ دلاری=${actual_stop_dollar:.4f}\n"
+                            f"  سود دلاری=${profit_str}\n"
+                            f"  R={r_str}"
+                        )
 
-                # ============================================================
-                # ۷) ارسال سفارش با سرمایه دقیق
-                # ============================================================
-                exchange.create_order(
-                    symbol,
-                    sig,
-                    capital,
-                    allowed_leverage,
-                    take_profit=target_price,
-                    stop_loss=stop_price,
-                )
+                        # ============================================================
+                        # ۷) ارسال سفارش با سرمایه دقیق
+                        # ============================================================
+                        exchange.create_order(
+                            symbol,
+                            sig,
+                            capital,
+                            allowed_leverage,
+                            take_profit=target_price,
+                            stop_loss=stop_price,
+                        )
 
-                balance = exchange.fetch_balance()
+                        # به‌روزرسانی موجودی بعد از سفارش
+                        balance = exchange.fetch_balance()
+                        
+                    except Exception as e:
+                        logger.exception(f"Error processing {symbol} {timeframe}m: {e}")
+                        continue
 
-            STOP_EVENT.wait(60)
+            # هر ۳۰ ثانیه یک بار چک می‌کند
+            STOP_EVENT.wait(30)
 
         except Exception as e:
             logger.exception("Loop error")
             STOP_EVENT.wait(60)
+
 
 
 if __name__ == "__main__":
