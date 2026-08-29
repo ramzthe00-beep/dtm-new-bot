@@ -506,6 +506,7 @@ Value: {str(last_values)[:500]}
 ✅ calculate_signals result:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Symbol: {symbol}
+  Timeframe: {timeframe}m
   Signal: {signal}
   Entry: {entry}
   Stop Loss: {stop_price}
