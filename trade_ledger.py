@@ -296,16 +296,39 @@ def _build_report(rows, title):
 
     if closed:
         lines.append("━━━━━━━━━━━━━━━━━━━━")
-        lines.append("جزئیات معاملات بسته‌شده:")
+        lines.append("📈 جزئیات معاملات بسته‌شده (بر اساس تایم‌فریم):")
+        
+        # گروه‌بندی بر اساس تایم‌فریم
+        tf_groups = {}
         for r in sorted(closed, key=lambda x: x["entry_time_ms"]):
-            t = _ms_to_iran(r["entry_time_ms"])
-            t_str = t.strftime("%Y-%m-%d %H:%M") if t else "?"
-            emoji = "✅" if r["status"] == "WIN" else "❌"
-            pnl = r.get("pnl_usd")
-            pnl_str = f"{pnl:+.2f}$" if pnl is not None else "—"
-            lines.append(
-                f"  {emoji} {t_str} | {r['symbol']} {r['direction']} [{r['timeframe']}] | {pnl_str}"
-            )
+            tf = r.get("timeframe", "1")
+            if tf not in tf_groups:
+                tf_groups[tf] = []
+            tf_groups[tf].append(r)
+        
+        # نمایش هر گروه
+        for tf in sorted(tf_groups.keys(), key=lambda x: int(x)):
+            items = tf_groups[tf]
+            tf_wins = sum(1 for r in items if r["status"] == "WIN")
+            tf_losses = sum(1 for r in items if r["status"] == "LOSS")
+            tf_pnl = sum(r.get("pnl_usd", 0) for r in items if r.get("pnl_usd") is not None)
+            
+            lines.append(f"\n  🕐 تایم‌فریم {tf} دقیقه:")
+            lines.append(f"     برد: {tf_wins} | باخت: {tf_losses} | سود: {tf_pnl:+.2f}$")
+            lines.append("     ────────────────────")
+            
+            for r in items[:10]:  # فقط ۱۰ معامله آخر
+                t = _ms_to_iran(r["entry_time_ms"])
+                t_str = t.strftime("%Y-%m-%d %H:%M") if t else "?"
+                emoji = "✅" if r["status"] == "WIN" else "❌"
+                pnl = r.get("pnl_usd")
+                pnl_str = f"{pnl:+.2f}$" if pnl is not None else "—"
+                lines.append(
+                    f"     {emoji} {t_str} | {r['symbol']} {r['direction']} | {pnl_str}"
+                )
+            
+            if len(items) > 10:
+                lines.append(f"     ... و {len(items) - 10} معامله دیگر")
 
     return "\n".join(lines)
 
