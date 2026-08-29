@@ -400,65 +400,90 @@ Value: {str(last_values)[:500]}
         # ============================================================
         #        لاگ تشخیصی DIVCHECK — دقیقاً هم‌ساختار با پاین
         # ============================================================
+        # ============================================================
         try:
             if not _is_na(last_values.get("pivot_high")):
                 b1 = last_values.get("previous_pivot_high_index")
                 b2 = last_values.get("pivot_high_index")
-                prom = last_values.get("prominence_high")  # چون is_bearish=True برای SHORT
+                prom = last_values.get("prominence_high")
                 logger.info(
                     "[DIVCHECK] %s type=H p1=%s@%s p2=%s@%s rsi1=%s rsi2=%s macd1=%s macd2=%s "
                     "hist1=%s hist2=%s bothPeaksGreen=%s colorChgHigh=%s trendOkBear=%s "
                     "CD-base=%s HD-base=%s final=%s prom=%s "
                     "ph1_o=%s ph1_h=%s ph1_l=%s ph1_c=%s ph2_o=%s ph2_h=%s ph2_l=%s ph2_c=%s bars=%s",
-                    symbol,
-                    last_values.get("previous_pivot_high_price"), _fmt_time(candles, b1),
-                    last_values.get("pivot_high_price"), _fmt_time(candles, b2),
-                    last_values.get("ph_rsi_1"), last_values.get("ph_rsi_2"),
-                    last_values.get("ph_macdline_1"), last_values.get("ph_macdline_2"),
-                    last_values.get("ph_hist_1"), last_values.get("ph_hist_2"),
-                    last_values.get("both_peaks_green"), last_values.get("macd_color_changed_highs"),
-                    last_values.get("trend_bearish_ok"),
-                    last_values.get("classic_bearish_base"), last_values.get("hidden_bearish_base"),
-                    (signal == "SHORT"),
-                    prom,
-                    last_values.get("ph1_open"), last_values.get("ph1_high"),
-                    last_values.get("ph1_low"), last_values.get("ph1_close"),
-                    last_values.get("ph2_open"), last_values.get("ph2_high"),
-                    last_values.get("ph2_low"), last_values.get("ph2_close"),
-                    last_values.get("total_bars_fed"),
+                    symbol,                                                    # 1
+                    last_values.get("previous_pivot_high_price"),             # 2
+                    _fmt_time(candles, b1),                                   # 3
+                    last_values.get("pivot_high_price"),                     # 4
+                    _fmt_time(candles, b2),                                   # 5
+                    last_values.get("ph_rsi_1"),                             # 6
+                    last_values.get("ph_rsi_2"),                             # 7
+                    last_values.get("ph_macdline_1"),                        # 8
+                    last_values.get("ph_macdline_2"),                        # 9
+                    last_values.get("ph_hist_1"),                            # 10
+                    last_values.get("ph_hist_2"),                            # 11
+                    last_values.get("both_peaks_green"),                     # 12
+                    last_values.get("macd_color_changed_highs"),             # 13
+                    last_values.get("trend_bearish_ok"),                     # 14
+                    last_values.get("classic_bearish_base"),                 # 15
+                    last_values.get("hidden_bearish_base"),                  # 16
+                    (signal == "SHORT"),                                     # 17
+                    prom,                                                    # 18
+                    last_values.get("ph1_open"),                             # 19
+                    last_values.get("ph1_high"),                             # 20
+                    last_values.get("ph1_low"),                              # 21
+                    last_values.get("ph1_close"),                            # 22
+                    last_values.get("ph2_open"),                             # 23
+                    last_values.get("ph2_high"),                             # 24
+                    last_values.get("ph2_low"),                              # 25
+                    last_values.get("ph2_close"),                            # 26
+                    last_values.get("total_bars_fed"), # 27        
                 )
             if not _is_na(last_values.get("pivot_low")):
                 b1 = last_values.get("previous_pivot_low_index")
                 b2 = last_values.get("pivot_low_index")
-                prom = last_values.get("prominence_low")  # چون is_bearish=False برای LONG
+                prom = last_values.get("prominence_low")
                 logger.info(
                     "[DIVCHECK] %s type=L p1=%s@%s p2=%s@%s rsi1=%s rsi2=%s macd1=%s macd2=%s "
                     "hist1=%s hist2=%s bothTroughsRed=%s colorChgLow=%s trendOkBull=%s "
                     "CD+base=%s HD+base=%s final=%s prom=%s "
                     "pl1_o=%s pl1_h=%s pl1_l=%s pl1_c=%s pl2_o=%s pl2_h=%s pl2_l=%s pl2_c=%s bars=%s",
-                    symbol,
-                    last_values.get("previous_pivot_low_price"), _fmt_time(candles, b1),
-                    last_values.get("pivot_low_price"), _fmt_time(candles, b2),
-                    last_values.get("pl_rsi_1"), last_values.get("pl_rsi_2"),
-                    last_values.get("pl_macdline_1"), last_values.get("pl_macdline_2"),
-                    last_values.get("pl_hist_1"), last_values.get("pl_hist_2"),
-                    last_values.get("both_troughs_red"), last_values.get("macd_color_changed_lows"),
-                    last_values.get("trend_bullish_ok"),
-                    last_values.get("classic_bullish_base"), last_values.get("hidden_bullish_base"),
-                    (signal == "LONG"),
-                    prom,
-                    last_values.get("pl1_open"), last_values.get("pl1_high"),
-                    last_values.get("pl1_low"), last_values.get("pl1_close"),
-                    last_values.get("pl2_open"), last_values.get("pl2_high"),
-                    last_values.get("pl2_low"), last_values.get("pl2_close"),
-                    last_values.get("total_bars_fed"),
-               )
-       except Exception as e:
-           logger.warning(f"[DIVCHECK] Failed to log: {e}")
-           pass
- 
+                    symbol,                                                    # 1
+                    last_values.get("previous_pivot_low_price"),              # 2
+                    _fmt_time(candles, b1),                                   # 3
+                    last_values.get("pivot_low_price"),                      # 4
+                    _fmt_time(candles, b2),                                   # 5
+                    last_values.get("pl_rsi_1"),                             # 6
+                    last_values.get("pl_rsi_2"),                             # 7
+                    last_values.get("pl_macdline_1"),                        # 8
+                    last_values.get("pl_macdline_2"),                        # 9
+                    last_values.get("pl_hist_1"),                            # 10
+                    last_values.get("pl_hist_2"),                            # 11
+                    last_values.get("both_troughs_red"),                     # 12
+                    last_values.get("macd_color_changed_lows"),              # 13
+                    last_values.get("trend_bullish_ok"),                     # 14
+                    last_values.get("classic_bullish_base"),                 # 15
+                    last_values.get("hidden_bullish_base"),                  # 16
+                    (signal == "LONG"),                                      # 17
+                    prom,                                                    # 18
+                    last_values.get("pl1_open"),                             # 19
+                    last_values.get("pl1_high"),                             # 20
+                    last_values.get("pl1_low"),                              # 21
+                    last_values.get("pl1_close"),                            # 22
+                    last_values.get("pl2_open"),                             # 23
+                    last_values.get("pl2_high"),                             # 24
+                    last_values.get("pl2_low"),                              # 25
+                    last_values.get("pl2_close"),                            # 26
+                    last_values.get("total_bars_fed"),                       # 27
+                )
+        except Exception as e:
+            logger.warning(f"[DIVCHECK] Failed to log: {e}")
+            pass
 
-    
+
+
+
+
 
         # ============================================================
         # محاسبه استاپ و تارگت
