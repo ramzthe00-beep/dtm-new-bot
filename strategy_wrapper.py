@@ -147,7 +147,7 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
     return None, None, None
 
 
-def calculate_signals(df, symbol="BNBUSDT"):
+def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
     import logging
     from pathlib import Path
     from datetime import time as dt_time
@@ -215,11 +215,11 @@ def calculate_signals(df, symbol="BNBUSDT"):
 
         syminfo = SymInfo(
             prefix="",
-            description=symbol,
+            description=f"{symbol} {timeframe}m",
             ticker=symbol,
             currency="USDT",
             basecurrency=tick_info["basecurrency"],
-            period="1",
+            period=timeframe,
             type="crypto",
             volumetype="base",
             mintick=tick_info["mintick"],
