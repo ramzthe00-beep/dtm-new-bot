@@ -720,8 +720,8 @@ def startup_diagnostic(exchange, public):
                 df = public.fetch_ohlcv(symbol)
 
                 if df is not None and not df.empty:
-                    # دریافت ۴ مقدار از strategy_wrapper
-                    sig, entry, stop_price, target_price = calculate_signals_fn(df, symbol)
+                    # دریافت ۵ مقدار از strategy_wrapper (signal_bar_ts_ms در این تست تشخیصی لازم نیست)
+                    sig, entry, stop_price, target_price, _signal_bar_ts_ms = calculate_signals_fn(df, symbol)
                     
 
                     logger.info(
@@ -948,9 +948,11 @@ def loop():
     BALANCE_USE_RATIO = 0.70    # ۹۸٪ موجودی در صورت کمبود
     
     # ============================================================
-    # زمان‌بندی چک کردن تایم‌فریم‌های مختلف
+    # زمان‌بندی چک کردن تایم‌فریم‌های مختلف — بر اساس مرز واقعی بسته‌شدن کندل (ساعت گرد UTC)
+    # نه فاصله‌ی زمانی از آخرین چک؛ حالت قبلی چون به last_check انباشتی وابسته بود دچار
+    # انحراف تصادفی نسبت به مرز واقعی کندل‌های صرافی می‌شد.
     # ============================================================
-    last_check = {tf: 0 for tf in TIMEFRAMES}
+    last_processed_boundary = {tf: 0 for tf in TIMEFRAMES}
 
     while not STOP_EVENT.is_set():
         try:
@@ -966,13 +968,26 @@ def loop():
             # حلقه روی تمام تایم‌فریم‌ها
             # ============================================================
             for timeframe in TIMEFRAMES:
-                # بررسی اینکه آیا زمان چک کردن این تایم‌فریم رسیده است
-                interval = CHECK_INTERVAL.get(timeframe, 60)
-                if current_time - last_check.get(timeframe, 0) < interval:
+                # ============================================================
+                # بررسی اینکه آیا مرز واقعی بسته‌شدن کندلِ این تایم‌فریم رد شده است
+                # (به‌جای «چند ثانیه از آخرین چک گذشته» که دچار انحراف تصادفی می‌شد)
+                # ============================================================
+                tf_minutes = int(timeframe)
+                tf_seconds = tf_minutes * 60
+                BOUNDARY_SETTLE_BUFFER_SEC = 5  # فرصت برای نهایی‌شدن/انتشار کندل توسط صرافی
+
+                current_boundary = int(current_time // tf_seconds) * tf_seconds
+
+                if current_time < current_boundary + BOUNDARY_SETTLE_BUFFER_SEC:
+                    # هنوز به‌اندازه کافی از مرز کندل نگذشته — این دور رد شود
                     continue
-                
-                last_check[timeframe] = current_time
-                logger.info(f"🔄 Checking {timeframe}m timeframes...")
+
+                if current_boundary <= last_processed_boundary.get(timeframe, 0):
+                    # این مرز قبلاً پردازش شده — دوباره پردازش نشود
+                    continue
+
+                last_processed_boundary[timeframe] = current_boundary
+                logger.info(f"🔄 Checking {timeframe}m timeframes... (boundary={current_boundary})")
                 
                 for symbol in SYMBOLS:
                     try:
@@ -990,11 +1005,12 @@ def loop():
                         # ============================================================
                         # اجرای استراتژی روی تایم‌فریم
                         # ============================================================
-                        sig, entry, stop_price, target_price = calculate_signals(df, symbol, timeframe)
+                        sig, entry, stop_price, target_price, signal_bar_ts_ms = calculate_signals(df, symbol, timeframe)
 
                         logger.info(
                             f"[{timeframe}m] {symbol}: signal={sig}, entry={entry}, "
-                            f"stop={stop_price}, target={target_price}, candles={len(df)}"
+                            f"stop={stop_price}, target={target_price}, candles={len(df)}, "
+                            f"signal_bar_ts_ms={signal_bar_ts_ms}"
                         )
 
                         # ============================================================
@@ -1008,7 +1024,10 @@ def loop():
                                 entry=entry,
                                 stop=stop_price,
                                 target=target_price,
-                                entry_time_ms=int(df.index[-1].timestamp() * 1000),
+                                # timestamp همان کندل بسته‌ای که strategy_wrapper واقعاً روی آن
+                                # سیگنال را محاسبه کرده (نه df.index[-1] خام، که می‌تواند دقیقاً
+                                # همان کندلی باشد که strategy_wrapper به‌عنوان ناقص حذف کرده است)
+                                entry_time_ms=signal_bar_ts_ms,
                                 leverage=LEVERAGE_MAP.get(symbol, 50),
                                 order_placed=None,
                             )
