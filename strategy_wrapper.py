@@ -178,34 +178,47 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             )
 
         # ===========================================================
-        # تشخیص کندل ناقص بر اساس timestamp (نه حذف کورکورانه)
+        # تشخیص کندل ناقص بر اساس timestamp — آستانه متناسب با تایم‌فریم
+        # (قبلاً همیشه ۶۰ ثانیه بود؛ برای تایم‌فریم‌های ۵/۱۵ دقیقه‌ای همین باعث می‌شد
+        #  کندلی که هنوز کاملاً باز است اشتباهاً «بسته‌شده» تلقی شود و به استراتژی برسد)
         # ============================================================
+        tf_minutes = int(timeframe)
+        COMPLETION_SAFETY_BUFFER_SEC = 5  # تأخیر مجاز برای نهایی‌شدن/انتشار کندل توسط صرافی
+        completion_threshold_sec = tf_minutes * 60 + COMPLETION_SAFETY_BUFFER_SEC
+
         if len(candles) > 1:
             last_open_ts = candles[-1].timestamp / 1000.0  # unix seconds — زمان بازشدن آخرین کندل
             candle_age = _time.time() - last_open_ts
 
-            if candle_age < 60:
-                # واقعاً هنوز کامل نشده
+            if candle_age < completion_threshold_sec:
+                # واقعاً هنوز کامل نشده (نسبت به طول عمر این تایم‌فریم)
                 dropped_ts = candles[-1].timestamp
                 candles = candles[:-1]
                 logger.info(
-                    f"Removed last (incomplete) candle | age={candle_age:.1f}s | "
-                    f"dropped_open_ts={dropped_ts} | Remaining: {len(candles)}"
+                    f"Removed last (incomplete) candle | tf={tf_minutes}m | age={candle_age:.1f}s | "
+                    f"threshold={completion_threshold_sec}s | dropped_open_ts={dropped_ts} | "
+                    f"Remaining: {len(candles)}"
                 )
             else:
                 # صرافی خودش کندل ناقص رو برنگردونده — نباید دوباره حذفش کنیم
                 logger.info(
-                    f"Last candle already closed (age={candle_age:.1f}s) — NOT dropping. "
+                    f"Last candle already closed | tf={tf_minutes}m | age={candle_age:.1f}s | "
+                    f"threshold={completion_threshold_sec}s — NOT dropping. "
                     f"Remaining: {len(candles)}"
                 )
         else:
             logger.warning("Only one candle available, cannot remove last candle")
 
+        # timestamp (ms) کندل بسته‌ی نهایی که واقعاً به استراتژی داده می‌شود —
+        # همان کندلی است که هر سیگنالی روی آن محاسبه می‌شود (نه df.index[-1] خام در bot.py،
+        # که ممکن است دقیقاً همان کندلی باشد که در بالا به‌عنوان ناقص حذف شد)
+        signal_bar_ts_ms = candles[-1].timestamp if len(candles) > 0 else None
+
         if len(candles) < 50:
             msg = f"Too few candles: {len(candles)}"
             logger.warning(msg)
             _send_telegram(f"⚠️ WARNING: {msg}")
-            return None, None, None, None
+            return None, None, None, None, None
 
         symbol = symbol.upper()
         tick_info = SYMBOL_TICK_INFO.get(
@@ -370,7 +383,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
 """
             logger.warning(error_msg)
             _send_telegram(error_msg)
-            return None, None, None, None
+            return None, None, None, None, None
 
         # ============================================================
         # استخراج سیگنال از last_values
@@ -529,7 +542,7 @@ Value: {str(last_values)[:500]}
             _send_telegram(result_msg)
             calculate_signals._telegram_counter += 1
 
-        return signal, entry, stop_price, target_price
+        return signal, entry, stop_price, target_price, signal_bar_ts_ms
 
     except Exception as e:
         # ============================================================
@@ -556,4 +569,4 @@ Value: {str(last_values)[:500]}
 """
         logger.error(error_msg)
         _send_telegram(error_msg)
-        return None, None, None, None
+        return None, None, None, None, None
