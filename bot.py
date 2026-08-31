@@ -84,10 +84,105 @@ def send_telegram_long(text):
     return ok
 
 class PublicData:
+    # ============================================================
+    # 🎯 منبع دادهٔ سیگنال: بایننس اسپات (همان چیزی که چارت پاین است)
+    #
+    # لاگ‌های پاین دقیقاً «BINANCE:BNBUSDT» (بدون پسوند «.P») هستند —
+    # یعنی نماد روی چارت پاین «اسپات بایننس» است، در حالی‌که این ربات
+    # برای محاسبهٔ سیگنال از فیوچرز thetruetrade.io استفاده می‌کرد؛ این
+    # دو، دو دفتر سفارش (order book) کاملاً مجزا با قیمت‌های به‌طور
+    # سیستماتیک متفاوت‌اند (even after فیکس زمان‌بندی، اختلاف ~۰.۰۵٪
+    # در OHLC مشاهده و با لاگ واقعی تأیید شد — سند در گزارش ضمیمه است).
+    #
+    # BINANCE_DATA_MODE کنترل می‌کند کدام منبع برای *محاسبهٔ سیگنال*
+    # استفاده شود؛ اجرای سفارش (create_order) هرگز از این تابع استفاده
+    # نمی‌کند و همیشه روی thetruetrade.io باقی می‌ماند — طبق درخواست:
+    # «صرافی اجرا عوض نشود».
+    # ============================================================
+    BINANCE_BASE_CANDIDATES = [
+        "https://data-api.binance.vision",  # آینه‌ی رسمی داده‌ی عمومی بایننس — بدون نیاز به کلید/بدون محدودیت جغرافیایی رایج
+        "https://api.binance.com",          # مسیر پشتیبان
+    ]
+
     def __init__(self):
         self.base = BASE_URL
         self.session = requests.Session()
-        
+        self._binance_base_working = None  # کش می‌کنیم کدام base کار می‌کند
+
+    # ------------------------------------------------------------
+    # دریافت کندل از بایننس اسپات — منبع دادهٔ سیگنال (مطابق پاین)
+    # ------------------------------------------------------------
+    def fetch_ohlcv_binance(self, symbol, timeframe="1"):
+        interval_map = {"1": "1m", "5": "5m", "15": "15m"}
+        interval = interval_map.get(str(timeframe), f"{timeframe}m")
+
+        multiplier = int(timeframe)
+        limit = min(HISTORY_BARS, 1000)  # سقف API بایننس ۱۰۰۰ کندل است
+        now_ms = int(time.time() * 1000)
+        start_ms = now_ms - limit * multiplier * 60 * 1000
+
+        bases = (
+            [self._binance_base_working] if self._binance_base_working
+            else self.BINANCE_BASE_CANDIDATES
+        )
+
+        last_err = None
+        for base in bases:
+            try:
+                url = (
+                    f"{base}/api/v3/klines?symbol={symbol.upper()}"
+                    f"&interval={interval}&startTime={start_ms}&endTime={now_ms}&limit={limit}"
+                )
+                r = self.session.get(url, timeout=15)
+                r.raise_for_status()
+                rows = r.json()
+                if not rows:
+                    logger.warning(f"Binance: no candles for {symbol} {timeframe}m")
+                    return pd.DataFrame()
+
+                # هر ردیف بایننس: [openTime, open, high, low, close, volume, closeTime, ...]
+                t = [row[0] / 1000.0 for row in rows]
+                o = [row[1] for row in rows]
+                h = [row[2] for row in rows]
+                l = [row[3] for row in rows]
+                c = [row[4] for row in rows]
+                v = [row[5] for row in rows]
+
+                df = pd.DataFrame({
+                    'open': pd.to_numeric(o, errors='coerce'),
+                    'high': pd.to_numeric(h, errors='coerce'),
+                    'low': pd.to_numeric(l, errors='coerce'),
+                    'close': pd.to_numeric(c, errors='coerce'),
+                    'volume': pd.to_numeric(v, errors='coerce'),
+                }, index=pd.to_datetime(t, unit='s', utc=True))
+
+                df = df.sort_index()
+                df = df[~df.index.duplicated(keep='last')]
+                df = df.dropna(subset=['open', 'high', 'low', 'close'])
+
+                self._binance_base_working = base  # این base کار کرد — دفعهٔ بعد اول همین را امتحان کن
+                result = df.tail(HISTORY_BARS)
+                logger.info(f"Fetched {len(result)} BINANCE-SPOT candles for {symbol} {timeframe}m via {base}")
+                return result
+
+            except Exception as e:
+                last_err = e
+                logger.warning(f"Binance base {base} failed for {symbol} {timeframe}m: {e}")
+                self._binance_base_working = None
+                continue
+
+        # ------------------------------------------------------------
+        # 🛟 Fallback: اگر بایننس در دسترس نبود (مثلاً IP سرور Railway
+        # بلاک شد)، به‌جای متوقف‌شدن کامل ربات، برمی‌گردیم به دادهٔ
+        # thetruetrade.io با هشدار واضح در لاگ — تا لااقل ربات کار کند،
+        # هرچند در آن بازهٔ کوتاه دوباره دچار اختلاف منبع داده می‌شویم.
+        # ------------------------------------------------------------
+        logger.error(
+            f"⚠️ Binance UNREACHABLE for {symbol} {timeframe}m ({last_err}) — "
+            f"falling back to thetruetrade.io data for THIS cycle only."
+        )
+        return self.fetch_ohlcv(symbol, timeframe)
+
     def fetch_ohlcv(self, symbol, timeframe="1"):
         """
         دریافت داده OHLCV با تایم‌فریم دلخواه
@@ -991,19 +1086,35 @@ def loop():
                 
                 for symbol in SYMBOLS:
                     try:
-                        # دریافت داده با تایم‌فریم مشخص
-                        df = public.fetch_ohlcv(symbol, timeframe)
-                        if df.empty:
-                            logger.warning(f"Empty data for {symbol} {timeframe}m")
+                        # ============================================================
+                        # 🎯 دادهٔ سیگنال: بایننس اسپات — دقیقاً همان منبعی که چارت
+                        # پاین (BINANCE:SYMBOL بدون .P) روی آن اجرا می‌شود.
+                        # ============================================================
+                        df_signal = public.fetch_ohlcv_binance(symbol, timeframe)
+                        if df_signal.empty:
+                            logger.warning(f"Empty BINANCE data for {symbol} {timeframe}m")
                             continue
 
                         # ============================================================
-                        # 📍 نقطه ۳: بروزرسانی معاملات باز با تایم‌فریم
+                        # دادهٔ صرافی اجرا — برای پایش معاملات باز (باید منعکس‌کنندهٔ
+                        # حرکت قیمت واقعی روی همان صرافی‌ای باشد که پوزیشن آنجا باز شده)
                         # ============================================================
-                        trade_ledger.update_open_trades(symbol, timeframe, df)
+                        df_exec = public.fetch_ohlcv(symbol, timeframe)
+                        if df_exec.empty:
+                            logger.warning(f"Empty thetruetrade.io data for {symbol} {timeframe}m")
+                            df_exec = df_signal  # حداقل چیزی برای پایش داشته باشیم
+
+                        # نگه‌داشتن نام قبلی df برای سازگاری با بقیهٔ کد پایین‌تر
+                        df = df_signal
 
                         # ============================================================
-                        # اجرای استراتژی روی تایم‌فریم
+                        # 📍 نقطه ۳: بروزرسانی معاملات باز با تایم‌فریم
+                        # (روی دادهٔ صرافی اجرا — نه بایننس)
+                        # ============================================================
+                        trade_ledger.update_open_trades(symbol, timeframe, df_exec)
+
+                        # ============================================================
+                        # اجرای استراتژی روی تایم‌فریم (روی دادهٔ بایننس اسپات)
                         # ============================================================
                         sig, entry, stop_price, target_price, signal_bar_ts_ms = calculate_signals(df, symbol, timeframe)
 
@@ -1116,6 +1227,48 @@ def loop():
                         )
 
                         # ============================================================
+                        # 🎯 لنگرگاه قیمت اجرا — چون سیگنال روی دادهٔ بایننس محاسبه شده
+                        # ولی سفارش MARKET روی قیمت زندهٔ thetruetrade.io پر می‌شود،
+                        # سطوح مطلق stop/target (که از بایننس آمده‌اند) را نمی‌توان
+                        # مستقیم به صرافی اجرا فرستاد — چون دو دفتر سفارش با دو
+                        # مقیاس قیمت متفاوت‌اند. به‌جایش همان درصدهای ریسک/ریوارد
+                        # (stop_pct / target_pct) را — که مستقل از مقیاس قیمت‌اند —
+                        # روی آخرین قیمت واقعیِ thetruetrade.io پیاده می‌کنیم، تا هم
+                        # جهت/ساختار سیگنال دقیقاً مطابق پاین بماند و هم سطوح ارسالی
+                        # به صرافی روی مقیاس درست خودش باشند.
+                        # ============================================================
+                        exec_stop_price = stop_price
+                        exec_target_price = target_price
+                        try:
+                            df_anchor = public.fetch_ohlcv(symbol, "1")
+                            if not df_anchor.empty:
+                                exec_anchor_price = float(df_anchor['close'].iloc[-1])
+                                if sig == "LONG":
+                                    exec_stop_price = exec_anchor_price * (1 - stop_pct)
+                                    exec_target_price = (
+                                        exec_anchor_price * (1 + target_pct)
+                                        if target_pct > 0 else None
+                                    )
+                                else:  # SHORT
+                                    exec_stop_price = exec_anchor_price * (1 + stop_pct)
+                                    exec_target_price = (
+                                        exec_anchor_price * (1 - target_pct)
+                                        if target_pct > 0 else None
+                                    )
+                                logger.info(
+                                    f"[{timeframe}m][{symbol}] لنگر اجرا (thetruetrade.io)={exec_anchor_price} | "
+                                    f"stop(binance)={stop_price} → stop(exec)={exec_stop_price} | "
+                                    f"target(binance)={target_price} → target(exec)={exec_target_price}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"{symbol}: exec-anchor price unavailable — "
+                                    f"falling back to raw binance-derived stop/target"
+                                )
+                        except Exception as anchor_err:
+                            logger.warning(f"{symbol}: exec-anchor fetch failed ({anchor_err}) — using raw stop/target")
+
+                        # ============================================================
                         # ۷) ارسال سفارش با سرمایه دقیق
                         # ============================================================
                         exchange.create_order(
@@ -1123,8 +1276,8 @@ def loop():
                             sig,
                             capital,
                             allowed_leverage,
-                            take_profit=target_price,
-                            stop_loss=stop_price,
+                            take_profit=exec_target_price,
+                            stop_loss=exec_stop_price,
                         )
 
                         # به‌روزرسانی موجودی بعد از سفارش
