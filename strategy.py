@@ -19,13 +19,21 @@ grp_score: str = "Min Confirmations"
 grp_fib: str = "Fibonacci"
 grp_candle: str = "Price Action"
 # ============================================================
-# آستانه‌های فیلتر ترکیبی (بر اساس تحلیل ۳۲ سیگنال)
+# ⚠️ این آستانه‌ها در پاین اسکریپت اصلی وجود ندارند و حذف/خنثی شدند.
+# قبلاً هر مقایسه قیمت/RSI باید از یک حداقل فاصله عبور می‌کرد (مثلاً
+# اختلاف قیمت > ۰.۰۲۵٪ یا اختلاف RSI > ۰.۰۲)، در حالی که پاین اسکریپت
+# فقط "بزرگ‌تر/کوچک‌تر" ساده (>، <) را بررسی می‌کند، بدون هیچ آستانه‌ای.
+# طبق تحلیل روی ۴۳ سیگنال نهایی پاین، همین فیلتر قیمتی به‌تنهایی ۱۲ سیگنال
+# (حدود ۲۸٪) را که در پاین معتبر بودند، در پایتون به اشتباه رد می‌کرد —
+# همان علت اصلی عدم تطابق ۹۰٪.
+# مقادیر روی صفر تنظیم شدند تا شرط عملاً معادل پاین (فقط >0) شود، بدون
+# آنکه ساختار کد (که برای دیباگ/آینده مفید است) حذف شود.
 # ============================================================
-RSI_MIN_GAP = 0.02        # با حاشیه امن ۱۵٪ (۱.۵۸۹ × ۰.۸۵)
-PRICE_MIN_GAP_PCT = 0.025  # با حاشیه امن ۱۵٪ (۰.۰۲۹۴ × ۰.۸۵)
-MACD_MIN_GAP = 0.00001     # تقریباً بی‌اثر، برای امنیت
-HIST_MIN_FIRST = 0.00001   # تقریباً بی‌اثر
-HIST_MIN_SECOND = 0.000001 # کاملاً بی‌اثر
+RSI_MIN_GAP = 0.0
+PRICE_MIN_GAP_PCT = 0.0
+MACD_MIN_GAP = 0.0
+HIST_MIN_FIRST = 0.0
+HIST_MIN_SECOND = 0.0
 
 @script.strategy("DTM Divergence Light", overlay=True, initial_capital=500, default_qty_type=strategy.fixed, default_qty_value=1, commission_type=strategy.commission.percent, commission_value=0.1, pyramiding=3, process_orders_on_close=True, max_labels_count=50, max_lines_count=50)
 def main(
