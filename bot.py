@@ -34,14 +34,13 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
-TIMEFRAMES = ["1", "5", "15"]  # تایم‌فریم‌های دقیقه‌ای
+TIMEFRAMES = ["1", "5"]  # تایم‌فریم‌های دقیقه‌ای
 HISTORY_BARS = 500  # تعداد کندل پایه
 
 # بازه چک کردن هر تایم‌فریم (ثانیه)
 CHECK_INTERVAL = {
     "1": 60,     # هر ۱ دقیقه
     "5": 300,    # هر ۵ دقیقه
-    "15": 900,   # هر ۱۵ دقیقه
 }
 
 LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75}
