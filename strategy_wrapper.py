@@ -498,7 +498,164 @@ Value: {str(last_values)[:500]}
 
 
 
+        
+
         # ============================================================
+        # 🔬 لاگ تشخیصی فوق‌تخصصی — برای پیدا کردن منشأ سیگنال‌های متفرقه
+        # ============================================================
+        try:
+            # --- A. بررسی ساختار سیگنال نهایی ---
+            signal_type = None
+            if last_values.get("final_classic_bearish"):
+                signal_type = "CD-"
+            elif last_values.get("final_classic_bullish"):
+                signal_type = "CD+"
+            elif last_values.get("final_hidden_bullish"):
+                signal_type = "HD+"
+            elif last_values.get("final_hidden_bearish"):
+                signal_type = "HD-"
+
+            # --- B. بررسی امتیازدهی ---
+            score_cd_minus = last_values.get("score_classic_bearish", "N/A")
+            score_cd_plus = last_values.get("score_classic_bullish", "N/A")
+            score_hd_plus = last_values.get("score_hidden_bullish", "N/A")
+            score_hd_minus = last_values.get("score_hidden_bearish", "N/A")
+
+            # --- C. بررسی جزئیات امتیاز ---
+            score_detail_cd_minus = last_values.get("score_cd_minus_detail", {})
+            score_detail_cd_plus = last_values.get("score_cd_plus_detail", {})
+            score_detail_hd_plus = last_values.get("score_hd_plus_detail", {})
+            score_detail_hd_minus = last_values.get("score_hd_minus_detail", {})
+
+            # --- D. بررسی شرایط پایه (Base3) ---
+            base_cd_minus = last_values.get("classic_bearish_base", False)
+            base_cd_plus = last_values.get("classic_bullish_base", False)
+            base_hd_plus = last_values.get("hidden_bullish_base", False)
+            base_hd_minus = last_values.get("hidden_bearish_base", False)
+
+            # --- E. بررسی شرایط جداگانه ---
+            # CD- conditions
+            cd_minus_price_hh = last_values.get("pivot_high_price") and last_values.get("previous_pivot_high_price") and \
+                                (last_values.get("pivot_high_price") > last_values.get("previous_pivot_high_price"))
+            cd_minus_rsi_lh = last_values.get("ph_rsi_2") is not None and last_values.get("ph_rsi_1") is not None and \
+                              (last_values.get("ph_rsi_2") < last_values.get("ph_rsi_1"))
+            cd_minus_macd_lh = last_values.get("ph_macdline_2") is not None and last_values.get("ph_macdline_1") is not None and \
+                               (last_values.get("ph_macdline_2") < last_values.get("ph_macdline_1"))
+            cd_minus_hist_lh = last_values.get("ph_hist_2") is not None and last_values.get("ph_hist_1") is not None and \
+                               (last_values.get("ph_hist_2") < last_values.get("ph_hist_1"))
+            cd_minus_both_green = last_values.get("both_peaks_green", False)
+            cd_minus_color_chg = last_values.get("macd_color_changed_highs", False)
+            cd_minus_trend_ok = last_values.get("trend_bearish_ok", False)
+
+            # CD+ conditions
+            cd_plus_price_ll = last_values.get("pivot_low_price") and last_values.get("previous_pivot_low_price") and \
+                               (last_values.get("pivot_low_price") < last_values.get("previous_pivot_low_price"))
+            cd_plus_rsi_hl = last_values.get("pl_rsi_2") is not None and last_values.get("pl_rsi_1") is not None and \
+                             (last_values.get("pl_rsi_2") > last_values.get("pl_rsi_1"))
+            cd_plus_macd_hl = last_values.get("pl_macdline_2") is not None and last_values.get("pl_macdline_1") is not None and \
+                              (last_values.get("pl_macdline_2") > last_values.get("pl_macdline_1"))
+            cd_plus_hist_hl = last_values.get("pl_hist_2") is not None and last_values.get("pl_hist_1") is not None and \
+                              (last_values.get("pl_hist_2") > last_values.get("pl_hist_1"))
+            cd_plus_both_red = last_values.get("both_troughs_red", False)
+            cd_plus_color_chg = last_values.get("macd_color_changed_lows", False)
+            cd_plus_trend_ok = last_values.get("trend_bullish_ok", False)
+
+            # --- F. بررسی فیبوناچی ---
+            fib_bearish = last_values.get("fib_bearish", False)
+            fib_bullish = last_values.get("fib_bullish", False)
+
+            # --- G. بررسی پرایس‌اکشن ---
+            pa_bullish = last_values.get("price_action_bullish", False)
+            pa_bearish = last_values.get("price_action_bearish", False)
+
+            # --- H. بررسی minConfirmations ---
+            min_conf = last_values.get("min_confirmations", "N/A")
+
+            # --- I. بررسی Pivotها ---
+            ph2 = last_values.get("pivot_high_price")
+            ph1 = last_values.get("previous_pivot_high_price")
+            pl2 = last_values.get("pivot_low_price")
+            pl1 = last_values.get("previous_pivot_low_price")
+
+            ph2_bar = last_values.get("pivot_high_index")
+            ph1_bar = last_values.get("previous_pivot_high_index")
+            pl2_bar = last_values.get("pivot_low_index")
+            pl1_bar = last_values.get("previous_pivot_low_index")
+
+            # --- J. بررسی Prominence ---
+            prom_high = last_values.get("prominence_high")
+            prom_low = last_values.get("prominence_low")
+
+            # --- K. بررسی newPivot ---
+            new_ph = not _is_na(last_values.get("pivot_high"))
+            new_pl = not _is_na(last_values.get("pivot_low"))
+
+            # ============================================================
+            # 📝 لاگ نهایی تشخیصی
+            # ============================================================
+            logger.info(
+                "[SIGNAL_TRACE] %s | tf=%s | signal=%s | score_CD-=%s | score_CD+=%s | score_HD+=%s | score_HD-=%s | "
+                "base_CD-=%s | base_CD+=%s | base_HD+=%s | base_HD-=%s | "
+                "final_CD-=%s | final_CD+=%s | final_HD+=%s | final_HD-=%s | "
+                "minConf=%s | fib_bear=%s | fib_bull=%s | pa_bear=%s | pa_bull=%s | "
+                "newPH=%s | newPL=%s | "
+                "ph2=%s | ph1=%s | pl2=%s | pl1=%s | "
+                "ph2_bar=%s | ph1_bar=%s | pl2_bar=%s | pl1_bar=%s | "
+                "prom_high=%s | prom_low=%s | "
+                "cd-:priceHH=%s rsiLH=%s macdLH=%s histLH=%s bothGreen=%s colorChg=%s trend=%s | "
+                "cd+:priceLL=%s rsiHL=%s macdHL=%s histHL=%s bothRed=%s colorChg=%s trend=%s",
+                symbol, timeframe if 'timeframe' in locals() else "1",
+                signal_type,
+                score_cd_minus, score_cd_plus, score_hd_plus, score_hd_minus,
+                base_cd_minus, base_cd_plus, base_hd_plus, base_hd_minus,
+                last_values.get("final_classic_bearish"), last_values.get("final_classic_bullish"),
+                last_values.get("final_hidden_bullish"), last_values.get("final_hidden_bearish"),
+                min_conf, fib_bearish, fib_bullish, pa_bearish, pa_bullish,
+                new_ph, new_pl,
+                ph2, ph1, pl2, pl1,
+                ph2_bar, ph1_bar, pl2_bar, pl1_bar,
+                prom_high, prom_low,
+                cd_minus_price_hh, cd_minus_rsi_lh, cd_minus_macd_lh, cd_minus_hist_lh, cd_minus_both_green, cd_minus_color_chg, cd_minus_trend_ok,
+                cd_plus_price_ll, cd_plus_rsi_hl, cd_plus_macd_hl, cd_plus_hist_hl, cd_plus_both_red, cd_plus_color_chg, cd_plus_trend_ok,
+            )
+
+            # ============================================================
+            # 🚨 لاگ هشدار برای سیگنال‌های متفرقه (بدون newPivot)
+            # ============================================================
+            if signal_type and not (new_ph or new_pl):
+                logger.warning(
+                    "[SIGNAL_ANOMALY] %s | tf=%s | signal=%s BUT newPH=%s newPL=%s | "
+                    "THIS SIGNAL WAS TRIGGERED WITHOUT A NEW PIVOT! | "
+                    "ph2=%s ph1=%s pl2=%s pl1=%s",
+                    symbol, timeframe if 'timeframe' in locals() else "1",
+                    signal_type, new_ph, new_pl,
+                    ph2, ph1, pl2, pl1,
+                )
+
+            # ============================================================
+            # 🚨 لاگ هشدار برای سیگنال با امتیاز پایین
+            # ============================================================
+            if signal_type and score_cd_minus != "N/A" and score_cd_minus < 3 and signal_type == "CD-":
+                logger.warning(
+                    "[LOW_SCORE] %s | tf=%s | signal=%s | score=%s/5 | "
+                    "detail=%s | This signal has LOW score!",
+                    symbol, timeframe if 'timeframe' in locals() else "1",
+                    signal_type, score_cd_minus, score_detail_cd_minus,
+                )
+
+            if signal_type and score_cd_plus != "N/A" and score_cd_plus < 3 and signal_type == "CD+":
+                logger.warning(
+                    "[LOW_SCORE] %s | tf=%s | signal=%s | score=%s/5 | "
+                    "detail=%s | This signal has LOW score!",
+                    symbol, timeframe if 'timeframe' in locals() else "1",
+                    signal_type, score_cd_plus, score_detail_cd_plus,
+                )
+
+        except Exception as e:
+            logger.warning(f"[SIGNAL_TRACE] Failed to log: {e}")
+            pass
+
+# ============================================================
         # محاسبه استاپ و تارگت
         # ============================================================
         stop_price, target_price, rr_value = None, None, None
