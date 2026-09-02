@@ -202,7 +202,7 @@ def main(
         if not na(fibStart) and not na(fibEnd) and fibEnd != fibStart:
             range_ = math.abs(fibEnd - fibStart)
             tol = range_ * (fibTolerancePct / 100.0)
-
+        
             # موج صعودی: کف به سقف → اصلاح به سمت پایین
             # موج نزولی: سقف به کف → اصلاح به سمت بالا
             if isBullish:  # Bullish: از کف به سقف
@@ -211,7 +211,7 @@ def main(
             else:          # Bearish: از سقف به کف
                 level618 = fibEnd + range_ * 0.618
                 level786 = fibEnd + range_ * 0.786
-
+        
             if fibUse618 and math.abs(targetPrice - level618) <= tol:
                 ok = True
             if fibUse786 and math.abs(targetPrice - level786) <= tol:
@@ -231,7 +231,7 @@ def main(
         trendStart = findTrendStartHigh(pl_bar_1)  # سقف روند
         fibScoreBullish = checkFibLevel(trendStart, pl_price_1, pl_price_2, True)   # isBullish = True
 
-
+    
     # ============================================================
     # محاسبه اندیکاتورهای کندلی
     # ============================================================
@@ -306,7 +306,7 @@ def main(
     classicBearishCond3_MACDh = priceHigherHigh and histLowerHighOnPeaks and bothPeaksGreen and macdColorChangedForHighs
     classicBearishBase3 = priceHigherHigh and trendOkForBearish and classicBearishCond3_MACDh and classicBearishCond1_RSI and classicBearishCond2_MACDl
 
-
+    
     priceLowerLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 < pl_price_1) and (((pl_price_1 - pl_price_2) / pl_price_1) * 100 > PRICE_MIN_GAP_PCT)
     rsiHigherLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and ((pl_rsi_2 - pl_rsi_1) > RSI_MIN_GAP)
     macdLineHigherLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 > pl_macdline_1)
@@ -318,7 +318,7 @@ def main(
     classicBullishCond3_MACDh = priceLowerLow and histHigherLowOnTroughs and bothTroughsRed and macdColorChangedForLows
     classicBullishBase3 = priceLowerLow and trendOkForBullish and classicBullishCond3_MACDh and classicBullishCond1_RSI and classicBullishCond2_MACDl
 
-
+    
     priceHigherLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 > pl_price_1) and (((pl_price_2 - pl_price_1) / pl_price_1) * 100 > PRICE_MIN_GAP_PCT)
     rsiLowerLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and ((pl_rsi_1 - pl_rsi_2) > RSI_MIN_GAP)
     macdLineLowerLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 < pl_macdline_1)
@@ -329,7 +329,7 @@ def main(
     hiddenBullishCond3_MACDh = priceHigherLow and histLowerLowOnTroughs and bothTroughsRed and macdColorChangedForLows
     hiddenBullishBase3 = enableHidden and priceHigherLow and hiddenBullishCond3_MACDh and hiddenBullishCond1_RSI and hiddenBullishCond2_MACDl
 
-
+    
     priceLowerHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 < ph_price_1) and (((ph_price_1 - ph_price_2) / ph_price_1) * 100 > PRICE_MIN_GAP_PCT)
     rsiHigherHighOnPeaks = newPivotHigh and (not na(ph_rsi_1)) and ((ph_rsi_2 - ph_rsi_1) > RSI_MIN_GAP)
     macdLineHigherHighOnPeaks = newPivotHigh and (not na(ph_macdline_1)) and (ph_macdline_2 > ph_macdline_1)
@@ -340,16 +340,33 @@ def main(
     hiddenBearishCond3_MACDh = priceLowerHigh and histHigherHighOnPeaks and bothPeaksGreen and macdColorChangedForHighs
     hiddenBearishBase3 = enableHidden and priceLowerHigh and hiddenBearishCond3_MACDh and hiddenBearishCond1_RSI and hiddenBearishCond2_MACDl
 
+
     # =====================================================================================
-    # بخش امتیازدهی کامل (۰ تا ۵) - اضافه شده برای تطابق با پاین‌اسکریپت
+    # بخش امتیازدهی کامل (۰ تا ۵) — عیناً مطابق پاین‌اسکریپت
     # =====================================================================================
-    scoreClassicBearish = (1 if classicBearishCond1_RSI else 0) +                           (1 if classicBearishCond2_MACDl else 0) +                           (1 if classicBearishCond3_MACDh else 0) +                           (1 if fibScoreBearish else 0) +                           (1 if priceActionBearishAtPivot else 0)
+    scoreClassicBearish = (1 if classicBearishCond1_RSI else 0) + \
+                          (1 if classicBearishCond2_MACDl else 0) + \
+                          (1 if classicBearishCond3_MACDh else 0) + \
+                          (1 if fibScoreBearish else 0) + \
+                          (1 if priceActionBearishAtPivot else 0)
 
-    scoreClassicBullish = (1 if classicBullishCond1_RSI else 0) +                           (1 if classicBullishCond2_MACDl else 0) +                           (1 if classicBullishCond3_MACDh else 0) +                           (1 if fibScoreBullish else 0) +                           (1 if priceActionBullishAtPivot else 0)
+    scoreClassicBullish = (1 if classicBullishCond1_RSI else 0) + \
+                          (1 if classicBullishCond2_MACDl else 0) + \
+                          (1 if classicBullishCond3_MACDh else 0) + \
+                          (1 if fibScoreBullish else 0) + \
+                          (1 if priceActionBullishAtPivot else 0)
 
-    scoreHiddenBullish = (1 if hiddenBullishCond1_RSI else 0) +                          (1 if hiddenBullishCond2_MACDl else 0) +                          (1 if hiddenBullishCond3_MACDh else 0) +                          (1 if fibScoreBullish else 0) +                          (1 if priceActionBullishAtPivot else 0)
+    scoreHiddenBullish = (1 if hiddenBullishCond1_RSI else 0) + \
+                         (1 if hiddenBullishCond2_MACDl else 0) + \
+                         (1 if hiddenBullishCond3_MACDh else 0) + \
+                         (1 if fibScoreBullish else 0) + \
+                         (1 if priceActionBullishAtPivot else 0)
 
-    scoreHiddenBearish = (1 if hiddenBearishCond1_RSI else 0) +                          (1 if hiddenBearishCond2_MACDl else 0) +                          (1 if hiddenBearishCond3_MACDh else 0) +                          (1 if fibScoreBearish else 0) +                          (1 if priceActionBearishAtPivot else 0)
+    scoreHiddenBearish = (1 if hiddenBearishCond1_RSI else 0) + \
+                         (1 if hiddenBearishCond2_MACDl else 0) + \
+                         (1 if hiddenBearishCond3_MACDh else 0) + \
+                         (1 if fibScoreBearish else 0) + \
+                         (1 if priceActionBearishAtPivot else 0)
 
     def passesMinRequirement(base3, fibOk, paOk):
         result: bool = False
@@ -358,9 +375,9 @@ def main(
                 result = True
             elif minConfirmations == '۳ تعییدیه + فیبوناچی (۴ امتیاز) [Custom]':
                 result = fibOk
-            elif minConfirmations == '۳ تعییدیه + پرایس‌اکشن (۴ امتیاز) [Custom]':
+            elif minConfirmations == '۳ تعییدیه + پرایس\u200cاکشن (۴ امتیاز) [Custom]':
                 result = paOk
-            elif minConfirmations == '۵ امتیاز کامل (ایده‌آل)':
+            elif minConfirmations == '۵ امتیاز کامل (ایده\u200cآل)':
                 result = fibOk and paOk
         return result
 
@@ -532,12 +549,42 @@ def main(
         "pl2_high": high[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
         "pl2_low": low[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
         "pl2_close": close[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
-
-        # ====== امتیازدهی کامل (۰ تا ۵) - اضافه شده برای تطابق با پاین‌اسکریپت ======
+    
+        # ====== امتیازدهی کامل (۰ تا ۵) — عیناً مطابق پاین‌اسکریپت ======
         "score_classic_bearish": scoreClassicBearish,
         "score_classic_bullish": scoreClassicBullish,
         "score_hidden_bullish": scoreHiddenBullish,
         "score_hidden_bearish": scoreHiddenBearish,
+
+        # ====== جزئیات امتیازدهی برای دیباگ ======
+        "score_cd_minus_detail": {
+            "rsi_cond": 1 if classicBearishCond1_RSI else 0,
+            "macd_cond": 1 if classicBearishCond2_MACDl else 0,
+            "hist_cond": 1 if classicBearishCond3_MACDh else 0,
+            "fib_cond": 1 if fibScoreBearish else 0,
+            "pa_cond": 1 if priceActionBearishAtPivot else 0,
+        },
+        "score_cd_plus_detail": {
+            "rsi_cond": 1 if classicBullishCond1_RSI else 0,
+            "macd_cond": 1 if classicBullishCond2_MACDl else 0,
+            "hist_cond": 1 if classicBullishCond3_MACDh else 0,
+            "fib_cond": 1 if fibScoreBullish else 0,
+            "pa_cond": 1 if priceActionBullishAtPivot else 0,
+        },
+        "score_hd_plus_detail": {
+            "rsi_cond": 1 if hiddenBullishCond1_RSI else 0,
+            "macd_cond": 1 if hiddenBullishCond2_MACDl else 0,
+            "hist_cond": 1 if hiddenBullishCond3_MACDh else 0,
+            "fib_cond": 1 if fibScoreBullish else 0,
+            "pa_cond": 1 if priceActionBullishAtPivot else 0,
+        },
+        "score_hd_minus_detail": {
+            "rsi_cond": 1 if hiddenBearishCond1_RSI else 0,
+            "macd_cond": 1 if hiddenBearishCond2_MACDl else 0,
+            "hist_cond": 1 if hiddenBearishCond3_MACDh else 0,
+            "fib_cond": 1 if fibScoreBearish else 0,
+            "pa_cond": 1 if priceActionBearishAtPivot else 0,
+        },
 
         "total_bars_fed": bar_index,
     }
