@@ -37,6 +37,11 @@ MACD_MIN_GAP = 0.0
 HIST_MIN_FIRST = 0.0
 HIST_MIN_SECOND = 0.0
 
+# ============================================================
+# متغیر سراسری برای کنترل لاگ checkColorChange
+# ============================================================
+_should_log_check_color = False
+
 @script.strategy("DTM Divergence Light", overlay=True, initial_capital=500, default_qty_type=strategy.fixed, default_qty_value=1, commission_type=strategy.commission.percent, commission_value=0.1, pyramiding=3, process_orders_on_close=True, max_labels_count=50, max_lines_count=50)
 def main(
     pivotMode=input.string("سریع (5/3)", "روش Pivot", options=("استاندارد (5/5)", "سریع (5/3)"), group=grp_pivot),
@@ -58,6 +63,7 @@ def main(
     bigCandleAvgLen=input.int(14, "Big Candle Avg Len", group=grp_candle),
     bigCandleMultiplier=input.float(1.5, "Big Candle Mult", group=grp_candle),
 ):
+    global _should_log_check_color
     leftBars: int = 5
     rightBars = 3
 
@@ -139,24 +145,36 @@ def main(
         prominenceLow = na(float)
 
     def checkColorChange(barStart, barEnd, needRedPhase):
+        global _should_log_check_color
         found: bool = False
         if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
             startOffset = bar_index - (barEnd - 1)
             endOffset = bar_index - (barStart + 1)
-            logger.info(f"[CHECK_COLOR] startOffset={startOffset} endOffset={endOffset} needRedPhase={needRedPhase} barStart={barStart} barEnd={barEnd}")
+            
+            if _should_log_check_color:
+                logger.info(f"[CHECK_COLOR] startOffset={startOffset} endOffset={endOffset} needRedPhase={needRedPhase} barStart={barStart} barEnd={barEnd}")
+            
             if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
                 for j in range(startOffset, endOffset + 1):
                     h = histLine[j]
-                    logger.info(f"[CHECK_COLOR] j={j} histLine={h}")
+                    
+                    if _should_log_check_color:
+                        logger.info(f"[CHECK_COLOR] j={j} histLine={h}")
+                    
                     if needRedPhase and h < 0:
                         found = True
-                        logger.info(f"[CHECK_COLOR] found=True at j={j}")
+                        if _should_log_check_color:
+                            logger.info(f"[CHECK_COLOR] found=True at j={j}")
                         break
                     if not needRedPhase and h > 0:
                         found = True
-                        logger.info(f"[CHECK_COLOR] found=True at j={j}")
+                        if _should_log_check_color:
+                            logger.info(f"[CHECK_COLOR] found=True at j={j}")
                         break
-                logger.info(f"[CHECK_COLOR] result={found}")
+                
+                if _should_log_check_color:
+                    logger.info(f"[CHECK_COLOR] result={found}")
+            
         return found
 
     macdColorChangedForHighs = checkColorChange(ph_bar_1, ph_bar_2, True) if newPivotHigh and (not na(ph_bar_1)) else False
@@ -394,10 +412,17 @@ def main(
     finalHiddenBearish = passesMinRequirement(hiddenBearishBase3, fibScoreBearish, priceActionBearishAtPivot)
 
     # ============================================================
-    # 🔍 لاگ تفصیلی - بررسی تمامی شروط واگرایی
+    # 🔍 فعال‌سازی لاگ checkColorChange فقط وقتی سیگنال صادر می‌شود
     # ============================================================
+    if finalClassicBearish or finalClassicBullish or finalHiddenBullish or finalHiddenBearish:
+        _should_log_check_color = True
+        logger.info(f"[SIGNAL_FINAL] CD-={finalClassicBearish} CD+={finalClassicBullish} HD+={finalHiddenBullish} HD-={finalHiddenBearish}")
+        logger.info(f"[SIGNAL_FINAL] macdColorChangedForHighs={macdColorChangedForHighs} macdColorChangedForLows={macdColorChangedForLows}")
+    else:
+        _should_log_check_color = False
+
     # ============================================================
-    # 🔍 لاگ تفصیلی - فقط برای سیگنال‌های نهایی
+    # 🔍 لاگ تفصیلی - بررسی تمامی شروط واگرایی (فقط برای سیگنال‌های نهایی)
     # ============================================================
     if (finalClassicBearish or finalClassicBullish or finalHiddenBullish or finalHiddenBearish):
         if newPivotHigh or newPivotLow:
