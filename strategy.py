@@ -38,9 +38,9 @@ HIST_MIN_FIRST = 0.0
 HIST_MIN_SECOND = 0.0
 
 # ============================================================
-# متغیر سراسری برای کنترل لاگ checkColorChange
+# متغیر سراسری برای لاگ checkColorChange (سیگنال قبلی)
 # ============================================================
-_should_log_check_color = False
+_previous_signal = False
 
 @script.strategy("DTM Divergence Light", overlay=True, initial_capital=500, default_qty_type=strategy.fixed, default_qty_value=1, commission_type=strategy.commission.percent, commission_value=0.1, pyramiding=3, process_orders_on_close=True, max_labels_count=50, max_lines_count=50)
 def main(
@@ -63,7 +63,7 @@ def main(
     bigCandleAvgLen=input.int(14, "Big Candle Avg Len", group=grp_candle),
     bigCandleMultiplier=input.float(1.5, "Big Candle Mult", group=grp_candle),
 ):
-    global _should_log_check_color
+    global _previous_signal
     leftBars: int = 5
     rightBars = 3
 
@@ -145,34 +145,34 @@ def main(
         prominenceLow = na(float)
 
     def checkColorChange(barStart, barEnd, needRedPhase):
-        global _should_log_check_color
+        global _previous_signal
         found: bool = False
         if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
             startOffset = bar_index - (barEnd - 1)
             endOffset = bar_index - (barStart + 1)
             
-            if _should_log_check_color:
+            if _previous_signal:
                 logger.info(f"[CHECK_COLOR] startOffset={startOffset} endOffset={endOffset} needRedPhase={needRedPhase} barStart={barStart} barEnd={barEnd}")
             
             if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
                 for j in range(startOffset, endOffset + 1):
                     h = histLine[j]
                     
-                    if _should_log_check_color:
+                    if _previous_signal:
                         logger.info(f"[CHECK_COLOR] j={j} histLine={h}")
                     
                     if needRedPhase and h < 0:
                         found = True
-                        if _should_log_check_color:
+                        if _previous_signal:
                             logger.info(f"[CHECK_COLOR] found=True at j={j}")
                         break
                     if not needRedPhase and h > 0:
                         found = True
-                        if _should_log_check_color:
+                        if _previous_signal:
                             logger.info(f"[CHECK_COLOR] found=True at j={j}")
                         break
                 
-                if _should_log_check_color:
+                if _previous_signal:
                     logger.info(f"[CHECK_COLOR] result={found}")
             
         return found
@@ -412,207 +412,19 @@ def main(
     finalHiddenBearish = passesMinRequirement(hiddenBearishBase3, fibScoreBearish, priceActionBearishAtPivot)
 
     # ============================================================
-    # 🔍 فعال‌سازی لاگ checkColorChange فقط وقتی سیگنال صادر می‌شود
+    # ذخیره وضعیت سیگنال فعلی برای لاگ در سیگنال بعدی
     # ============================================================
-    if finalClassicBearish or finalClassicBullish or finalHiddenBullish or finalHiddenBearish:
-        _should_log_check_color = True
+    current_signal = finalClassicBearish or finalClassicBullish or finalHiddenBullish or finalHiddenBearish
+    
+    if current_signal:
         logger.info(f"[SIGNAL_FINAL] CD-={finalClassicBearish} CD+={finalClassicBullish} HD+={finalHiddenBullish} HD-={finalHiddenBearish}")
         logger.info(f"[SIGNAL_FINAL] macdColorChangedForHighs={macdColorChangedForHighs} macdColorChangedForLows={macdColorChangedForLows}")
-    else:
-        _should_log_check_color = False
-
-    # ============================================================
-    # 🔍 لاگ تفصیلی - بررسی تمامی شروط واگرایی (فقط برای سیگنال‌های نهایی)
-    # ============================================================
-    if (finalClassicBearish or finalClassicBullish or finalHiddenBullish or finalHiddenBearish):
         if newPivotHigh or newPivotLow:
-            logger.info(f"""
-[DIV_SIGNAL] symbol={syminfo.tickerid} | bar_index={bar_index}
-newPivotHigh={newPivotHigh} | newPivotLow={newPivotLow}
-""")
-
-        # ============================================================
-        # 1. بررسی شروط قیمت
-        # ============================================================
-        if newPivotHigh:
-            logger.info(f"""
-[PRICE_COND] type=HIGH
-ph_price_1={ph_price_1} | ph_price_2={ph_price_2}
-ph_bar_1={ph_bar_1} | ph_bar_2={ph_bar_2}
-priceHigherHigh={priceHigherHigh}
-priceLowerHigh={priceLowerHigh}
-calc: ph_price_2 > ph_price_1 = {ph_price_2 > ph_price_1 if not na(ph_price_1) else 'NA'}
-diff_pct={((ph_price_2 - ph_price_1) / ph_price_1) * 100 if not na(ph_price_1) else 'NA'}%
-""")
-
-        if newPivotLow:
-            logger.info(f"""
-[PRICE_COND] type=LOW
-pl_price_1={pl_price_1} | pl_price_2={pl_price_2}
-pl_bar_1={pl_bar_1} | pl_bar_2={pl_bar_2}
-priceLowerLow={priceLowerLow}
-priceHigherLow={priceHigherLow}
-calc: pl_price_2 < pl_price_1 = {pl_price_2 < pl_price_1 if not na(pl_price_1) else 'NA'}
-diff_pct={((pl_price_1 - pl_price_2) / pl_price_1) * 100 if not na(pl_price_1) else 'NA'}%
-""")
-
-        # ============================================================
-        # 2. بررسی شروط RSI
-        # ============================================================
-        if newPivotHigh:
-            logger.info(f"""
-[RSI_COND] type=HIGH
-ph_rsi_1={ph_rsi_1} | ph_rsi_2={ph_rsi_2}
-rsiLowerHighOnPeaks={rsiLowerHighOnPeaks}
-rsiHigherHighOnPeaks={rsiHigherHighOnPeaks}
-calc: ph_rsi_2 < ph_rsi_1 = {ph_rsi_2 < ph_rsi_1 if not na(ph_rsi_1) else 'NA'}
-calc: ph_rsi_2 > ph_rsi_1 = {ph_rsi_2 > ph_rsi_1 if not na(ph_rsi_1) else 'NA'}
-diff_rsi={ph_rsi_1 - ph_rsi_2 if not na(ph_rsi_1) else 'NA'}
-""")
-
-        if newPivotLow:
-            logger.info(f"""
-[RSI_COND] type=LOW
-pl_rsi_1={pl_rsi_1} | pl_rsi_2={pl_rsi_2}
-rsiHigherLowOnTroughs={rsiHigherLowOnTroughs}
-rsiLowerLowOnTroughs={rsiLowerLowOnTroughs}
-calc: pl_rsi_2 > pl_rsi_1 = {pl_rsi_2 > pl_rsi_1 if not na(pl_rsi_1) else 'NA'}
-calc: pl_rsi_2 < pl_rsi_1 = {pl_rsi_2 < pl_rsi_1 if not na(pl_rsi_1) else 'NA'}
-diff_rsi={pl_rsi_2 - pl_rsi_1 if not na(pl_rsi_1) else 'NA'}
-""")
-
-        # ============================================================
-        # 3. بررسی شروط MACD Line
-        # ============================================================
-        if newPivotHigh:
-            logger.info(f"""
-[MACD_LINE_COND] type=HIGH
-ph_macdline_1={ph_macdline_1} | ph_macdline_2={ph_macdline_2}
-macdLineLowerHighOnPeaks={macdLineLowerHighOnPeaks}
-macdLineHigherHighOnPeaks={macdLineHigherHighOnPeaks}
-calc: ph_macdline_2 < ph_macdline_1 = {ph_macdline_2 < ph_macdline_1 if not na(ph_macdline_1) else 'NA'}
-calc: ph_macdline_2 > ph_macdline_1 = {ph_macdline_2 > ph_macdline_1 if not na(ph_macdline_1) else 'NA'}
-""")
-
-        if newPivotLow:
-            logger.info(f"""
-[MACD_LINE_COND] type=LOW
-pl_macdline_1={pl_macdline_1} | pl_macdline_2={pl_macdline_2}
-macdLineHigherLowOnTroughs={macdLineHigherLowOnTroughs}
-macdLineLowerLowOnTroughs={macdLineLowerLowOnTroughs}
-calc: pl_macdline_2 > pl_macdline_1 = {pl_macdline_2 > pl_macdline_1 if not na(pl_macdline_1) else 'NA'}
-calc: pl_macdline_2 < pl_macdline_1 = {pl_macdline_2 < pl_macdline_1 if not na(pl_macdline_1) else 'NA'}
-""")
-
-        # ============================================================
-        # 4. بررسی شروط MACD Histogram
-        # ============================================================
-        if newPivotHigh:
-            logger.info(f"""
-[MACD_HIST_COND] type=HIGH
-ph_hist_1={ph_hist_1} | ph_hist_2={ph_hist_2}
-histLowerHighOnPeaks={histLowerHighOnPeaks}
-histHigherHighOnPeaks={histHigherHighOnPeaks}
-bothPeaksGreen={bothPeaksGreen}
-macdColorChangedForHighs={macdColorChangedForHighs}
-calc: ph_hist_2 < ph_hist_1 = {ph_hist_2 < ph_hist_1 if not na(ph_hist_1) else 'NA'}
-calc: ph_hist_2 > ph_hist_1 = {ph_hist_2 > ph_hist_1 if not na(ph_hist_1) else 'NA'}
-calc: ph_hist_1 > 0 = {ph_hist_1 > 0 if not na(ph_hist_1) else 'NA'}
-calc: ph_hist_2 > 0 = {ph_hist_2 > 0 if not na(ph_hist_2) else 'NA'}
-""")
-
-        if newPivotLow:
-            logger.info(f"""
-[MACD_HIST_COND] type=LOW
-pl_hist_1={pl_hist_1} | pl_hist_2={pl_hist_2}
-histHigherLowOnTroughs={histHigherLowOnTroughs}
-histLowerLowOnTroughs={histLowerLowOnTroughs}
-bothTroughsRed={bothTroughsRed}
-macdColorChangedForLows={macdColorChangedForLows}
-calc: pl_hist_2 > pl_hist_1 = {pl_hist_2 > pl_hist_1 if not na(pl_hist_1) else 'NA'}
-calc: pl_hist_2 < pl_hist_1 = {pl_hist_2 < pl_hist_1 if not na(pl_hist_1) else 'NA'}
-calc: pl_hist_1 < 0 = {pl_hist_1 < 0 if not na(pl_hist_1) else 'NA'}
-calc: pl_hist_2 < 0 = {pl_hist_2 < 0 if not na(pl_hist_2) else 'NA'}
-""")
-
-        # ============================================================
-        # 5. بررسی شروط روند (Trend)
-        # ============================================================
-        if newPivotHigh:
-            slope_pct = na(float)
-            if not na(ph_bar_1):
-                offset = bar_index - ph_bar_1
-                if offset >= 0 and offset + trendLookback < 5000:
-                    slope = ta.linreg(close[offset], trendLookback, 0) - ta.linreg(close[offset + trendLookback], trendLookback, 0)
-                    avgPrice = ta.sma(close[offset], trendLookback)
-                    slope_pct = slope / avgPrice * 100 if avgPrice != 0 else 0.0
-            logger.info(f"""
-[TREND_COND] type=HIGH
-trendOkForBearish={trendOkForBearish}
-refBar={ph_bar_1}
-slopePct={slope_pct}
-threshold={trendSlopeMinPct}%
-""")
-
-        if newPivotLow:
-            slope_pct = na(float)
-            if not na(pl_bar_1):
-                offset = bar_index - pl_bar_1
-                if offset >= 0 and offset + trendLookback < 5000:
-                    slope = ta.linreg(close[offset], trendLookback, 0) - ta.linreg(close[offset + trendLookback], trendLookback, 0)
-                    avgPrice = ta.sma(close[offset], trendLookback)
-                    slope_pct = slope / avgPrice * 100 if avgPrice != 0 else 0.0
-            logger.info(f"""
-[TREND_COND] type=LOW
-trendOkForBullish={trendOkForBullish}
-refBar={pl_bar_1}
-slopePct={slope_pct}
-threshold={trendSlopeMinPct}%
-""")
-
-        # ============================================================
-        # 6. جمع‌بندی شرط Base3
-        # ============================================================
-        logger.info(f"""
-[BASE3_SUMMARY]
-classicBearishBase3={classicBearishBase3}
-  - priceHigherHigh={priceHigherHigh}
-  - trendOkForBearish={trendOkForBearish}
-  - classicBearishCond3_MACDh={classicBearishCond3_MACDh}
-  - classicBearishCond1_RSI={classicBearishCond1_RSI}
-  - classicBearishCond2_MACDl={classicBearishCond2_MACDl}
-
-classicBullishBase3={classicBullishBase3}
-  - priceLowerLow={priceLowerLow}
-  - trendOkForBullish={trendOkForBullish}
-  - classicBullishCond3_MACDh={classicBullishCond3_MACDh}
-  - classicBullishCond1_RSI={classicBullishCond1_RSI}
-  - classicBullishCond2_MACDl={classicBullishCond2_MACDl}
-
-hiddenBullishBase3={hiddenBullishBase3}
-  - priceHigherLow={priceHigherLow}
-  - hiddenBullishCond3_MACDh={hiddenBullishCond3_MACDh}
-  - hiddenBullishCond1_RSI={hiddenBullishCond1_RSI}
-  - hiddenBullishCond2_MACDl={hiddenBullishCond2_MACDl}
-
-hiddenBearishBase3={hiddenBearishBase3}
-  - priceLowerHigh={priceLowerHigh}
-  - hiddenBearishCond3_MACDh={hiddenBearishCond3_MACDh}
-  - hiddenBearishCond1_RSI={hiddenBearishCond1_RSI}
-  - hiddenBearishCond2_MACDl={hiddenBearishCond2_MACDl}
-""")
-
-        # ============================================================
-        # 7. نتیجه نهایی سیگنال‌ها
-        # ============================================================
-        logger.info(f"""
-[FINAL_SIGNAL]
-finalClassicBearish={finalClassicBearish}
-finalClassicBullish={finalClassicBullish}
-finalHiddenBullish={finalHiddenBullish}
-finalHiddenBearish={finalHiddenBearish}
-signal={finalClassicBearish or finalHiddenBearish}
-""")
+            logger.info(f"[DIVCHECK] symbol={syminfo.tickerid} | bar_index={bar_index} | signal= {'LONG' if current_signal else 'None'} | newPivotHigh={newPivotHigh} | newPivotLow={newPivotLow}")
+    
+    # وضعیت فعلی را برای کندل بعدی ذخیره کن
+    _previous_signal = current_signal
+    # ============================================================
 
 
     plotshape(finalClassicBearish, title='CD-', style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text='CD-', offset=-rightBars)
