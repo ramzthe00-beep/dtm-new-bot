@@ -654,20 +654,28 @@ Value: {str(last_values)[:500]}
         except Exception as e:
             logger.warning(f"[SIGNAL_TRACE] Failed to log: {e}")
             pass
-
-# ============================================================
+        # ============================================================
         # محاسبه استاپ و تارگت
         # ============================================================
         stop_price, target_price, rr_value = None, None, None
-        
+
         if signal in ("LONG", "SHORT"):
+            # تنظیم buffer_ticks بر اساس نماد
+            if symbol == "BNBUSDT" or symbol == "ETHUSDT":
+                buffer_ticks = 9
+            elif symbol == "LTCUSDT" or symbol == "DOGEUSDT":
+                buffer_ticks = 3
+            else:
+                buffer_ticks = 5  # پیش‌فرض برای سایر ارزها
+    
             stop_price, target_price, rr_value = _compute_stop_target(
-                candles, signal, last_values, tick_info["mintick"], buffer_ticks=9
+                candles, signal, last_values, tick_info["mintick"], buffer_ticks=buffer_ticks
             )
             logger.info(
                 f"[SL/TP] {symbol} {signal} | entry={entry} | stop={stop_price} | "
-                f"target={target_price} | R:R={rr_value}"
+                f"target={target_price} | R:R={rr_value} | buffer={buffer_ticks}"
             )
+        
 
         # ============================================================
         # گزارش نتیجه نهایی
