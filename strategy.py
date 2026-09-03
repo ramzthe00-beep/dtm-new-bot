@@ -143,15 +143,20 @@ def main(
         if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
             startOffset = bar_index - (barEnd - 1)
             endOffset = bar_index - (barStart + 1)
+            logger.info(f"[CHECK_COLOR] startOffset={startOffset} endOffset={endOffset} needRedPhase={needRedPhase} barStart={barStart} barEnd={barEnd}")
             if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
                 for j in range(startOffset, endOffset + 1):
                     h = histLine[j]
+                    logger.info(f"[CHECK_COLOR] j={j} histLine={h}")
                     if needRedPhase and h < 0:
                         found = True
+                        logger.info(f"[CHECK_COLOR] found=True at j={j}")
                         break
                     if not needRedPhase and h > 0:
                         found = True
+                        logger.info(f"[CHECK_COLOR] found=True at j={j}")
                         break
+                logger.info(f"[CHECK_COLOR] result={found}")
         return found
 
     macdColorChangedForHighs = checkColorChange(ph_bar_1, ph_bar_2, True) if newPivotHigh and (not na(ph_bar_1)) else False
