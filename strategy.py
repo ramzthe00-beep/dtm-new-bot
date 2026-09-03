@@ -11,6 +11,8 @@ from pynecore.lib import (
     open, plotshape, request, script, shape, size, strategy, syminfo, ta
 )
 from pynecore.types import Persistent, Series
+import logging
+logger = logging.getLogger(__name__)
 
 grp_pivot: str = "Pivot"
 grp_ind: str = "Indicators"
