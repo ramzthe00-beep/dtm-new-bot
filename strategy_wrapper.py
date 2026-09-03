@@ -662,7 +662,7 @@ Value: {str(last_values)[:500]}
         
         if signal in ("LONG", "SHORT"):
             stop_price, target_price, rr_value = _compute_stop_target(
-                candles, signal, last_values, tick_info["mintick"], buffer_ticks=5
+                candles, signal, last_values, tick_info["mintick"], buffer_ticks=9
             )
             logger.info(
                 f"[SL/TP] {symbol} {signal} | entry={entry} | stop={stop_price} | "
