@@ -627,22 +627,20 @@ def startup_diagnostic(exchange, public):
     logger.info("STARTUP DIAGNOSTIC BEGINNING...")
     logger.info("=" * 60)
 
-    report = [
-        "🚀 DTM BOT STARTUP DIAGNOSTIC",
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        "MODE: READ-ONLY",
-        "REAL ORDER: 🚫 NOT SENT",
-    ]
-
     failures = []
     warnings = []
+    balance = None
+    strategy_ok = False
+    test_signal = None
+    test_entry = None
+    test_symbol = SYMBOLS[0] if SYMBOLS else "LTCUSDT"
 
     def add(title, ok, details=""):
         status = "✅ ACTIVE" if ok else "❌ FAILED"
         text = f"{title}: {status}"
         if details:
             text += f"\n{details}"
-        report.append(text)
+        return text
 
     def full_exchange_error(prefix="FULL EXCHANGE ERROR"):
         response = getattr(exchange, "_last_response", None)
@@ -680,327 +678,158 @@ def startup_diagnostic(exchange, public):
     # ------------------------------------------------------------
     try:
         send_telegram("🧪 DTM startup diagnostic started")
-        add("TELEGRAM", True)
-    except Exception as e:
-        add(
-            "TELEGRAM",
-            False,
-            f"FULL ERROR: {repr(e)}"
-        )
+        telegram_ok = True
+    except Exception:
+        telegram_ok = False
 
     # ------------------------------------------------------------
     # EXCHANGE CONNECTION
     # ------------------------------------------------------------
     try:
         exchange._last_response = None
-        ok = exchange.test_connection()
-
-        if ok:
-            add("EXCHANGE API", True)
-        else:
-            add(
-                "EXCHANGE API",
-                False,
-                full_exchange_error()
-            )
-    except Exception as e:
-        add(
-            "EXCHANGE API",
-            False,
-            full_exchange_error() +
-            f"\nLOCAL EXCEPTION: {repr(e)}"
-        )
+        exchange_ok = exchange.test_connection()
+    except Exception:
+        exchange_ok = False
 
     # ------------------------------------------------------------
     # BALANCE
     # ------------------------------------------------------------
-    balance = None
-
     try:
         exchange._last_response = None
         balance = exchange.fetch_balance()
+        if balance is None or balance < 0:
+            balance = None
+    except Exception:
+        balance = None
 
-        if balance is not None and balance >= 0:
-            add(
-                "BALANCE",
-                True,
-                f"Available USDT: {balance}"
-            )
-        else:
-            add(
-                "BALANCE",
-                False,
-                full_exchange_error()
-            )
-    except Exception as e:
-        add(
-            "BALANCE",
-            False,
-            full_exchange_error() +
-            f"\nLOCAL EXCEPTION: {repr(e)}"
-        )
     # ------------------------------------------------------------
     # MARKET DATA
     # ------------------------------------------------------------
-    report.append("━━━━━━━━━━━━━━━━━━━━━━")
-    report.append("MARKET DATA:")
-
     market_ok = 0
+    total_checks = len(SYMBOLS) * len(TIMEFRAMES)
+    market_status_list = []
 
     for symbol in SYMBOLS:
         for tf in TIMEFRAMES:
             try:
                 df = public.fetch_ohlcv(symbol, tf)
-
                 if df is not None and not df.empty:
                     market_ok += 1
-                    report.append(
-                        f"{symbol} ({tf}m): ✅ ACTIVE "
-                        f"({len(df)} candles)"
-                    )
-                else:
-                    report.append(
-                        f"{symbol} ({tf}m): ❌ FAILED\n"
-                        "FULL ERROR: Empty OHLCV response"
-                    )
+                    market_status_list.append(f"{symbol}({tf})")
+            except Exception:
+                pass
 
-            except Exception as e:
-                report.append(
-                    f"{symbol} ({tf}m): ❌ FAILED\n"
-                    f"FULL ERROR: {repr(e)}"
-                )
-
-    total_checks = len(SYMBOLS) * len(TIMEFRAMES)
-    add(
-        "MARKET DATA SYSTEM",
-        market_ok == total_checks,
-        f"Active symbols/timeframes: {market_ok}/{total_checks}"
-    )
-
-
+    market_all_ok = (market_ok == total_checks)
 
     # ------------------------------------------------------------
     # STRATEGY IMPORT
     # ------------------------------------------------------------
     calculate_signals_fn = None
-
-    report.append("━━━━━━━━━━━━━━━━━━━━━━")
+    strategy_import_ok = False
 
     try:
         from strategy_wrapper import calculate_signals as _calculate_signals
         calculate_signals_fn = _calculate_signals
-
-        add(
-            "STRATEGY.PY",
-            callable(calculate_signals_fn),
-            "calculate_signals: AVAILABLE"
-        )
-
-    except Exception as e:
-        add(
-            "STRATEGY.PY",
-            False,
-            f"FULL ERROR: {repr(e)}"
-        )
+        strategy_import_ok = callable(calculate_signals_fn)
+    except Exception:
+        strategy_import_ok = False
 
     # ------------------------------------------------------------
     # STRATEGY EXECUTION — READ ONLY
     # ------------------------------------------------------------
-    strategy_ok = False
-
     if callable(calculate_signals_fn):
         for symbol in SYMBOLS:
             try:
                 df = public.fetch_ohlcv(symbol)
-
                 if df is not None and not df.empty:
-                    # دریافت ۵ مقدار از strategy_wrapper (signal_bar_ts_ms در این تست تشخیصی لازم نیست)
-                    sig, entry, stop_price, target_price, _signal_bar_ts_ms = calculate_signals_fn(df, symbol)
-                    
-
-                    logger.info(
-                        "[STARTUP DIAGNOSTIC] "
-                        "%s signal=%r entry=%r stop=%r target=%r",
-                        symbol,
-                        sig,
-                        entry,
-                        stop_price,
-                        target_price,
-                    )
-
+                    test_signal, test_entry, stop_price, target_price, _ = calculate_signals_fn(df, symbol)
                     strategy_ok = True
-                    report.append(
-                        f"STRATEGY TEST {symbol}: "
-                        f"✅ OK | signal={sig!r} | entry={entry!r} | stop={stop_price!r} | target={target_price!r}"
-                    )
+                    test_symbol = symbol
                     break
-
-            except Exception as e:
-                logger.exception(
-                    "[STARTUP DIAGNOSTIC] "
-                    "Strategy test failed: %s",
-                    symbol,
-                )
-
-        add(
-            "STRATEGY EXECUTION",
-            strategy_ok
-        )
-
-    else:
-        add(
-            "STRATEGY EXECUTION",
-            False,
-            "calculate_signals unavailable"
-        )
+            except Exception:
+                continue
 
     # ------------------------------------------------------------
     # POSITION API — READ ONLY
     # ------------------------------------------------------------
     try:
         exchange._last_response = None
-
-        positions = exchange._request(
-            "GET",
-            "/futures/positions"
-        )
-
-        add(
-            "POSITION API",
-            True,
-            f"Response type: {type(positions).__name__}"
-        )
-
-    except Exception as e:
-        add(
-            "POSITION API",
-            False,
-            full_exchange_error() +
-            f"\nLOCAL EXCEPTION: {repr(e)}"
-        )
+        positions = exchange._request("GET", "/futures/positions")
+        position_api_ok = True
+    except Exception:
+        position_api_ok = False
 
     # ------------------------------------------------------------
-    # ORDER CAPABILITY — NO REAL ORDER
-    # ------------------------------------------------------------
-    report.append("━━━━━━━━━━━━━━━━━━━━━━")
-    report.append("ORDER SYSTEM — READ ONLY")
-
-    try:
-        create_order = getattr(
-            exchange,
-            "create_order",
-            None
-        )
-
-        if callable(create_order):
-            add(
-                "CREATE_ORDER FUNCTION",
-                True,
-                "Function exists"
-            )
-        else:
-            add(
-                "CREATE_ORDER FUNCTION",
-                False,
-                "create_order not found"
-            )
-
-    except Exception as e:
-        add(
-            "CREATE_ORDER FUNCTION",
-            False,
-            f"FULL ERROR: {repr(e)}"
-        )
-
-    # ------------------------------------------------------------
-    # ORDER STRUCTURE VALIDATION
+    # CREATE_ORDER FUNCTION
     # ------------------------------------------------------------
     try:
-        for symbol in SYMBOLS:
-            leverage = LEVERAGE_MAP.get(symbol, 50)
+        create_order = getattr(exchange, "create_order", None)
+        create_order_ok = callable(create_order)
+    except Exception:
+        create_order_ok = False
 
-            # IMPORTANT:
-            # These are ONLY the currently configured values.
-            # No trading formula is recalculated or modified.
-            side_test = "LONG"
-            trade_type = "MARKET"
-            wallet_type = "debit"
-
-            report.append(
-                f"\n{symbol} ORDER STRUCTURE:"
-            )
-            report.append(
-                f"  side={side_test}"
-            )
-            report.append(
-                f"  tradeType={trade_type}"
-            )
-            report.append(
-                f"  leverage={leverage}"
-            )
-            report.append(
-                f"  walletType={wallet_type}"
-            )
-
-            report.append(
-                "  cost: 🔒 CURRENT BOT CALCULATION "
-                "(NOT MODIFIED)"
-            )
-
-        add(
-            "ORDER REQUEST STRUCTURE",
-            True,
-            "Structure inspected without sending an order"
-        )
-
-    except Exception as e:
-        add(
-            "ORDER REQUEST STRUCTURE",
-            False,
-            f"FULL ERROR: {repr(e)}"
-        )
-
-    # ------------------------------------------------------------
-    # CURRENT FORMULA / RISK VALUES — OBSERVATION ONLY
-    # ------------------------------------------------------------
-    report.append("━━━━━━━━━━━━━━━━━━━━━━")
-    report.append("CURRENT TRADING CONFIG — OBSERVATION ONLY")
-
-    report.append(
-        f"TARGET_RISK: {TARGET_RISK}"
-    )
-
-    for symbol in SYMBOLS:
-        report.append(
-            f"{symbol}: "
-            f"LEVERAGE_MAP={LEVERAGE_MAP.get(symbol)}"
-        )
-
-    report.append(
-        "TRADING FORMULAS: 🔒 NOT MODIFIED"
-    )
-    report.append(
-        "CAPITAL CALCULATION: 🔒 NOT MODIFIED"
-    )
-    report.append(
-        "LEVERAGE CALCULATION: 🔒 NOT MODIFIED"
-    )
-    report.append(
-        "STRATEGY LOGIC: 🔒 NOT MODIFIED"
-    )
-
-    # ------------------------------------------------------------
-    # FINAL SAFETY
-    # ------------------------------------------------------------
-    report.extend([
-        "━━━━━━━━━━━━━━━━━━━━━━",
-        "REAL ORDER: 🚫 NOT SENT",
-        "ORDER TEST MODE: READ-ONLY",
-        "DIAGNOSTIC COMPLETE",
-    ])
-
-    final_report = "\n".join(report)
-
+    # ============================================================
+    # 📊 گزارش راه‌اندازی — فشرده و حرفه‌ای (فارسی)
+    # ============================================================
+    from datetime import datetime, timezone, timedelta
+    
+    IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
+    UTC_TZ = timezone.utc
+    
+    def _now_iran():
+        return datetime.now(UTC_TZ).astimezone(IRAN_TZ)
+    
+    now_iran = _now_iran()
+    time_str = now_iran.strftime("%Y-%m-%d %H:%M:%S")
+    
+    report_lines = [
+        "🚀 راه‌اندازی ربات DTM",
+        "─────────────────────────────────────────",
+        f"🔒 حالت: فقط‌خوانی | سفارش: ❌ ارسال نمی‌شود",
+        f"💰 موجودی: {balance:.4f} USDT" if balance else "💰 موجودی: ❌ نامشخص",
+        f"📱 تلگرام: {'✅' if telegram_ok else '❌'} | صرافی: {'✅' if exchange_ok else '❌'}",
+        "─────────────────────────────────────────",
+    ]
+    
+    # بازارهای فعال
+    if market_status_list:
+        report_lines.append(f"📊 بازارهای فعال: {market_ok}/{total_checks}")
+        # نمایش در دو خط برای خوانایی بهتر
+        line1 = "   " + " ".join(market_status_list[:4]) if len(market_status_list) >= 4 else "   " + " ".join(market_status_list)
+        line2 = "   " + " ".join(market_status_list[4:]) if len(market_status_list) > 4 else ""
+        report_lines.append(line1)
+        if line2:
+            report_lines.append(line2)
+    else:
+        report_lines.append(f"📊 بازارهای فعال: ۰/{total_checks} ❌")
+    
+    report_lines.append("─────────────────────────────────────────")
+    
+    # استراتژی
+    if strategy_import_ok:
+        report_lines.append(f"📈 استراتژی: {'✅ فعال' if strategy_ok else '⚠️ قابل‌اجرا اما بدون سیگنال'}")
+    else:
+        report_lines.append("📈 استراتژی: ❌ غیرفعال")
+    
+    # تست استراتژی
+    if strategy_ok:
+        report_lines.append(f"🧪 تست {test_symbol}: سیگنال={test_signal} | ورود={test_entry}")
+    else:
+        report_lines.append("🧪 تست استراتژی: ❌ انجام نشد")
+    
+    report_lines.append("─────────────────────────────────────────")
+    
+    # تنظیمات
+    leverage_str = " ".join([f"{k}={v}" for k, v in LEVERAGE_MAP.items()])
+    report_lines.append(f"⚙️ تنظیمات: ریسک={TARGET_RISK}٪")
+    report_lines.append(f"🔧 اهرم: {leverage_str}")
+    report_lines.append(f"💼 سرمایه پایه: {trade_ledger.BASE_CAPITAL} USDT")
+    
+    report_lines.append("─────────────────────────────────────────")
+    report_lines.append(f"✅ راه‌اندازی کامل شد | زمان: {time_str}")
+    
+    final_report = "\n".join(report_lines)
+    
     logger.info(
         "[STARTUP DIAGNOSTIC]\n%s",
         final_report
