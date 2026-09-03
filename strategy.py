@@ -142,7 +142,7 @@ def main(
             startOffset = bar_index - (barEnd - 1)
             endOffset = bar_index - (barStart + 1)
             if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
-                for j in pine_range(startOffset, endOffset):
+                for j in range(startOffset, endOffset + 1):
                     h = histLine[j]
                     if needRedPhase and h < 0:
                         found = True
