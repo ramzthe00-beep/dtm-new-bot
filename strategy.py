@@ -391,6 +391,10 @@ def main(
     # ============================================================
     # 🔍 لاگ تفصیلی - بررسی تمامی شروط واگرایی
     # ============================================================
+    # ============================================================
+# 🔍 لاگ تفصیلی - فقط برای سیگنال‌های نهایی
+# ============================================================
+if (finalClassicBearish or finalClassicBullish or finalHiddenBullish or finalHiddenBearish):
     if newPivotHigh or newPivotLow:
         logger.info(f"""
 [DIV_SIGNAL] symbol={syminfo.tickerid} | bar_index={bar_index}
