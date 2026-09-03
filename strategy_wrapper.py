@@ -179,19 +179,16 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
 
         # ===========================================================
         # تشخیص کندل ناقص بر اساس timestamp — آستانه متناسب با تایم‌فریم
-        # (قبلاً همیشه ۶۰ ثانیه بود؛ برای تایم‌فریم‌های ۵/۱۵ دقیقه‌ای همین باعث می‌شد
-        #  کندلی که هنوز کاملاً باز است اشتباهاً «بسته‌شده» تلقی شود و به استراتژی برسد)
         # ============================================================
         tf_minutes = int(timeframe)
-        COMPLETION_SAFETY_BUFFER_SEC = 5  # تأخیر مجاز برای نهایی‌شدن/انتشار کندل توسط صرافی
+        COMPLETION_SAFETY_BUFFER_SEC = 5
         completion_threshold_sec = tf_minutes * 60 + COMPLETION_SAFETY_BUFFER_SEC
 
         if len(candles) > 1:
-            last_open_ts = candles[-1].timestamp / 1000.0  # unix seconds — زمان بازشدن آخرین کندل
+            last_open_ts = candles[-1].timestamp / 1000.0
             candle_age = _time.time() - last_open_ts
 
             if candle_age < completion_threshold_sec:
-                # واقعاً هنوز کامل نشده (نسبت به طول عمر این تایم‌فریم)
                 dropped_ts = candles[-1].timestamp
                 candles = candles[:-1]
                 logger.info(
@@ -200,7 +197,6 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
                     f"Remaining: {len(candles)}"
                 )
             else:
-                # صرافی خودش کندل ناقص رو برنگردونده — نباید دوباره حذفش کنیم
                 logger.info(
                     f"Last candle already closed | tf={tf_minutes}m | age={candle_age:.1f}s | "
                     f"threshold={completion_threshold_sec}s — NOT dropping. "
@@ -209,9 +205,6 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         else:
             logger.warning("Only one candle available, cannot remove last candle")
 
-        # timestamp (ms) کندل بسته‌ی نهایی که واقعاً به استراتژی داده می‌شود —
-        # همان کندلی است که هر سیگنالی روی آن محاسبه می‌شود (نه df.index[-1] خام در bot.py،
-        # که ممکن است دقیقاً همان کندلی باشد که در بالا به‌عنوان ناقص حذف شد)
         signal_bar_ts_ms = candles[-1].timestamp if len(candles) > 0 else None
 
         if len(candles) < 50:
@@ -281,7 +274,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             yield from candles
 
         # ============================================================
-        # 🔍 تست pine_range — فقط برای دیباگ (قابل حذف بعد از تست)
+        # 🔍 تست pine_range — فقط برای دیباگ
         # ============================================================
         try:
             from pynecore import pine_range
@@ -306,7 +299,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         # حلقه تشخیصی با کپی مستقل از دیکشنری
         # ============================================================
         last_values = None
-        found_valid = False          # پرچم مستقل، به‌جای تکیه بر truthiness دیکشنری
+        found_valid = False
         result_count = 0
         empty_count = 0
         empty_indices = []
@@ -315,9 +308,6 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         for result in runner.run_iter():
             result_count += 1
 
-            # ============================================================
-            # تشخیص دیکشنری معتبر (نه None و نه خالی)
-            # ============================================================
             is_valid_dict = (
                 len(result) >= 2
                 and isinstance(result[1], dict)
@@ -325,18 +315,13 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             )
 
             if is_valid_dict:
-                # کپیِ مستقل (snapshot)، نه رفرنس زنده
                 last_values = dict(result[1])
                 found_valid = True
             elif len(result) >= 2 and isinstance(result[1], dict):
-                # دیکشنری هست ولی خالی {}
                 empty_count += 1
                 if len(empty_indices) < 20:
                     empty_indices.append(result_count)
 
-            # ============================================================
-            # دیباگ برای کندل‌های خاص
-            # ============================================================
             if result_count <= 5 or result_count % 100 == 0 or result_count > 495:
                 debug_info.append({
                     "index": result_count,
@@ -351,7 +336,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         # ============================================================
         logger.info(f"Total results: {result_count} | Empty dicts: {empty_count} | Empty at indices (first 20): {empty_indices} | Found valid: {found_valid}")
 
-        if not found_valid:            # به‌جای `if not last_values:`
+        if not found_valid:
             error_msg = f"""
 🔴 ERROR: No valid dictionary found in ScriptRunner output
 
@@ -408,11 +393,7 @@ Value: {str(last_values)[:500]}
             signal = None
 
         # ============================================================
-        # لاگ تشخیصی DIVCHECK — دقیقاً هم‌ساختار با پاین
-        # ============================================================
-        # ============================================================
-        #        لاگ تشخیصی DIVCHECK — دقیقاً هم‌ساختار با پاین
-        # ============================================================
+        # لاگ تشخیصی DIVCHECK
         # ============================================================
         try:
             if not _is_na(last_values.get("pivot_high")):
@@ -424,33 +405,33 @@ Value: {str(last_values)[:500]}
                     "hist1=%s hist2=%s bothPeaksGreen=%s colorChgHigh=%s trendOkBear=%s "
                     "CD-base=%s HD-base=%s final=%s prom=%s "
                     "ph1_o=%s ph1_h=%s ph1_l=%s ph1_c=%s ph2_o=%s ph2_h=%s ph2_l=%s ph2_c=%s bars=%s",
-                    symbol,                                                    # 1
-                    last_values.get("previous_pivot_high_price"),             # 2
-                    _fmt_time(candles, b1),                                   # 3
-                    last_values.get("pivot_high_price"),                     # 4
-                    _fmt_time(candles, b2),                                   # 5
-                    last_values.get("ph_rsi_1"),                             # 6
-                    last_values.get("ph_rsi_2"),                             # 7
-                    last_values.get("ph_macdline_1"),                        # 8
-                    last_values.get("ph_macdline_2"),                        # 9
-                    last_values.get("ph_hist_1"),                            # 10
-                    last_values.get("ph_hist_2"),                            # 11
-                    last_values.get("both_peaks_green"),                     # 12
-                    last_values.get("macd_color_changed_highs"),             # 13
-                    last_values.get("trend_bearish_ok"),                     # 14
-                    last_values.get("classic_bearish_base"),                 # 15
-                    last_values.get("hidden_bearish_base"),                  # 16
-                    (signal == "SHORT"),                                     # 17
-                    prom,                                                    # 18
-                    last_values.get("ph1_open"),                             # 19
-                    last_values.get("ph1_high"),                             # 20
-                    last_values.get("ph1_low"),                              # 21
-                    last_values.get("ph1_close"),                            # 22
-                    last_values.get("ph2_open"),                             # 23
-                    last_values.get("ph2_high"),                             # 24
-                    last_values.get("ph2_low"),                              # 25
-                    last_values.get("ph2_close"),                            # 26
-                    last_values.get("total_bars_fed"), # 27        
+                    symbol,
+                    last_values.get("previous_pivot_high_price"),
+                    _fmt_time(candles, b1),
+                    last_values.get("pivot_high_price"),
+                    _fmt_time(candles, b2),
+                    last_values.get("ph_rsi_1"),
+                    last_values.get("ph_rsi_2"),
+                    last_values.get("ph_macdline_1"),
+                    last_values.get("ph_macdline_2"),
+                    last_values.get("ph_hist_1"),
+                    last_values.get("ph_hist_2"),
+                    last_values.get("both_peaks_green"),
+                    last_values.get("macd_color_changed_highs"),
+                    last_values.get("trend_bearish_ok"),
+                    last_values.get("classic_bearish_base"),
+                    last_values.get("hidden_bearish_base"),
+                    (signal == "SHORT"),
+                    prom,
+                    last_values.get("ph1_open"),
+                    last_values.get("ph1_high"),
+                    last_values.get("ph1_low"),
+                    last_values.get("ph1_close"),
+                    last_values.get("ph2_open"),
+                    last_values.get("ph2_high"),
+                    last_values.get("ph2_low"),
+                    last_values.get("ph2_close"),
+                    last_values.get("total_bars_fed"),
                 )
             if not _is_na(last_values.get("pivot_low")):
                 b1 = last_values.get("previous_pivot_low_index")
@@ -461,50 +442,42 @@ Value: {str(last_values)[:500]}
                     "hist1=%s hist2=%s bothTroughsRed=%s colorChgLow=%s trendOkBull=%s "
                     "CD+base=%s HD+base=%s final=%s prom=%s "
                     "pl1_o=%s pl1_h=%s pl1_l=%s pl1_c=%s pl2_o=%s pl2_h=%s pl2_l=%s pl2_c=%s bars=%s",
-                    symbol,                                                    # 1
-                    last_values.get("previous_pivot_low_price"),              # 2
-                    _fmt_time(candles, b1),                                   # 3
-                    last_values.get("pivot_low_price"),                      # 4
-                    _fmt_time(candles, b2),                                   # 5
-                    last_values.get("pl_rsi_1"),                             # 6
-                    last_values.get("pl_rsi_2"),                             # 7
-                    last_values.get("pl_macdline_1"),                        # 8
-                    last_values.get("pl_macdline_2"),                        # 9
-                    last_values.get("pl_hist_1"),                            # 10
-                    last_values.get("pl_hist_2"),                            # 11
-                    last_values.get("both_troughs_red"),                     # 12
-                    last_values.get("macd_color_changed_lows"),              # 13
-                    last_values.get("trend_bullish_ok"),                     # 14
-                    last_values.get("classic_bullish_base"),                 # 15
-                    last_values.get("hidden_bullish_base"),                  # 16
-                    (signal == "LONG"),                                      # 17
-                    prom,                                                    # 18
-                    last_values.get("pl1_open"),                             # 19
-                    last_values.get("pl1_high"),                             # 20
-                    last_values.get("pl1_low"),                              # 21
-                    last_values.get("pl1_close"),                            # 22
-                    last_values.get("pl2_open"),                             # 23
-                    last_values.get("pl2_high"),                             # 24
-                    last_values.get("pl2_low"),                              # 25
-                    last_values.get("pl2_close"),                            # 26
-                    last_values.get("total_bars_fed"),                       # 27
+                    symbol,
+                    last_values.get("previous_pivot_low_price"),
+                    _fmt_time(candles, b1),
+                    last_values.get("pivot_low_price"),
+                    _fmt_time(candles, b2),
+                    last_values.get("pl_rsi_1"),
+                    last_values.get("pl_rsi_2"),
+                    last_values.get("pl_macdline_1"),
+                    last_values.get("pl_macdline_2"),
+                    last_values.get("pl_hist_1"),
+                    last_values.get("pl_hist_2"),
+                    last_values.get("both_troughs_red"),
+                    last_values.get("macd_color_changed_lows"),
+                    last_values.get("trend_bullish_ok"),
+                    last_values.get("classic_bullish_base"),
+                    last_values.get("hidden_bullish_base"),
+                    (signal == "LONG"),
+                    prom,
+                    last_values.get("pl1_open"),
+                    last_values.get("pl1_high"),
+                    last_values.get("pl1_low"),
+                    last_values.get("pl1_close"),
+                    last_values.get("pl2_open"),
+                    last_values.get("pl2_high"),
+                    last_values.get("pl2_low"),
+                    last_values.get("pl2_close"),
+                    last_values.get("total_bars_fed"),
                 )
         except Exception as e:
             logger.warning(f"[DIVCHECK] Failed to log: {e}")
             pass
 
-
-
-
-
-
-        
-
         # ============================================================
-        # 🔬 لاگ تشخیصی فوق‌تخصصی — برای پیدا کردن منشأ سیگنال‌های متفرقه
+        # 🔬 لاگ تشخیصی فوق‌تخصصی
         # ============================================================
         try:
-            # --- A. بررسی ساختار سیگنال نهایی ---
             signal_type = None
             if last_values.get("final_classic_bearish"):
                 signal_type = "CD-"
@@ -515,26 +488,21 @@ Value: {str(last_values)[:500]}
             elif last_values.get("final_hidden_bearish"):
                 signal_type = "HD-"
 
-            # --- B. بررسی امتیازدهی ---
             score_cd_minus = last_values.get("score_classic_bearish", "N/A")
             score_cd_plus = last_values.get("score_classic_bullish", "N/A")
             score_hd_plus = last_values.get("score_hidden_bullish", "N/A")
             score_hd_minus = last_values.get("score_hidden_bearish", "N/A")
 
-            # --- C. بررسی جزئیات امتیاز ---
             score_detail_cd_minus = last_values.get("score_cd_minus_detail", {})
             score_detail_cd_plus = last_values.get("score_cd_plus_detail", {})
             score_detail_hd_plus = last_values.get("score_hd_plus_detail", {})
             score_detail_hd_minus = last_values.get("score_hd_minus_detail", {})
 
-            # --- D. بررسی شرایط پایه (Base3) ---
             base_cd_minus = last_values.get("classic_bearish_base", False)
             base_cd_plus = last_values.get("classic_bullish_base", False)
             base_hd_plus = last_values.get("hidden_bullish_base", False)
             base_hd_minus = last_values.get("hidden_bearish_base", False)
 
-            # --- E. بررسی شرایط جداگانه ---
-            # CD- conditions
             cd_minus_price_hh = last_values.get("pivot_high_price") and last_values.get("previous_pivot_high_price") and \
                                 (last_values.get("pivot_high_price") > last_values.get("previous_pivot_high_price"))
             cd_minus_rsi_lh = last_values.get("ph_rsi_2") is not None and last_values.get("ph_rsi_1") is not None and \
@@ -547,7 +515,6 @@ Value: {str(last_values)[:500]}
             cd_minus_color_chg = last_values.get("macd_color_changed_highs", False)
             cd_minus_trend_ok = last_values.get("trend_bearish_ok", False)
 
-            # CD+ conditions
             cd_plus_price_ll = last_values.get("pivot_low_price") and last_values.get("previous_pivot_low_price") and \
                                (last_values.get("pivot_low_price") < last_values.get("previous_pivot_low_price"))
             cd_plus_rsi_hl = last_values.get("pl_rsi_2") is not None and last_values.get("pl_rsi_1") is not None and \
@@ -560,18 +527,14 @@ Value: {str(last_values)[:500]}
             cd_plus_color_chg = last_values.get("macd_color_changed_lows", False)
             cd_plus_trend_ok = last_values.get("trend_bullish_ok", False)
 
-            # --- F. بررسی فیبوناچی ---
             fib_bearish = last_values.get("fib_bearish", False)
             fib_bullish = last_values.get("fib_bullish", False)
 
-            # --- G. بررسی پرایس‌اکشن ---
             pa_bullish = last_values.get("price_action_bullish", False)
             pa_bearish = last_values.get("price_action_bearish", False)
 
-            # --- H. بررسی minConfirmations ---
             min_conf = last_values.get("min_confirmations", "N/A")
 
-            # --- I. بررسی Pivotها ---
             ph2 = last_values.get("pivot_high_price")
             ph1 = last_values.get("previous_pivot_high_price")
             pl2 = last_values.get("pivot_low_price")
@@ -582,17 +545,12 @@ Value: {str(last_values)[:500]}
             pl2_bar = last_values.get("pivot_low_index")
             pl1_bar = last_values.get("previous_pivot_low_index")
 
-            # --- J. بررسی Prominence ---
             prom_high = last_values.get("prominence_high")
             prom_low = last_values.get("prominence_low")
 
-            # --- K. بررسی newPivot ---
             new_ph = not _is_na(last_values.get("pivot_high"))
             new_pl = not _is_na(last_values.get("pivot_low"))
 
-            # ============================================================
-            # 📝 لاگ نهایی تشخیصی
-            # ============================================================
             logger.info(
                 "[SIGNAL_TRACE] %s | tf=%s | signal=%s | score_CD-=%s | score_CD+=%s | score_HD+=%s | score_HD-=%s | "
                 "base_CD-=%s | base_CD+=%s | base_HD+=%s | base_HD-=%s | "
@@ -619,9 +577,6 @@ Value: {str(last_values)[:500]}
                 cd_plus_price_ll, cd_plus_rsi_hl, cd_plus_macd_hl, cd_plus_hist_hl, cd_plus_both_red, cd_plus_color_chg, cd_plus_trend_ok,
             )
 
-            # ============================================================
-            # 🚨 لاگ هشدار برای سیگنال‌های متفرقه (بدون newPivot)
-            # ============================================================
             if signal_type and not (new_ph or new_pl):
                 logger.warning(
                     "[SIGNAL_ANOMALY] %s | tf=%s | signal=%s BUT newPH=%s newPL=%s | "
@@ -632,9 +587,6 @@ Value: {str(last_values)[:500]}
                     ph2, ph1, pl2, pl1,
                 )
 
-            # ============================================================
-            # 🚨 لاگ هشدار برای سیگنال با امتیاز پایین
-            # ============================================================
             if signal_type and score_cd_minus != "N/A" and score_cd_minus < 3 and signal_type == "CD-":
                 logger.warning(
                     "[LOW_SCORE] %s | tf=%s | signal=%s | score=%s/5 | "
@@ -654,20 +606,20 @@ Value: {str(last_values)[:500]}
         except Exception as e:
             logger.warning(f"[SIGNAL_TRACE] Failed to log: {e}")
             pass
+
         # ============================================================
         # محاسبه استاپ و تارگت
         # ============================================================
         stop_price, target_price, rr_value = None, None, None
 
         if signal in ("LONG", "SHORT"):
-            # تنظیم buffer_ticks بر اساس نماد
             if symbol == "BNBUSDT" or symbol == "ETHUSDT":
                 buffer_ticks = 9
             elif symbol == "LTCUSDT" or symbol == "DOGEUSDT":
                 buffer_ticks = 3
             else:
-                buffer_ticks = 5  # پیش‌فرض برای سایر ارزها
-    
+                buffer_ticks = 5
+
             stop_price, target_price, rr_value = _compute_stop_target(
                 candles, signal, last_values, tick_info["mintick"], buffer_ticks=buffer_ticks
             )
@@ -675,44 +627,83 @@ Value: {str(last_values)[:500]}
                 f"[SL/TP] {symbol} {signal} | entry={entry} | stop={stop_price} | "
                 f"target={target_price} | R:R={rr_value} | buffer={buffer_ticks}"
             )
-        
 
         # ============================================================
-        # گزارش نتیجه نهایی
+        # 📊 گزارش نهایی — قالب حرفه‌ای و خوانا
         # ============================================================
-        result_msg = f"""
-✅ calculate_signals result:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Symbol: {symbol}
-  Timeframe: {timeframe}m
-  Signal: {signal}
-  Entry: {entry}
-  Stop Loss: {stop_price}
-  Take Profit: {target_price}
-  R:R: {rr_value}
-  Total Results: {result_count}
-  Empty dicts: {empty_count}
-  Empty indices (first 20): {empty_indices}
-  Found valid: {found_valid}
-  Last Values Keys: {list(last_values.keys())[:10] if isinstance(last_values, dict) else 'N/A'}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        if signal in ("LONG", "SHORT"):
+            emoji = "🟢" if signal == "LONG" else "🔴"
+            direction = "خرید" if signal == "LONG" else "فروش"
+            
+            stop_distance = abs(stop_price - entry) if stop_price else 0
+            target_distance = abs(target_price - entry) if target_price else 0
+            stop_pct = (stop_distance / entry * 100) if entry else 0
+            target_pct = (target_distance / entry * 100) if entry else 0
+            
+            if rr_value and rr_value >= 3:
+                rr_status = "عالی 🚀"
+            elif rr_value and rr_value >= 2:
+                rr_status = "خوب ✅"
+            elif rr_value and rr_value >= 1:
+                rr_status = "متوسط ⚠️"
+            else:
+                rr_status = "ضعیف ❌"
+            
+            signal_type_map = {
+                "CD-": "CD- (واگرایی کلاسیک نزولی)",
+                "CD+": "CD+ (واگرایی کلاسیک صعودی)",
+                "HD+": "HD+ (واگرایی مخفی صعودی)",
+                "HD-": "HD- (واگرایی مخفی نزولی)",
+            }
+            signal_type_fa = signal_type_map.get(signal_type, signal_type)
+            
+            if not hasattr(calculate_signals, "_counter"):
+                calculate_signals._counter = 0
+            calculate_signals._counter += 1
+            trade_id = f"#{calculate_signals._counter:04d}"
+            
+            from datetime import datetime, timedelta
+            now_utc = datetime.utcnow()
+            now_tehran = now_utc + timedelta(hours=3, minutes=30)
+            
+            score = 0
+            if signal_type == "CD-":
+                score = last_values.get("score_classic_bearish", 0)
+            elif signal_type == "CD+":
+                score = last_values.get("score_classic_bullish", 0)
+            elif signal_type == "HD+":
+                score = last_values.get("score_hidden_bullish", 0)
+            elif signal_type == "HD-":
+                score = last_values.get("score_hidden_bearish", 0)
+            
+            stars = "⭐" * score + "☆" * (5 - score)
+            
+            result_msg = f"""
+{emoji} سیگنال {direction} ({signal}) - {symbol} - {timeframe} دقیقه
+─────────────────────────────────────────
+🆔 شماره: {trade_id}
+🕐 زمان: {now_utc.strftime('%H:%M:%S')} UTC ({now_tehran.strftime('%H:%M:%S')} تهران)
+─────────────────────────────────────────
+📊 ورود: {entry:.2f}
+🛑 حد ضرر: {stop_price:.2f} ({stop_distance:.2f}- | {stop_pct:.2f}%)
+🎯 هدف: {target_price:.2f} ({target_distance:.2f}+ | {target_pct:.2f}%)
+⭐ نسبت ریسک: 1 : {rr_value:.2f} ({rr_status})
+📌 نوع: {signal_type_fa}
+🏆 امتیاز: {score}/5 {stars}
+─────────────────────────────────────────
+🔒 وضعیت: {'✅ معتبر' if rr_value and rr_value >= 2 else '⚠️ ریسک بالا'}
 """
-        logger.info(result_msg)
-        
-        # ارسال به تلگرام فقط برای ۴ بار اول
-        if not hasattr(calculate_signals, "_telegram_counter"):
-            calculate_signals._telegram_counter = 0
-        
-        if calculate_signals._telegram_counter < 4:
+            logger.info(result_msg)
             _send_telegram(result_msg)
-            calculate_signals._telegram_counter += 1
+            
+        else:
+            if result_count % 10 == 0:
+                status_msg = f"🔄 {symbol} {timeframe}دقیقه | {result_count} کندل پردازش شد | وضعیت: {'✅ سالم' if found_valid else '❌ خطا'}"
+                logger.info(status_msg)
 
         return signal, entry, stop_price, target_price, signal_bar_ts_ms
 
     except Exception as e:
-        # ============================================================
-        # گزارش کامل خطا با traceback
-        # ============================================================
         tb = traceback.format_exc()
         error_msg = f"""
 ❌ FATAL ERROR in calculate_signals
