@@ -78,13 +78,19 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
     SHORT: استاپ = بالاترین قله از ۲ قله واگرایی + بافر
            تارگت خام = پایین‌ترین دره بین آن دو قله
            اگر R:R < 2 → تارگت پایین برده می‌شود تا R:R = 2
+
+    خروجی اضافه: pivot_ts_lo, pivot_ts_hi — تایم‌استمپ (میلی‌ثانیه، UTC) دو
+    کندلی که دره/قلهٔ واگرایی رویشان تشکیل شده (به ترتیب زمانی: قدیمی‌تر →
+    جدیدتر). این دو در bot.py برای پیدا کردن همان دو کندل (بر اساس زمان) در
+    دادهٔ صرافی اجرا استفاده می‌شوند تا استاپ/تارگت مستقیماً از روی قیمت
+    واقعیِ صرافی اجرا محاسبه شود، نه با تبدیل درصدی.
     """
     def _valid(x):
         return x is not None and not (isinstance(x, float) and _math.isnan(x))
 
     entry = last_values.get("entry")
     if not _valid(entry):
-        return None, None, None
+        return None, None, None, None, None
 
     buffer_abs = buffer_ticks * mintick
 
@@ -96,25 +102,25 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
         
         if not (_valid(low1) and _valid(low2) and _valid(bar1) and _valid(bar2)):
             logger.warning(f"[SL/TP] LONG: missing pivot data low1={low1} low2={low2} bar1={bar1} bar2={bar2}")
-            return None, None, None
+            return None, None, None, None, None
 
         stop = min(low1, low2) - buffer_abs
 
         lo, hi = sorted((int(bar1), int(bar2)))
         lo, hi = max(lo, 0), min(hi, len(candles) - 1)
         if hi < lo:
-            return None, None, None
+            return None, None, None, None, None
         
         # پیدا کردن بالاترین قله بین دو دره
         mid_peak = max(c.high for c in candles[lo:hi + 1])
 
         risk = entry - stop
         if risk <= 0:
-            return None, None, None
+            return None, None, None, None, None
 
         rr = (mid_peak - entry) / risk
         target = mid_peak if rr >= 2 else entry + 2 * risk
-        return stop, target, max(rr, 2.0)
+        return stop, target, max(rr, 2.0), candles[lo].timestamp, candles[hi].timestamp
 
     elif signal == "SHORT":
         high1 = last_values.get("previous_pivot_high_price")
@@ -124,27 +130,27 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
         
         if not (_valid(high1) and _valid(high2) and _valid(bar1) and _valid(bar2)):
             logger.warning(f"[SL/TP] SHORT: missing pivot data high1={high1} high2={high2} bar1={bar1} bar2={bar2}")
-            return None, None, None
+            return None, None, None, None, None
 
         stop = max(high1, high2) + buffer_abs
 
         lo, hi = sorted((int(bar1), int(bar2)))
         lo, hi = max(lo, 0), min(hi, len(candles) - 1)
         if hi < lo:
-            return None, None, None
+            return None, None, None, None, None
         
         # پیدا کردن پایین‌ترین دره بین دو قله
         mid_trough = min(c.low for c in candles[lo:hi + 1])
 
         risk = stop - entry
         if risk <= 0:
-            return None, None, None
+            return None, None, None, None, None
 
         rr = (entry - mid_trough) / risk
         target = mid_trough if rr >= 2 else entry - 2 * risk
-        return stop, target, max(rr, 2.0)
+        return stop, target, max(rr, 2.0), candles[lo].timestamp, candles[hi].timestamp
 
-    return None, None, None
+    return None, None, None, None, None
 
 
 def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
@@ -211,7 +217,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             msg = f"Too few candles: {len(candles)}"
             logger.warning(msg)
             _send_telegram(f"⚠️ WARNING: {msg}")
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
 
         symbol = symbol.upper()
         tick_info = SYMBOL_TICK_INFO.get(
@@ -368,7 +374,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
 """
             logger.warning(error_msg)
             _send_telegram(error_msg)
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
 
         # ============================================================
         # استخراج سیگنال از last_values
@@ -611,6 +617,7 @@ Value: {str(last_values)[:500]}
         # محاسبه استاپ و تارگت
         # ============================================================
         stop_price, target_price, rr_value = None, None, None
+        pivot_ts_lo, pivot_ts_hi = None, None
 
         if signal in ("LONG", "SHORT"):
             if symbol == "BNBUSDT" or symbol == "ETHUSDT":
@@ -620,7 +627,7 @@ Value: {str(last_values)[:500]}
             else:
                 buffer_ticks = 5
 
-            stop_price, target_price, rr_value = _compute_stop_target(
+            stop_price, target_price, rr_value, pivot_ts_lo, pivot_ts_hi = _compute_stop_target(
                 candles, signal, last_values, tick_info["mintick"], buffer_ticks=buffer_ticks
             )
             logger.info(
@@ -701,7 +708,7 @@ Value: {str(last_values)[:500]}
                 status_msg = f"🔄 {symbol} {timeframe}دقیقه | {result_count} کندل پردازش شد | وضعیت: {'✅ سالم' if found_valid else '❌ خطا'}"
                 logger.info(status_msg)
 
-        return signal, entry, stop_price, target_price, signal_bar_ts_ms
+        return signal, entry, stop_price, target_price, signal_bar_ts_ms, pivot_ts_lo, pivot_ts_hi
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -725,4 +732,5 @@ Value: {str(last_values)[:500]}
 """
         logger.error(error_msg)
         _send_telegram(error_msg)
-        return None, None, None, None, None
+        return None, None, None, None, None, None, None
+
