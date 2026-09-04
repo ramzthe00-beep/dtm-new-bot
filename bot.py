@@ -199,46 +199,57 @@ class PublicData:
         from_ts = now - bars_needed * 60 - 60
         uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution={timeframe}&from={from_ts}&to={now}&countback={HISTORY_BARS * multiplier}"
         
-        try:
-            r = self.session.get(f"{self.base}{uri}", timeout=20)
-            r.raise_for_status()
-            data = r.json()
-            
-            if data.get('s') != 'ok':
-                logger.warning(f"Data not ok for {symbol} {timeframe}m: {data.get('s')}")
+        # تلاش مجدد کوتاه فقط در برابر خطاهای گذرای شبکه/اتصال (مثل تایم‌اوت یا
+        # قطعی لحظه‌ای) — تا یک هیکاپ گذرا باعث خالی‌شدن بی‌دلیل df_exec نشود
+        # (که پیش‌تر باعث می‌شد تطبیق استاپ/تارگت روی صرافی اجرا غیرفعال شود).
+        # منطق پردازش داده و فرمت خروجی هیچ تغییری نکرده است.
+        for attempt in range(2):
+            try:
+                r = self.session.get(f"{self.base}{uri}", timeout=20)
+                r.raise_for_status()
+                data = r.json()
+
+                if data.get('s') != 'ok':
+                    logger.warning(f"Data not ok for {symbol} {timeframe}m: {data.get('s')}")
+                    return pd.DataFrame()
+
+                # بررسی وجود داده
+                if not data.get('t') or len(data['t']) == 0:
+                    logger.warning(f"No data for {symbol} {timeframe}m")
+                    return pd.DataFrame()
+
+                t = data['t']
+                o = data['o']
+                h = data['h']
+                l = data['l']
+                c = data['c']
+                v = data.get('v', [None] * len(t))
+
+                df = pd.DataFrame({
+                    'open': pd.to_numeric(o, errors='coerce'),
+                    'high': pd.to_numeric(h, errors='coerce'),
+                    'low': pd.to_numeric(l, errors='coerce'),
+                    'close': pd.to_numeric(c, errors='coerce'),
+                    'volume': pd.to_numeric(v, errors='coerce'),
+                }, index=pd.to_datetime(t, unit='s', utc=True))
+
+                df = df.sort_index()
+                df = df[~df.index.duplicated(keep='last')]
+                df = df.dropna(subset=['open', 'high', 'low', 'close'])
+
+                result = df.tail(HISTORY_BARS)
+                logger.info(f"Fetched {len(result)} candles for {symbol} {timeframe}m")
+                return result
+
+            except Exception as e:
+                if attempt == 0:
+                    logger.warning(f"Data error for {symbol} {timeframe}m (attempt 1/2, retrying in 2s): {e}")
+                    time.sleep(2)
+                    continue
+                logger.error(f"Data error for {symbol} {timeframe}m: {e}")
                 return pd.DataFrame()
-                
-            # بررسی وجود داده
-            if not data.get('t') or len(data['t']) == 0:
-                logger.warning(f"No data for {symbol} {timeframe}m")
-                return pd.DataFrame()
-                
-            t = data['t']
-            o = data['o']
-            h = data['h']
-            l = data['l']
-            c = data['c']
-            v = data.get('v', [None] * len(t))
 
-            df = pd.DataFrame({
-                'open': pd.to_numeric(o, errors='coerce'),
-                'high': pd.to_numeric(h, errors='coerce'),
-                'low': pd.to_numeric(l, errors='coerce'),
-                'close': pd.to_numeric(c, errors='coerce'),
-                'volume': pd.to_numeric(v, errors='coerce'),
-            }, index=pd.to_datetime(t, unit='s', utc=True))
-
-            df = df.sort_index()
-            df = df[~df.index.duplicated(keep='last')]
-            df = df.dropna(subset=['open', 'high', 'low', 'close'])
-
-            result = df.tail(HISTORY_BARS)
-            logger.info(f"Fetched {len(result)} candles for {symbol} {timeframe}m")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Data error for {symbol} {timeframe}m: {e}")
-            return pd.DataFrame()
+        return pd.DataFrame()
 
 
 
@@ -340,11 +351,18 @@ class PrivateExchange:
             raise
 
     def test_connection(self):
-        try:
-            self._request("GET", "/futures/positions")
-            return True
-        except Exception:
-            return False
+        # تلاش مجدد کوتاه فقط در برابر قطعی گذرای شبکه — تا یک هیکاپ لحظه‌ای
+        # باعث اعلام کاذب «اتصال صرافی قطع است» و توقف ۶۰ ثانیه‌ای نشود.
+        for attempt in range(2):
+            try:
+                self._request("GET", "/futures/positions")
+                return True
+            except Exception:
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                return False
+        return False
     
     def fetch_balance(self):
         try:
@@ -1042,6 +1060,10 @@ def loop():
                         # حرکت قیمت واقعی روی همان صرافی‌ای باشد که پوزیشن آنجا باز شده)
                         # ============================================================
                         df_exec = public.fetch_ohlcv(symbol, timeframe)
+                        # 🎯 پرچم صحت منبع df_exec — قبل از هر جایگزینیِ fallback ثبت می‌شود
+                        # تا در تطبیق قله/درهٔ استاپ/تارگت (پایین‌تر) هرگز داده‌ی بایننسِ
+                        # جایگزین‌شده به‌اشتباه به‌عنوان «تطبیق‌شده روی صرافی اجرا» قلمداد نشود.
+                        df_exec_is_live = not df_exec.empty
                         if df_exec.empty:
                             logger.warning(f"Empty thetruetrade.io data for {symbol} {timeframe}m")
                             df_exec = df_signal  # حداقل چیزی برای پایش داشته باشیم
@@ -1184,7 +1206,7 @@ def loop():
                         exec_stop_price = stop_price
                         exec_target_price = target_price
                         try:
-                            if pivot_ts_lo is not None and pivot_ts_hi is not None and not df_exec.empty:
+                            if pivot_ts_lo is not None and pivot_ts_hi is not None and df_exec_is_live and not df_exec.empty:
                                 exec_entry, matched_stop, matched_target = _compute_exec_stop_target(
                                     df_exec, sig, signal_bar_ts_ms, pivot_ts_lo, pivot_ts_hi,
                                     symbol, tf_seconds
@@ -1202,6 +1224,13 @@ def loop():
                                         f"{symbol}: exec-side pivot matching failed (no matching candle within "
                                         f"tolerance on thetruetrade.io) — falling back to raw binance-derived stop/target"
                                     )
+                            elif not df_exec_is_live:
+                                logger.warning(
+                                    f"{symbol}: thetruetrade.io exec data unavailable this cycle (df_exec fell back "
+                                    f"to BINANCE data for monitoring only) — skipping exec-side pivot matching to "
+                                    f"avoid mislabeling BINANCE levels as matched exec levels; falling back to "
+                                    f"raw binance-derived stop/target"
+                                )
                             else:
                                 logger.warning(
                                     f"{symbol}: pivot timestamps unavailable or exec data empty — "
@@ -1272,4 +1301,5 @@ if __name__ == "__main__":
         health_thread.join(timeout=3)
         report_thread.join(timeout=3)
         logger.info("DTM PROCESS EXIT")
+
 
