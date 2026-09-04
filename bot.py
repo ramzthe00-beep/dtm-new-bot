@@ -61,7 +61,7 @@ logger.info("=" * 60)
 # Rate limiter برای درخواست‌های thetruetrade.io
 # تا درخواست‌های پشت‌سرهم باعث HTTP 429 نشوند
 # ============================================================
-TRUETRADE_MIN_INTERVAL = float(os.getenv("TRUETRADE_MIN_INTERVAL", "1.0"))
+TRUETRADE_MIN_INTERVAL = float(os.getenv("TRUETRADE_MIN_INTERVAL", "1.3"))
 _truetrade_lock = threading.Lock()
 _truetrade_last_req = 0.0
 
