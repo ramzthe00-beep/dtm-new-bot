@@ -132,7 +132,7 @@ class PublicData:
                     f"{base}/api/v3/klines?symbol={symbol.upper()}"
                     f"&interval={interval}&startTime={start_ms}&endTime={now_ms}&limit={limit}"
                 )
-                r = self.session.get(url, timeout=15)
+                r = self.session.get(url, timeout=30)
                 r.raise_for_status()
                 rows = r.json()
                 if not rows:
@@ -200,7 +200,7 @@ class PublicData:
         uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution={timeframe}&from={from_ts}&to={now}&countback={HISTORY_BARS * multiplier}"
         
         try:
-            r = self.session.get(f"{self.base}{uri}", timeout=20)
+            r = self.session.get(f"{self.base}{uri}", timeout=30)
             r.raise_for_status()
             data = r.json()
             
