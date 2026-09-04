@@ -118,22 +118,25 @@ def record_signal(symbol, timeframe, direction, entry, stop, target,
         "direction": direction,
         "entry": entry,
         "stop": stop,
-        "target": target,  # می‌تواند None باشد
+        "initial_stop": stop,  # ← جدید: ریسک اولیه برای محاسبه PnL
+        "target": target,
         "entry_time_ms": entry_time_ms,
         "last_checked_ms": entry_time_ms,
         "status": "OPEN",           # OPEN | WIN | LOSS
         "exit_price": None,
         "exit_time_ms": None,
         "leverage": leverage,
-        "order_placed": order_placed,   # وضعیت واقعیِ اجرا روی صرافی (اطلاعاتی، در محاسبهٔ سود اثر ندارد)
+        "order_placed": order_placed,
         "order_reason": order_reason,
         "pnl_usd": None,
         "pnl_r": None,
+        "risk_free": False,          # ← جدید: آیا ریسک فری فعال شده؟
+        "exit_reason": None,         # ← جدید: RISK_FREE_STOP | TARGET | STOP_LOSS
     }
 
     with _lock:
         rows = _read_all()
-        # جلوگیری از ثبت تکراری همان سیگنال (همان نماد/تایم‌فریم/زمان ورود)
+        # جلوگیری از ثبت تکراری همان سیگنال
         if any(r["id"] == row["id"] for r in rows):
             return row["id"]
         rows.append(row)
@@ -146,11 +149,15 @@ def record_signal(symbol, timeframe, direction, entry, stop, target,
 # ---------------------------------------------------------------------------
 # محاسبهٔ سود/ضرر دلاریِ فرضی طبق فرمول (مستقل از موجودی واقعی)
 # ---------------------------------------------------------------------------
-def _hypothetical_pnl_usd(direction, entry, stop, exit_price, leverage):
+def _hypothetical_pnl_usd(direction, entry, initial_stop, exit_price, leverage):
+    """
+    محاسبه PnL با استفاده از initial_stop (ریسک اولیه)، نه stop فعلی
+    تا بعد از ریسک فری فرمول خراب نشود.
+    """
     try:
-        if not entry or not stop or entry <= 0:
+        if not entry or not initial_stop or entry <= 0:
             return None, None
-        stop_pct = abs(entry - stop) / entry
+        stop_pct = abs(entry - initial_stop) / entry
         if stop_pct <= 0:
             return None, None
 
@@ -159,7 +166,7 @@ def _hypothetical_pnl_usd(direction, entry, stop, exit_price, leverage):
         else:
             move_pct = (entry - exit_price) / entry
 
-        r_multiple = move_pct / stop_pct  # چند برابر ریسک اولیه
+        r_multiple = move_pct / stop_pct
 
         lev = leverage if (leverage and leverage > 0) else 50
         old_leverage = 1.0 / stop_pct
@@ -173,6 +180,60 @@ def _hypothetical_pnl_usd(direction, entry, stop, exit_price, leverage):
     except Exception as e:
         logger.error(f"[LEDGER] pnl calc error: {e}")
         return None, None
+
+
+# ---------------------------------------------------------------------------
+# 🛡️ هماهنگ‌سازی استاپ ریسک فری با دفترچه
+# ---------------------------------------------------------------------------
+def update_open_trade_stop(symbol, timeframe, direction, entry_time_ms, new_stop):
+    """
+    بعد از ریسک فری: استاپِ رکوردِ باز (برای چک لوکال) را به استاپ جدید
+    (سطح پوشش کارمزد) تغییر می‌دهد، بدون اینکه ریسک اولیه (initial_stop) از بین برود.
+
+    Returns:
+        bool — اگر رکورد پیدا و آپدیت شد True
+    """
+    new_stop = _safe_float(new_stop)
+    if new_stop is None:
+        return False
+
+    try:
+        entry_time_ms = int(entry_time_ms)
+    except Exception:
+        return False
+
+    now_ms = int(datetime.now(UTC_TZ).timestamp() * 1000)
+
+    with _lock:
+        rows = _read_all()
+        changed = False
+        for r in rows:
+            if r.get("status") != "OPEN":
+                continue
+            if r.get("symbol") != symbol:
+                continue
+            if str(r.get("timeframe")) != str(timeframe):
+                continue
+            if r.get("direction") != direction:
+                continue
+            if int(r.get("entry_time_ms", -1)) != entry_time_ms:
+                continue
+
+            # ریسک اولیه را نگه دار — فرمول PnL به آن وابسته است
+            r["initial_stop"] = r.get("initial_stop", r.get("stop"))
+            r["stop"] = new_stop
+            r["risk_free"] = True
+            r["risk_free_armed_ms"] = now_ms
+            # جلوی چکِ لوکالِ کندل‌های قبل از فعال‌شدن استاپ جدید را بگیر
+            r["last_checked_ms"] = max(r.get("last_checked_ms", 0), now_ms)
+
+            logger.info(f"[LEDGER] ریسک فری روی {r['id']}: stop -> {new_stop}")
+            changed = True
+            break
+
+        if changed:
+            _write_all(rows)
+    return changed
 
 
 # ---------------------------------------------------------------------------
@@ -201,11 +262,6 @@ def update_open_trades(symbol, timeframe, df):
             try:
                 last_checked = r.get("last_checked_ms", r["entry_time_ms"])
                 # فقط کندل‌های *بعد از* آخرین بررسی را نگاه کن
-                # نکته مهم: نباید مستقیم df.index.view("int64") را بر ۱۰**۶ تقسیم کرد،
-                # چون دقت (resolution) ایندکس دیتافریم بسته به نسخهٔ pandas و نحوهٔ
-                # ساخته‌شدنش می‌تواند ثانیه/میلی‌ثانیه/میکروثانیه/نانوثانیه باشد، نه
-                # همیشه نانوثانیه. برای اطمینان، ابتدا صریحاً به datetime64[ns] تبدیل
-                # می‌کنیم تا محاسبهٔ میلی‌ثانیه همیشه درست باشد.
                 idx_ms = df.index.values.astype("datetime64[ns]").view("int64") // 10**6
                 sub = df[idx_ms > last_checked]
                 if sub.empty:
@@ -234,19 +290,29 @@ def update_open_trades(symbol, timeframe, df):
                             hit_target = True
 
                     if hit_stop:
-                        r["status"] = "LOSS"
+                        if r.get("risk_free"):
+                            # استاپ ریسک فری سمت سود ورود است؛ برخورد = برگشت کارمزد
+                            r["status"] = "WIN"
+                            r["exit_reason"] = "RISK_FREE_STOP"
+                        else:
+                            r["status"] = "LOSS"
+                            r["exit_reason"] = "STOP_LOSS"
                         r["exit_price"] = r["stop"]
                         r["exit_time_ms"] = candle_ms
                     elif hit_target:
                         r["status"] = "WIN"
+                        r["exit_reason"] = "TARGET"
                         r["exit_price"] = r["target"]
                         r["exit_time_ms"] = candle_ms
 
                     r["last_checked_ms"] = candle_ms
 
                     if r["status"] != "OPEN":
+                        # استفاده از initial_stop برای محاسبه PnL
                         pnl_usd, pnl_r = _hypothetical_pnl_usd(
-                            r["direction"], r["entry"], r["stop"], r["exit_price"], r.get("leverage")
+                            r["direction"], r["entry"],
+                            r.get("initial_stop", r.get("stop")),
+                            r["exit_price"], r.get("leverage")
                         )
                         r["pnl_usd"] = pnl_usd
                         r["pnl_r"] = pnl_r
@@ -282,11 +348,17 @@ def _build_report(rows, title):
 
     total_pnl = sum(r["pnl_usd"] for r in closed if r.get("pnl_usd") is not None)
 
+    # تفکیک ریسک فری
+    risk_free_wins = [r for r in wins if r.get("exit_reason") == "RISK_FREE_STOP"]
+    target_wins = [r for r in wins if r.get("exit_reason") == "TARGET"]
+
     lines = [
         f"📊 {title}",
         "━━━━━━━━━━━━━━━━━━━━",
         f"تعداد کل سیگنال‌ها: {total}",
         f"برنده (TP): {len(wins)}",
+        f"  └─ ریسک فری: {len(risk_free_wins)}",
+        f"  └─ تارگت: {len(target_wins)}",
         f"بازنده (SL): {len(losses)}",
         f"هنوز باز: {len(opens)}",
         f"نرخ برد: {win_rate:.1f}٪ (از {len(closed)} معاملهٔ بسته‌شده)",
@@ -321,6 +393,8 @@ def _build_report(rows, title):
                 t = _ms_to_iran(r["entry_time_ms"])
                 t_str = t.strftime("%Y-%m-%d %H:%M") if t else "?"
                 emoji = "✅" if r["status"] == "WIN" else "❌"
+                if r.get("exit_reason") == "RISK_FREE_STOP":
+                    emoji = "🛡️"  # ریسک فری
                 pnl = r.get("pnl_usd")
                 pnl_str = f"{pnl:+.2f}$" if pnl is not None else "—"
                 lines.append(
@@ -350,7 +424,7 @@ def report_for_day(date_iran=None):
 
 
 def report_for_month(year, month):
-    """گزارش یک ماه میلادی مشخص (بر اساس تقویم UTC/ساده، برای سادگی و صحت محاسبات)."""
+    """گزارش یک ماه میلادی مشخص."""
     start_local = datetime(year, month, 1, tzinfo=IRAN_TZ)
     if month == 12:
         end_local = datetime(year + 1, 1, 1, tzinfo=IRAN_TZ)
@@ -371,10 +445,10 @@ def report_current_and_previous_month():
     now = _now_iran()
     first_of_this_month = now.replace(day=1)
     last_month_end = first_of_this_month - timedelta(days=1)
-    y1, m1 = last_month_end.year, last_month_end.month  # ماه تازه‌تمام‌شده
+    y1, m1 = last_month_end.year, last_month_end.month
 
     prev_end = last_month_end.replace(day=1) - timedelta(days=1)
-    y2, m2 = prev_end.year, prev_end.month  # ماه قبل از آن
+    y2, m2 = prev_end.year, prev_end.month
 
     r1 = report_for_month(y1, m1)
     r2 = report_for_month(y2, m2)
@@ -382,14 +456,14 @@ def report_current_and_previous_month():
 
 
 # ---------------------------------------------------------------------------
-# زمان‌بند گزارش‌ها — یک Thread جدا که هر ۶۰ ثانیه چک می‌کند و در ساعات
-# مشخص (صبح/ظهر/شب، پایان روز، ابتدای ماه) دقیقاً یک‌بار گزارش می‌فرستد.
+# زمان‌بند گزارش‌ها
 # ---------------------------------------------------------------------------
-_last_sent = {}  # key -> "YYYY-MM-DD HH:MM" آخرین باری که آن گزارش ارسال شد
+_last_sent = {}
 
 
 def _should_send(key, now_str):
     return _last_sent.get(key) != now_str
+
 
 def scheduler_loop(send_telegram_fn, stop_event=None,
                     daily_times=("08:00", "13:00", "21:00"),
@@ -399,7 +473,6 @@ def scheduler_loop(send_telegram_fn, stop_event=None,
     """
     logger.info("[LEDGER] scheduler_loop started")
     
-    # 🔧 اگر stop_event ارسال نشده یا از نوع اشتباه است، یک نمونه جدید بساز
     if stop_event is None or not hasattr(stop_event, 'is_set'):
         import threading
         stop_event = threading.Event()
@@ -407,7 +480,6 @@ def scheduler_loop(send_telegram_fn, stop_event=None,
     
     while True:
         try:
-            # اگر stop_event تنظیم شده باشد، از حلقه خارج شو
             if stop_event.is_set():
                 break
                 
@@ -454,7 +526,6 @@ def scheduler_loop(send_telegram_fn, stop_event=None,
         except Exception as e:
             logger.error(f"[LEDGER] scheduler_loop unexpected error: {e}")
 
-        # ۳۰ ثانیه صبر کن
         try:
             stop_event.wait(30)
         except Exception:
