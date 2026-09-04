@@ -292,6 +292,7 @@ class PrivateExchange:
         self.session = requests.Session()
         self._last_response = None
         self.connected = False
+        self._cached_balance = None  # <-- کش برای موجودی
         
     def _sign(self, method, uri, ts):
         payload = f"{ts}{method.upper()}{uri}"
@@ -416,15 +417,31 @@ class PrivateExchange:
             return False
     
     def fetch_balance(self):
+        """دریافت موجودی با قابلیت استفاده از کش در صورت خطا"""
         try:
             data = self._request("GET", "/futures/assets")
             assets = data.get('assets', [])
             for a in assets:
                 if a.get('symbol') == 'USDT':
-                    return float(a.get('availableBalance', 0))
+                    balance = float(a.get('availableBalance', 0))
+                    self._cached_balance = balance  # به‌روزرسانی کش
+                    logger.info(f"[BALANCE] Fetched: {balance:.4f} USDT")
+                    return balance
+            self._cached_balance = 0.0
             return 0.0
-        except Exception:
-            return 0.0
+        except Exception as e:
+            # ============================================================
+            # 🛟 در صورت خطا (مثلاً 429)، از آخرین مقدار کش شده استفاده کن
+            # ============================================================
+            if self._cached_balance is not None:
+                logger.warning(
+                    f"[BALANCE] Failed to fetch fresh balance: {e} — "
+                    f"using cached balance: {self._cached_balance:.4f} USDT"
+                )
+                return self._cached_balance
+            else:
+                logger.error(f"[BALANCE] Failed to fetch balance and no cache available: {e}")
+                return 0.0
     
     def _round_price(self, price, symbol):
         tick = TICK_SIZES.get(symbol.upper(), 0.01)
@@ -1159,12 +1176,64 @@ def loop():
                                     f"target(binance)={target_price} → target(exec)={exec_target_price}"
                                 )
                             else:
+                                # ============================================================
+                                # 🔄 FALLBACK: استفاده از داده بایننس (df_signal) به عنوان لنگر
+                                # چون df_signal هم‌اکنون در دسترس است و مقیاس قیمتش با خودش سازگار است
+                                # ============================================================
                                 logger.warning(
                                     f"{symbol}: exec-anchor price unavailable — "
-                                    f"falling back to raw binance-derived stop/target"
+                                    f"using BINANCE anchor from df_signal"
+                                )
+                                binance_anchor_price = float(df_signal['close'].iloc[-1])
+                                if sig == "LONG":
+                                    exec_stop_price = binance_anchor_price * (1 - stop_pct)
+                                    exec_target_price = (
+                                        binance_anchor_price * (1 + target_pct)
+                                        if target_pct > 0 else None
+                                    )
+                                else:  # SHORT
+                                    exec_stop_price = binance_anchor_price * (1 + stop_pct)
+                                    exec_target_price = (
+                                        binance_anchor_price * (1 - target_pct)
+                                        if target_pct > 0 else None
+                                    )
+                                logger.info(
+                                    f"[{timeframe}m][{symbol}] FALLBACK BINANCE anchor={binance_anchor_price} | "
+                                    f"stop(exec)={exec_stop_price} | target(exec)={exec_target_price}"
                                 )
                         except Exception as anchor_err:
-                            logger.warning(f"{symbol}: exec-anchor fetch failed ({anchor_err}) — using raw stop/target")
+                            # ============================================================
+                            # 🛟 EXCEPTION FALLBACK: استفاده از داده بایننس (df_signal)
+                            # ============================================================
+                            logger.warning(
+                                f"{symbol}: exec-anchor fetch failed ({anchor_err}) — "
+                                f"using BINANCE anchor from df_signal"
+                            )
+                            try:
+                                binance_anchor_price = float(df_signal['close'].iloc[-1])
+                                if sig == "LONG":
+                                    exec_stop_price = binance_anchor_price * (1 - stop_pct)
+                                    exec_target_price = (
+                                        binance_anchor_price * (1 + target_pct)
+                                        if target_pct > 0 else None
+                                    )
+                                else:  # SHORT
+                                    exec_stop_price = binance_anchor_price * (1 + stop_pct)
+                                    exec_target_price = (
+                                        binance_anchor_price * (1 - target_pct)
+                                        if target_pct > 0 else None
+                                    )
+                                logger.info(
+                                    f"[{timeframe}m][{symbol}] EXCEPTION FALLBACK BINANCE anchor={binance_anchor_price} | "
+                                    f"stop(exec)={exec_stop_price} | target(exec)={exec_target_price}"
+                                )
+                            except Exception as e2:
+                                logger.warning(
+                                    f"{symbol}: even binance anchor failed ({e2}) — "
+                                    f"using raw stop/target"
+                                )
+                                exec_stop_price = stop_price
+                                exec_target_price = target_price
 
                         # ============================================================
                         # ۷) ارسال سفارش با سرمایه دقیق
