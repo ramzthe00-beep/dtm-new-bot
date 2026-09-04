@@ -1013,7 +1013,8 @@ def loop():
                         # ============================================================
                         # اجرای استراتژی روی تایم‌فریم (روی دادهٔ بایننس اسپات)
                         # ============================================================
-                        sig, entry, stop_price, target_price, signal_bar_ts_ms = calculate_signals(df, symbol, timeframe)
+                        sig, entry, stop_price, target_price, signal_bar_ts_ms, pivot_ts_lo, pivot_ts_hi = calculate_signals(df, symbol, timeframe)
+                        
 
                         logger.info(
                             f"[{timeframe}m] {symbol}: signal={sig}, entry={entry}, "
