@@ -39,7 +39,7 @@ HISTORY_BARS = 500  # تعداد کندل پایه
 
 # بازه چک کردن هر تایم‌فریم (ثانیه)
 CHECK_INTERVAL = {
-    "1": 60     # هر ۱ دقیقه
+    "1": 60,     # هر ۱ دقیقه
     "5": 300,    # هر ۵ دقیقه
 }
 
@@ -849,6 +849,120 @@ def startup_diagnostic(exchange, public):
 
     return final_report
 
+
+# ================================================================
+# 🎯 تطبیق زمانی دره/قلهٔ واگرایی روی صرافی اجرا (thetruetrade.io)
+# ================================================================
+# ایده: بایننس فقط برای این استفاده می‌شود که بفهمیم واگرایی روی کدام دو
+# کندل (بر اساس زمان/timestamp) تشکیل شده. سپس همان دو کندل — بر اساس
+# زمان، نه بر اساس اندیس — در دادهٔ صرافی اجرا (df_exec) پیدا می‌شوند و
+# استاپ/تارگت مستقیماً از روی قیمت واقعیِ صرافی اجرا در همان لحظه‌ها
+# محاسبه می‌شود؛ نه با انتقال درصدی از قیمت زندهٔ فعلی.
+#
+# نکته مهم: این بخش فقط سطوح مطلق stop/target ارسالی به صرافی را عوض
+# می‌کند. فرمول سرمایه/اهرم (stop_pct / target_pct در حلقهٔ اصلی) که
+# دقیقاً مطابق بک‌تست روی دادهٔ بایننس محاسبه می‌شود، دست‌نخورده می‌ماند.
+# ================================================================
+
+# باید دقیقاً با buffer_ticks در strategy_wrapper.py (_compute_stop_target) یکسان بماند
+EXEC_PIVOT_BUFFER_TICKS = {"BNBUSDT": 9, "ETHUSDT": 9, "LTCUSDT": 3, "DOGEUSDT": 3}
+EXEC_PIVOT_BUFFER_TICKS_DEFAULT = 5
+
+
+def _nearest_exec_candle(df_exec, ts_ms, tf_seconds, tolerance_factor=1.5):
+    """
+    نزدیک‌ترین کندلِ df_exec (دادهٔ صرافی اجرا) به یک timestamp مشخص
+    (میلی‌ثانیه، UTC) را برمی‌گرداند.
+
+    چون مرز بستن کندل‌ها بین دو صرافی ممکن است دقیقاً یکسان نباشد،
+    نزدیک‌ترین کندل به‌جای تطابق دقیقِ timestamp انتخاب می‌شود؛ اما اگر
+    فاصلهٔ زمانی از تلورانس مجاز (۱.۵ برابر طول یک کندل) بیشتر بود،
+    یعنی کندل معتبری در آن لحظه در صرافی اجرا موجود نیست و None
+    برگردانده می‌شود تا فراخوان به fallback (سطوح خام بایننس) برود.
+    """
+    if df_exec is None or df_exec.empty or ts_ms is None:
+        return None
+    try:
+        target = pd.to_datetime(int(ts_ms), unit='ms', utc=True)
+        pos = df_exec.index.get_indexer([target], method='nearest')[0]
+        if pos == -1:
+            return None
+        matched_time = df_exec.index[pos]
+        diff_sec = abs((matched_time - target).total_seconds())
+        if diff_sec > tf_seconds * tolerance_factor:
+            return None
+        return df_exec.iloc[pos]
+    except Exception:
+        return None
+
+
+def _compute_exec_stop_target(df_exec, sig, entry_ts_ms, pivot_ts_lo, pivot_ts_hi, symbol, tf_seconds):
+    """
+    محاسبهٔ استاپ/تارگت مستقیماً از روی دادهٔ واقعیِ صرافی اجرا، دقیقاً در
+    همان دو نقطهٔ زمانی که دره/قلهٔ واگرایی روی بایننس تشکیل شده‌اند
+    (pivot_ts_lo = قدیمی‌تر، pivot_ts_hi = جدیدتر). الگوریتم عیناً همان
+    الگوریتم strategy_wrapper._compute_stop_target است، فقط منبع قیمت
+    به‌جای بایننس، دادهٔ صرافی اجرا (df_exec) است. نقطهٔ ورود (entry) هم
+    از کندل صرافی اجرا در همان لحظه‌ای که سیگنال روی بایننس بسته شده
+    گرفته می‌شود (معادل دقیق تعریف entry=close در strategy.py، ولی روی
+    دادهٔ اجرا).
+
+    خروجی: (entry_exec, stop_exec, target_exec) یا (None, None, None) اگر
+    تطبیق زمانی ممکن نبود — در این حالت فراخوان باید به سطوح خام بایننس
+    fallback کند.
+    """
+    buffer_ticks = EXEC_PIVOT_BUFFER_TICKS.get(symbol.upper(), EXEC_PIVOT_BUFFER_TICKS_DEFAULT)
+    tick = TICK_SIZES.get(symbol.upper(), 0.01)
+    buffer_abs = buffer_ticks * tick
+
+    entry_row = _nearest_exec_candle(df_exec, entry_ts_ms, tf_seconds)
+    row_lo = _nearest_exec_candle(df_exec, pivot_ts_lo, tf_seconds)
+    row_hi = _nearest_exec_candle(df_exec, pivot_ts_hi, tf_seconds)
+    if entry_row is None or row_lo is None or row_hi is None:
+        return None, None, None
+
+    entry_exec = float(entry_row['close'])
+    t_lo = min(row_lo.name, row_hi.name)
+    t_hi = max(row_lo.name, row_hi.name)
+    window = df_exec.loc[t_lo:t_hi]
+    if window.empty:
+        return None, None, None
+
+    if sig == "LONG":
+        low1 = float(row_lo['low'])
+        low2 = float(row_hi['low'])
+        stop_exec = min(low1, low2) - buffer_abs
+
+        # بالاترین قله بین همان دو کندل، روی دادهٔ صرافی اجرا
+        mid_peak = float(window['high'].max())
+
+        risk = entry_exec - stop_exec
+        if risk <= 0:
+            return None, None, None
+
+        rr = (mid_peak - entry_exec) / risk
+        target_exec = mid_peak if rr >= 2 else entry_exec + 2 * risk
+        return entry_exec, stop_exec, target_exec
+
+    elif sig == "SHORT":
+        high1 = float(row_lo['high'])
+        high2 = float(row_hi['high'])
+        stop_exec = max(high1, high2) + buffer_abs
+
+        # پایین‌ترین دره بین همان دو کندل، روی دادهٔ صرافی اجرا
+        mid_trough = float(window['low'].min())
+
+        risk = stop_exec - entry_exec
+        if risk <= 0:
+            return None, None, None
+
+        rr = (entry_exec - mid_trough) / risk
+        target_exec = mid_trough if rr >= 2 else entry_exec - 2 * risk
+        return entry_exec, stop_exec, target_exec
+
+    return None, None, None
+
+
 def loop():
     public = PublicData()
     exchange = PrivateExchange()
@@ -944,7 +1058,7 @@ def loop():
                         # ============================================================
                         # اجرای استراتژی روی تایم‌فریم (روی دادهٔ بایننس اسپات)
                         # ============================================================
-                        sig, entry, stop_price, target_price, signal_bar_ts_ms = calculate_signals(df, symbol, timeframe)
+                        sig, entry, stop_price, target_price, signal_bar_ts_ms, pivot_ts_lo, pivot_ts_hi = calculate_signals(df, symbol, timeframe)
 
                         logger.info(
                             f"[{timeframe}m] {symbol}: signal={sig}, entry={entry}, "
@@ -1055,46 +1169,46 @@ def loop():
                         )
 
                         # ============================================================
-                        # 🎯 لنگرگاه قیمت اجرا — چون سیگنال روی دادهٔ بایننس محاسبه شده
-                        # ولی سفارش MARKET روی قیمت زندهٔ thetruetrade.io پر می‌شود،
-                        # سطوح مطلق stop/target (که از بایننس آمده‌اند) را نمی‌توان
-                        # مستقیم به صرافی اجرا فرستاد — چون دو دفتر سفارش با دو
-                        # مقیاس قیمت متفاوت‌اند. به‌جایش همان درصدهای ریسک/ریوارد
-                        # (stop_pct / target_pct) را — که مستقل از مقیاس قیمت‌اند —
-                        # روی آخرین قیمت واقعیِ thetruetrade.io پیاده می‌کنیم، تا هم
-                        # جهت/ساختار سیگنال دقیقاً مطابق پاین بماند و هم سطوح ارسالی
-                        # به صرافی روی مقیاس درست خودش باشند.
+                        # 🎯 تطبیق زمانیِ دره/قلهٔ واگرایی روی صرافی اجرا — به‌جای
+                        # انتقال درصدی از قیمت زنده، همان دو کندلی که در بایننس
+                        # دره/قلهٔ واگرایی را ساختند (بر اساس timestamp) در دادهٔ
+                        # صرافی اجرا (thetruetrade.io, df_exec) پیدا می‌شوند و
+                        # استاپ/تارگت مستقیماً از روی قیمت واقعیِ صرافی اجرا در
+                        # همان لحظه‌ها محاسبه می‌شود. نقطهٔ ورود (entry) هم از کندل
+                        # صرافی اجرا در همان لحظه‌ای که سیگنال روی بایننس بسته شده
+                        # گرفته می‌شود.
+                        # توجه: فرمول سرمایه/اهرم بالا (stop_pct/target_pct) که
+                        # دقیقاً مطابق بک‌تست روی دادهٔ بایننس است دست‌نخورده
+                        # می‌ماند؛ فقط سطوح مطلق ارسالی به صرافی عوض می‌شوند.
                         # ============================================================
                         exec_stop_price = stop_price
                         exec_target_price = target_price
                         try:
-                            df_anchor = public.fetch_ohlcv(symbol, "1")
-                            if not df_anchor.empty:
-                                exec_anchor_price = float(df_anchor['close'].iloc[-1])
-                                if sig == "LONG":
-                                    exec_stop_price = exec_anchor_price * (1 - stop_pct)
-                                    exec_target_price = (
-                                        exec_anchor_price * (1 + target_pct)
-                                        if target_pct > 0 else None
-                                    )
-                                else:  # SHORT
-                                    exec_stop_price = exec_anchor_price * (1 + stop_pct)
-                                    exec_target_price = (
-                                        exec_anchor_price * (1 - target_pct)
-                                        if target_pct > 0 else None
-                                    )
-                                logger.info(
-                                    f"[{timeframe}m][{symbol}] لنگر اجرا (thetruetrade.io)={exec_anchor_price} | "
-                                    f"stop(binance)={stop_price} → stop(exec)={exec_stop_price} | "
-                                    f"target(binance)={target_price} → target(exec)={exec_target_price}"
+                            if pivot_ts_lo is not None and pivot_ts_hi is not None and not df_exec.empty:
+                                exec_entry, matched_stop, matched_target = _compute_exec_stop_target(
+                                    df_exec, sig, signal_bar_ts_ms, pivot_ts_lo, pivot_ts_hi,
+                                    symbol, tf_seconds
                                 )
+                                if matched_stop is not None:
+                                    exec_stop_price = matched_stop
+                                    exec_target_price = matched_target
+                                    logger.info(
+                                        f"[{timeframe}m][{symbol}] تطبیق اجرا (thetruetrade.io) entry={exec_entry} | "
+                                        f"stop(binance)={stop_price} → stop(exec)={exec_stop_price} | "
+                                        f"target(binance)={target_price} → target(exec)={exec_target_price}"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"{symbol}: exec-side pivot matching failed (no matching candle within "
+                                        f"tolerance on thetruetrade.io) — falling back to raw binance-derived stop/target"
+                                    )
                             else:
                                 logger.warning(
-                                    f"{symbol}: exec-anchor price unavailable — "
+                                    f"{symbol}: pivot timestamps unavailable or exec data empty — "
                                     f"falling back to raw binance-derived stop/target"
                                 )
                         except Exception as anchor_err:
-                            logger.warning(f"{symbol}: exec-anchor fetch failed ({anchor_err}) — using raw stop/target")
+                            logger.warning(f"{symbol}: exec-side pivot matching failed ({anchor_err}) — using raw stop/target")
 
                         # ============================================================
                         # ۷) ارسال سفارش با سرمایه دقیق
@@ -1158,3 +1272,4 @@ if __name__ == "__main__":
         health_thread.join(timeout=3)
         report_thread.join(timeout=3)
         logger.info("DTM PROCESS EXIT")
+
