@@ -12,7 +12,7 @@ import pandas as pd
 from strategy_wrapper import calculate_signals
 from datetime import datetime, timezone, timedelta
 import math
-import random  # <-- اضافه شده
+import random
 import trade_ledger
 
 # ===== TIMEZONE CONSTANTS =====
@@ -35,13 +35,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
-TIMEFRAMES = ["1" , "5"]  # تایم‌فریم‌های دقیقه‌ای
-HISTORY_BARS = 500  # تعداد کندل پایه
+TIMEFRAMES = ["1" , "5"]
+HISTORY_BARS = 500
 
-# بازه چک کردن هر تایم‌فریم (ثانیه)
 CHECK_INTERVAL = {
-    "1": 60,     # هر ۱ دقیقه
-    "5": 300,    # هر ۵ دقیقه
+    "1": 60,
+    "5": 300,
 }
 
 LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75}
@@ -52,21 +51,26 @@ PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2, "BNBUSDT": 2}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
 
-# ===== لاگ اولیه برای اطمینان از اجرا =====
 logger.info("=" * 60)
 logger.info("BOT STARTING...")
 logger.info("=" * 60)
 
 # ============================================================
+# 🛡️ تنظیمات ریسک فری (Risk-Free)
+# ============================================================
+RISK_FREE_ENABLED = os.getenv("RISK_FREE_ENABLED", "1") == "1"
+RISK_FREE_FEE_MODE = os.getenv("RISK_FREE_FEE_MODE", "open")
+RISK_FREE_FEE_DEFAULT = float(os.getenv("RISK_FREE_FEE_DEFAULT", "0.30"))
+RISK_FREE_PENDING = {}
+
+# ============================================================
 # Rate limiter برای درخواست‌های thetruetrade.io
-# تا درخواست‌های پشت‌سرهم باعث HTTP 429 نشوند
 # ============================================================
 TRUETRADE_MIN_INTERVAL = float(os.getenv("TRUETRADE_MIN_INTERVAL", "2.5"))
 _truetrade_lock = threading.Lock()
 _truetrade_last_req = 0.0
 
 def throttle_truetrade():
-    """فاصله‌گذاری بین درخواست‌های پشت‌سرهم به thetruetrade.io"""
     global _truetrade_last_req
     with _truetrade_lock:
         now = time.monotonic()
@@ -90,7 +94,6 @@ def send_telegram(text):
         return False
 
 def send_telegram_long(text):
-    """Send long text to Telegram, splitting into chunks if needed."""
     text = str(text)
     if len(text) <= 4000:
         return send_telegram(text)
@@ -103,40 +106,22 @@ def send_telegram_long(text):
     return ok
 
 class PublicData:
-    # ============================================================
-    # 🎯 منبع دادهٔ سیگنال: بایننس اسپات (همان چیزی که چارت پاین است)
-    #
-    # لاگ‌های پاین دقیقاً «BINANCE:BNBUSDT» (بدون پسوند «.P») هستند —
-    # یعنی نماد روی چارت پاین «اسپات بایننس» است، در حالی‌که این ربات
-    # برای محاسبهٔ سیگنال از فیوچرز thetruetrade.io استفاده می‌کرد؛ این
-    # دو، دو دفتر سفارش (order book) کاملاً مجزا با قیمت‌های به‌طور
-    # سیستماتیک متفاوت‌اند (even after فیکس زمان‌بندی، اختلاف ~۰.۰۵٪
-    # در OHLC مشاهده و با لاگ واقعی تأیید شد — سند در گزارش ضمیمه است).
-    #
-    # BINANCE_DATA_MODE کنترل می‌کند کدام منبع برای *محاسبهٔ سیگنال*
-    # استفاده شود؛ اجرای سفارش (create_order) هرگز از این تابع استفاده
-    # نمی‌کند و همیشه روی thetruetrade.io باقی می‌ماند — طبق درخواست:
-    # «صرافی اجرا عوض نشود».
-    # ============================================================
     BINANCE_BASE_CANDIDATES = [
-        "https://data-api.binance.vision",  # آینه‌ی رسمی داده‌ی عمومی بایننس — بدون نیاز به کلید/بدون محدودیت جغرافیایی رایج
-        "https://api.binance.com",          # مسیر پشتیبان
+        "https://data-api.binance.vision",
+        "https://api.binance.com",
     ]
 
     def __init__(self):
         self.base = BASE_URL
         self.session = requests.Session()
-        self._binance_base_working = None  # کش می‌کنیم کدام base کار می‌کند
+        self._binance_base_working = None
 
-    # ------------------------------------------------------------
-    # دریافت کندل از بایننس اسپات — منبع دادهٔ سیگنال (مطابق پاین)
-    # ------------------------------------------------------------
     def fetch_ohlcv_binance(self, symbol, timeframe="1"):
         interval_map = {"1": "1m", "5": "5m", "15": "15m"}
         interval = interval_map.get(str(timeframe), f"{timeframe}m")
 
         multiplier = int(timeframe)
-        limit = min(HISTORY_BARS, 1000)  # سقف API بایننس ۱۰۰۰ کندل است
+        limit = min(HISTORY_BARS, 1000)
         now_ms = int(time.time() * 1000)
         start_ms = now_ms - limit * multiplier * 60 * 1000
 
@@ -159,7 +144,6 @@ class PublicData:
                     logger.warning(f"Binance: no candles for {symbol} {timeframe}m")
                     return pd.DataFrame()
 
-                # هر ردیف بایننس: [openTime, open, high, low, close, volume, closeTime, ...]
                 t = [row[0] / 1000.0 for row in rows]
                 o = [row[1] for row in rows]
                 h = [row[2] for row in rows]
@@ -179,7 +163,7 @@ class PublicData:
                 df = df[~df.index.duplicated(keep='last')]
                 df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
-                self._binance_base_working = base  # این base کار کرد — دفعهٔ بعد اول همین را امتحان کن
+                self._binance_base_working = base
                 result = df.tail(HISTORY_BARS)
                 logger.info(f"Fetched {len(result)} BINANCE-SPOT candles for {symbol} {timeframe}m via {base}")
                 return result
@@ -190,12 +174,6 @@ class PublicData:
                 self._binance_base_working = None
                 continue
 
-        # ------------------------------------------------------------
-        # 🛟 Fallback: اگر بایننس در دسترس نبود (مثلاً IP سرور Railway
-        # بلاک شد)، به‌جای متوقف‌شدن کامل ربات، برمی‌گردیم به دادهٔ
-        # thetruetrade.io با هشدار واضح در لاگ — تا لااقل ربات کار کند،
-        # هرچند در آن بازهٔ کوتاه دوباره دچار اختلاف منبع داده می‌شویم.
-        # ------------------------------------------------------------
         logger.error(
             f"⚠️ Binance UNREACHABLE for {symbol} {timeframe}m ({last_err}) — "
             f"falling back to thetruetrade.io data for THIS cycle only."
@@ -203,19 +181,9 @@ class PublicData:
         return self.fetch_ohlcv(symbol, timeframe)
 
     def fetch_ohlcv(self, symbol, timeframe="1"):
-        """
-        دریافت داده OHLCV با تایم‌فریم دلخواه
-
-        Args:
-            symbol: نام نماد (مثلاً LTCUSDT)
-            timeframe: تایم‌فریم به دقیقه (1, 5, 15)
-        """
         now = int(time.time())
-
-        # محاسبه تعداد کندل بر اساس تایم‌فریم
         multiplier = int(timeframe)
-        bars_needed = HISTORY_BARS * multiplier * 2  # ضریب ۲ برای اطمینان
-
+        bars_needed = HISTORY_BARS * multiplier * 2
         from_ts = now - bars_needed * 60 - 60
         uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution={timeframe}&from={from_ts}&to={now}&countback={HISTORY_BARS * multiplier}"
 
@@ -225,7 +193,6 @@ class PublicData:
             try:
                 r = self.session.get(f"{self.base}{uri}", timeout=20)
 
-                # Retry هوشمند روی HTTP 429
                 if r.status_code == 429:
                     if attempt == max_attempts - 1:
                         logger.error(
@@ -249,7 +216,6 @@ class PublicData:
                     logger.warning(f"Data not ok for {symbol} {timeframe}m: {data.get('s')}")
                     return pd.DataFrame()
 
-                # بررسی وجود داده
                 if not data.get('t') or len(data['t']) == 0:
                     logger.warning(f"No data for {symbol} {timeframe}m")
                     return pd.DataFrame()
@@ -291,20 +257,18 @@ class PrivateExchange:
         self.base = BASE_URL
         self.session = requests.Session()
         self._last_response = None
+        self.last_positions_payload = None  # برای ریسک فری
         self.connected = False
-        self._cached_balance = None  # <-- کش برای موجودی
+        self._cached_balance = None
         
     def _sign(self, method, uri, ts):
         payload = f"{ts}{method.upper()}{uri}"
         return hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
     
     def _request(self, method, uri, data=None):
-        # IMPORTANT: never reuse a previous HTTP response
         self._last_response = None
-
         url = f"{self.base}{uri}"
 
-        # ===== FULL EXCHANGE REQUEST LOG =====
         logger.info(
             "[EXCHANGE REQUEST] %s %s | DATA=%s",
             method.upper(),
@@ -314,7 +278,6 @@ class PrivateExchange:
 
         max_attempts = 3
         for attempt in range(max_attempts):
-            # ساخت امضا برای هر تلاش جداگانه (timestamp تازه)
             ts = str(int(time.time() * 1000))
             sig = self._sign(method, uri, ts)
 
@@ -338,7 +301,6 @@ class PrivateExchange:
 
                 self._last_response = r
 
-                # ===== FULL EXCHANGE RESPONSE LOG =====
                 logger.info(
                     "[EXCHANGE RESPONSE] %s %s | HTTP=%s | BODY=%s",
                     method.upper(),
@@ -356,7 +318,6 @@ class PrivateExchange:
                     r.text,
                 )
 
-                # 429 → تلاش مجدد با backoff
                 if r.status_code == 429:
                     if attempt == max_attempts - 1:
                         logger.error(
@@ -378,7 +339,6 @@ class PrivateExchange:
 
                 if not r.ok:
                     self.connected = False
-
                     logger.error(
                         "[EXCHANGE ERROR] %s %s | HTTP=%s | BODY=%s",
                         method.upper(),
@@ -386,7 +346,6 @@ class PrivateExchange:
                         r.status_code,
                         r.text
                     )
-
                     r.raise_for_status()
 
                 self.connected = True
@@ -406,33 +365,28 @@ class PrivateExchange:
                 self.connected = False
                 raise
 
-        # اگر به‌دلیلی حلقه بدون موفقیت تمام شد
         raise RuntimeError(f"Exhausted {max_attempts} attempts for {method} {uri}")
 
     def test_connection(self):
         try:
-            self._request("GET", "/futures/positions")
+            self.last_positions_payload = self._request("GET", "/futures/positions")
             return True
         except Exception:
             return False
     
     def fetch_balance(self):
-        """دریافت موجودی با قابلیت استفاده از کش در صورت خطا"""
         try:
             data = self._request("GET", "/futures/assets")
             assets = data.get('assets', [])
             for a in assets:
                 if a.get('symbol') == 'USDT':
                     balance = float(a.get('availableBalance', 0))
-                    self._cached_balance = balance  # به‌روزرسانی کش
+                    self._cached_balance = balance
                     logger.info(f"[BALANCE] Fetched: {balance:.4f} USDT")
                     return balance
             self._cached_balance = 0.0
             return 0.0
         except Exception as e:
-            # ============================================================
-            # 🛟 در صورت خطا (مثلاً 429)، از آخرین مقدار کش شده استفاده کن
-            # ============================================================
             if self._cached_balance is not None:
                 logger.warning(
                     f"[BALANCE] Failed to fetch fresh balance: {e} — "
@@ -449,38 +403,16 @@ class PrivateExchange:
         return round(round(float(price)/tick)*tick, prec)
     
     def create_order(self, symbol, side, capital, leverage, take_profit=None, stop_loss=None):
-        """
-        ایجاد سفارش بازار با ساختار صحیح مطابق مستندات API
-        
-        Args:
-            symbol: نام نماد (مثلاً ETHUSDT)
-            side: LONG یا SHORT (یا BUY/SELL که تبدیل می‌شوند)
-            capital: مقدار سرمایه به USDT
-            leverage: مقدار اهرم
-            take_profit: قیمت تارگت (اختیاری)
-            stop_loss: قیمت استاپ لاس (اختیاری)
-        """
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         
-        # ============================================================
-        # تبدیل side به فرمت صحیح API
-        # API فقط LONG و SHORT را قبول دارد
-        # ============================================================
         side_upper = str(side).upper().strip()
-        
-        # اگر side برابر با BUY یا LONG باشد → LONG
         if side_upper in ("BUY", "LONG"):
             api_side = "LONG"
-        # اگر side برابر با SELL یا SHORT باشد → SHORT
         elif side_upper in ("SELL", "SHORT"):
             api_side = "SHORT"
         else:
-            # در غیر این صورت همان مقدار ارسال می‌شود
             api_side = side_upper
         
-        # ============================================================
-        # ساختار صحیح درخواست مطابق مستندات API
-        # ============================================================
         od = {
             "symbol": symbol.upper(),
             "side": api_side,
@@ -490,9 +422,6 @@ class PrivateExchange:
             "walletType": "debit"
         }
         
-        # ============================================================
-        # اضافه کردن استاپ و تارگت اگر موجود باشند
-        # ============================================================
         if take_profit is not None and not math.isnan(take_profit) and take_profit > 0:
             od["takeProfit"] = f"{self._round_price(take_profit, symbol):.{prec}f}"
             logger.info(f"[TP] Take Profit set at {self._round_price(take_profit, symbol):.{prec}f}")
@@ -501,7 +430,6 @@ class PrivateExchange:
             od["stopLoss"] = f"{self._round_price(stop_loss, symbol):.{prec}f}"
             logger.info(f"[SL] Stop Loss set at {self._round_price(stop_loss, symbol):.{prec}f}")
         
-        # ===== FULL ORDER REQUEST LOG =====
         logger.info(
             "[ORDER REQUEST] %s %s\n%s",
             symbol.upper(),
@@ -509,7 +437,6 @@ class PrivateExchange:
             json.dumps(od, ensure_ascii=False, indent=2)
         )
         
-        # ===== FULL ORDER REQUEST TO TELEGRAM =====
         request_msg = (
             f"📤 ORDER REQUEST\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -527,10 +454,8 @@ class PrivateExchange:
         
         try:
             result = self._request("POST", "/futures/positions", od)
-            
             position_id = result.get("positionId") if isinstance(result, dict) else None
             
-            # ===== FULL ORDER SUCCESS LOG =====
             logger.info(
                 "[ORDER SUCCESS] %s %s\n%s",
                 symbol.upper(),
@@ -538,7 +463,6 @@ class PrivateExchange:
                 json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result)
             )
             
-            # ===== FULL ORDER SUCCESS TO TELEGRAM =====
             success_msg = (
                 f"✅ ORDER SUCCESS\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -554,7 +478,6 @@ class PrivateExchange:
             return result
             
         except Exception as e:
-            # ===== FULL EXCHANGE ERROR EXTRACTION =====
             response = self._last_response
             
             if response is not None:
@@ -579,7 +502,6 @@ class PrivateExchange:
             
             local_exception = repr(e)
             
-            # ===== FULL ORDER FAILED LOG =====
             logger.error(
                 "[ORDER FAILED] %s %s\n"
                 "━━━━━━━━━━━━━━━━━━\n"
@@ -608,7 +530,6 @@ class PrivateExchange:
                 local_exception
             )
             
-            # ===== FULL ORDER FAILED TO TELEGRAM =====
             failed_msg = (
                 f"❌ ORDER FAILED\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -629,6 +550,41 @@ class PrivateExchange:
                 logger.error("[TELEGRAM] Failed to send ORDER FAILED")
             
             return None
+
+    # ============================================================
+    # 🛡️ متد تغییر استاپ (ریسک فری) طبق مستندات TheTrueTrade
+    # ============================================================
+    def update_position_sl(self, pos, stop_loss):
+        """
+        تغییر استاپ‌لاس پوزیشن باز (ریسک فری).
+        PATCH /futures/positions/{id}/tpsl
+        طبق مستندات TheTrueTrade
+        """
+        symbol = str(pos.get("symbol", "")).upper()
+        prec = PRICE_PRECISION.get(symbol, 2)
+        sl_str = f"{self._round_price(stop_loss, symbol):.{prec}f}"
+
+        body = {"stopLoss": sl_str}
+        
+        tp = pos.get("takeProfit")
+        if tp:
+            try:
+                body["takeProfit"] = f"{self._round_price(float(tp), symbol):.{prec}f}"
+            except Exception:
+                pass
+
+        body["stopLossStrategy"] = "LATEST_PRICE"
+        body["stopLossOrderType"] = "STOP_MARKET"
+
+        uri = f"/futures/positions/{pos.get('id')}/tpsl"
+        logger.info(f"[RISK-FREE] update SL request: PATCH {uri} {body}")
+        
+        try:
+            return self._request("PATCH", uri, body)
+        except Exception as e:
+            logger.error(f"[RISK-FREE] update SL failed: {e}")
+            raise
+
 
 # ================= RAILWAY HTTP HEALTH SERVER =================
 
@@ -687,28 +643,10 @@ def _handle_shutdown(signum, frame):
 
 
 # ================================================================
-# STARTUP DIAGNOSTIC — READ ONLY
-# ================================================================
-# IMPORTANT:
-# This diagnostic NEVER sends a real order.
-# It NEVER changes trading formulas or calculations.
+# STARTUP DIAGNOSTIC
 # ================================================================
 
 def startup_diagnostic(exchange, public):
-    """
-    READ-ONLY startup diagnostic.
-
-    This function:
-      - NEVER creates an order
-      - NEVER changes trading calculations
-      - NEVER changes capital formulas
-      - NEVER changes leverage formulas
-      - NEVER changes strategy.py
-      - checks APIs, market data, configuration and engine readiness
-      - sends the complete diagnostic to Telegram
-    """
-    
-    # ===== لاگ شروع دیاگنوستیک =====
     logger.info("=" * 60)
     logger.info("STARTUP DIAGNOSTIC BEGINNING...")
     logger.info("=" * 60)
@@ -759,27 +697,18 @@ def startup_diagnostic(exchange, public):
 
         return text
 
-    # ------------------------------------------------------------
-    # TELEGRAM
-    # ------------------------------------------------------------
     try:
         send_telegram("🧪 DTM startup diagnostic started")
         telegram_ok = True
     except Exception:
         telegram_ok = False
 
-    # ------------------------------------------------------------
-    # EXCHANGE CONNECTION
-    # ------------------------------------------------------------
     try:
         exchange._last_response = None
         exchange_ok = exchange.test_connection()
     except Exception:
         exchange_ok = False
 
-    # ------------------------------------------------------------
-    # BALANCE
-    # ------------------------------------------------------------
     try:
         exchange._last_response = None
         balance = exchange.fetch_balance()
@@ -788,9 +717,6 @@ def startup_diagnostic(exchange, public):
     except Exception:
         balance = None
 
-    # ------------------------------------------------------------
-    # MARKET DATA
-    # ------------------------------------------------------------
     market_ok = 0
     total_checks = len(SYMBOLS) * len(TIMEFRAMES)
     market_status_list = []
@@ -807,9 +733,6 @@ def startup_diagnostic(exchange, public):
 
     market_all_ok = (market_ok == total_checks)
 
-    # ------------------------------------------------------------
-    # STRATEGY IMPORT
-    # ------------------------------------------------------------
     calculate_signals_fn = None
     strategy_import_ok = False
 
@@ -820,24 +743,18 @@ def startup_diagnostic(exchange, public):
     except Exception:
         strategy_import_ok = False
 
-    # ------------------------------------------------------------
-    # STRATEGY EXECUTION — READ ONLY
-    # ------------------------------------------------------------
     if callable(calculate_signals_fn):
         for symbol in SYMBOLS:
             try:
                 df = public.fetch_ohlcv(symbol)
                 if df is not None and not df.empty:
-                    test_signal, test_entry, stop_price, target_price, _ = calculate_signals_fn(df, symbol)
+                    test_signal, test_entry, stop_price, target_price, _, _ = calculate_signals_fn(df, symbol)
                     strategy_ok = True
                     test_symbol = symbol
                     break
             except Exception:
                 continue
 
-    # ------------------------------------------------------------
-    # POSITION API — READ ONLY
-    # ------------------------------------------------------------
     try:
         exchange._last_response = None
         positions = exchange._request("GET", "/futures/positions")
@@ -845,18 +762,12 @@ def startup_diagnostic(exchange, public):
     except Exception:
         position_api_ok = False
 
-    # ------------------------------------------------------------
-    # CREATE_ORDER FUNCTION
-    # ------------------------------------------------------------
     try:
         create_order = getattr(exchange, "create_order", None)
         create_order_ok = callable(create_order)
     except Exception:
         create_order_ok = False
 
-    # ============================================================
-    # 📊 گزارش راه‌اندازی — فشرده و حرفه‌ای (فارسی)
-    # ============================================================
     from datetime import datetime, timezone, timedelta
     
     IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
@@ -877,10 +788,8 @@ def startup_diagnostic(exchange, public):
         "─────────────────────────────────────────",
     ]
     
-    # بازارهای فعال
     if market_status_list:
         report_lines.append(f"📊 بازارهای فعال: {market_ok}/{total_checks}")
-        # نمایش در دو خط برای خوانایی بهتر
         line1 = "   " + " ".join(market_status_list[:4]) if len(market_status_list) >= 4 else "   " + " ".join(market_status_list)
         line2 = "   " + " ".join(market_status_list[4:]) if len(market_status_list) > 4 else ""
         report_lines.append(line1)
@@ -891,13 +800,11 @@ def startup_diagnostic(exchange, public):
     
     report_lines.append("─────────────────────────────────────────")
     
-    # استراتژی
     if strategy_import_ok:
         report_lines.append(f"📈 استراتژی: {'✅ فعال' if strategy_ok else '⚠️ قابل‌اجرا اما بدون سیگنال'}")
     else:
         report_lines.append("📈 استراتژی: ❌ غیرفعال")
     
-    # تست استراتژی
     if strategy_ok:
         report_lines.append(f"🧪 تست {test_symbol}: سیگنال={test_signal} | ورود={test_entry}")
     else:
@@ -905,7 +812,6 @@ def startup_diagnostic(exchange, public):
     
     report_lines.append("─────────────────────────────────────────")
     
-    # تنظیمات
     leverage_str = " ".join([f"{k}={v}" for k, v in LEVERAGE_MAP.items()])
     report_lines.append(f"⚙️ تنظیمات: ریسک={TARGET_RISK}٪")
     report_lines.append(f"🔧 اهرم: {leverage_str}")
@@ -935,13 +841,180 @@ def startup_diagnostic(exchange, public):
 
     return final_report
 
+
+# ============================================================
+# 🛡️ پایش ریسک فری
+# ============================================================
+def _is_open_position(p):
+    try:
+        return p.get("isActive") is True or str(p.get("status", "")).upper() == "OPEN"
+    except Exception:
+        return False
+
+
+def risk_free_monitor(exchange):
+    """
+    🛡️ پایش ریسک فری — در هر سیکل ۳۰ ثانیه‌ای، درست بعد از test_connection صدا زده می‌شود.
+    """
+    if not RISK_FREE_ENABLED or not RISK_FREE_PENDING:
+        return
+
+    payload = getattr(exchange, "last_positions_payload", None)
+    if not isinstance(payload, dict):
+        return
+
+    meta = payload.get("meta") or {}
+    total_pages = meta.get("totalPages", 1)
+    current_page = meta.get("currentPage", 1)
+    open_positions = [p for p in (payload.get("items") or []) if _is_open_position(p)]
+
+    needed_ids = {
+        str(r.get("position_id")) for r in RISK_FREE_PENDING.values()
+        if r.get("state") == "pending" and r.get("position_id") is not None
+    }
+    found_ids = {str(p.get("id")) for p in open_positions}
+    page = current_page
+    while needed_ids and not needed_ids.issubset(found_ids) and page < total_pages:
+        page += 1
+        try:
+            more = exchange._request("GET", f"/futures/positions?page={page}")
+        except Exception:
+            break
+        for p in (more.get("items") or []):
+            if _is_open_position(p):
+                open_positions.append(p)
+                found_ids.add(str(p.get("id")))
+
+    for key in list(RISK_FREE_PENDING.keys()):
+        rec = RISK_FREE_PENDING[key]
+        if rec.get("state") != "pending":
+            continue
+
+        symbol = str(rec.get("symbol", "")).upper()
+        side = str(rec.get("side", "")).upper()
+        prec = PRICE_PRECISION.get(symbol, 2)
+
+        pos = None
+        pid = rec.get("position_id")
+        if pid is not None:
+            for p in open_positions:
+                if str(p.get("id")) == str(pid):
+                    pos = p
+                    break
+        if pos is None:
+            cands = [
+                p for p in open_positions
+                if str(p.get("symbol", "")).upper() == symbol
+                and str(p.get("side", "")).upper() == side
+            ]
+            if len(cands) == 1:
+                pos = cands[0]
+
+        if pos is None:
+            rec["missing_cycles"] = rec.get("missing_cycles", 0) + 1
+            if rec["missing_cycles"] > 10:
+                logger.info(f"[RISK-FREE] {symbol} {side}: no open position found — record dropped")
+                RISK_FREE_PENDING.pop(key, None)
+            continue
+
+        try:
+            entry_actual = float(pos.get("entryPrice") or rec.get("entry_est"))
+            size = abs(float(pos.get("size") or 0))
+            mark = float(pos.get("markPrice") or 0)
+        except Exception:
+            logger.warning(f"[RISK-FREE] {symbol} {side}: bad position numbers")
+            continue
+
+        rf_pct = rec.get("rf_pct")
+        if rf_pct is None or size <= 0 or entry_actual <= 0:
+            continue
+
+        trigger = entry_actual * (1 + rf_pct) if side == "LONG" else entry_actual * (1 - abs(rf_pct))
+        crossed = (mark >= trigger) if side == "LONG" else (mark <= trigger)
+        if not crossed:
+            continue
+
+        try:
+            open_fee = float(pos.get("openFees") or 0)
+        except Exception:
+            open_fee = 0.0
+        if open_fee <= 0:
+            open_fee = RISK_FREE_FEE_DEFAULT
+
+        if RISK_FREE_FEE_MODE == "round_trip":
+            try:
+                close_fee = float(pos.get("closeFees") or open_fee)
+            except Exception:
+                close_fee = open_fee
+            if close_fee <= 0:
+                close_fee = open_fee
+            fee_total = open_fee + close_fee
+        else:
+            fee_total = open_fee
+
+        old_sl = pos.get("stopLoss")
+        tick = TICK_SIZES.get(symbol, 0.01)
+        if side == "LONG":
+            new_sl = exchange._round_price(entry_actual + fee_total / size, symbol)
+            if new_sl <= entry_actual:
+                new_sl = exchange._round_price(entry_actual + tick, symbol)
+            valid = (entry_actual < new_sl < mark)
+        else:
+            new_sl = exchange._round_price(entry_actual - fee_total / size, symbol)
+            if new_sl >= entry_actual:
+                new_sl = exchange._round_price(entry_actual - tick, symbol)
+            valid = (mark < new_sl < entry_actual)
+
+        if not valid:
+            logger.warning(
+                f"[RISK-FREE] {symbol} {side}: invalid SL {new_sl} "
+                f"(entry={entry_actual}, mark={mark}) — retry next cycle"
+            )
+            continue
+
+        try:
+            exchange.update_position_sl(pos, new_sl)
+        except Exception as e:
+            logger.error(f"[RISK-FREE] {symbol} {side}: exchange update failed: {e}")
+            continue
+
+        # ========== هماهنگ‌سازی دفترچه ==========
+        try:
+            trade_ledger.update_open_trade_stop(
+                symbol,
+                rec.get("timeframe"),
+                side,
+                rec.get("signal_bar_ts_ms"),
+                new_sl,
+            )
+        except Exception as ledger_err:
+            logger.error(f"[RISK-FREE] {symbol} {side}: ledger sync failed: {ledger_err}")
+
+        rec["state"] = "done"
+
+        msg = (
+            f"🛡️ ریسک فری فعال شد\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Symbol: {symbol} | {side}\n"
+            f"Position ID: {pos.get('id')}\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🎯 Trigger: {trigger:.{prec}f}\n"
+            f"💹 Mark: {mark:.{prec}f}\n"
+            f"💰 Entry: {entry_actual:.{prec}f} | Size: {size}\n"
+            f"💸 کارمزد مبنا: {fee_total:.4f} USDT\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🛑 استاپ قبلی: {old_sl}\n"
+            f"🛡️ استاپ جدید (ریسک فری): {new_sl:.{prec}f}\n"
+            f"اگر استاپ جدید خورده شود ≈ کارمزد بازپس‌گرفته شده ✅"
+        )
+        send_telegram_long(msg)
+        logger.info(f"[RISK-FREE] {symbol} {side} | SL {old_sl} -> {new_sl:.{prec}f} | DONE")
+
+
 def loop():
     public = PublicData()
     exchange = PrivateExchange()
 
-    # ============================================================
-    # READ-ONLY STARTUP DIAGNOSTIC
-    # ============================================================
     try:
         startup_diagnostic(exchange, public)
     except Exception as e:
@@ -950,17 +1023,9 @@ def loop():
     send_telegram("🤖 ربات شروع شد - تایم‌فریم‌های ۱، ۵ و ۱۵ دقیقه")
     logger.info("Worker bot started with timeframes: %s", TIMEFRAMES)
 
-    # ============================================================
-    # ⚙️ تنظیمات ثابت — دقیقاً مطابق بک‌تست
-    # ============================================================
-    BASE_CAPITAL = 1.5         # مبنا = ۲ دلار
-    BALANCE_USE_RATIO = 0.70    # ۹۸٪ موجودی در صورت کمبود
+    BASE_CAPITAL = 1.5
+    BALANCE_USE_RATIO = 0.70
     
-    # ============================================================
-    # زمان‌بندی چک کردن تایم‌فریم‌های مختلف — بر اساس مرز واقعی بسته‌شدن کندل (ساعت گرد UTC)
-    # نه فاصله‌ی زمانی از آخرین چک؛ حالت قبلی چون به last_check انباشتی وابسته بود دچار
-    # انحراف تصادفی نسبت به مرز واقعی کندل‌های صرافی می‌شد.
-    # ============================================================
     last_processed_boundary = {tf: 0 for tf in TIMEFRAMES}
 
     while not STOP_EVENT.is_set():
@@ -970,29 +1035,28 @@ def loop():
                 STOP_EVENT.wait(60)
                 continue
 
+            # ============================================================
+            # 🛡️ پایش ریسک فری
+            # ============================================================
+            try:
+                risk_free_monitor(exchange)
+            except Exception as e:
+                logger.exception(f"[RISK-FREE] monitor error: {e}")
+
             balance = exchange.fetch_balance()
             current_time = time.time()
             
-            # ============================================================
-            # حلقه روی تمام تایم‌فریم‌ها
-            # ============================================================
             for timeframe in TIMEFRAMES:
-                # ============================================================
-                # بررسی اینکه آیا مرز واقعی بسته‌شدن کندلِ این تایم‌فریم رد شده است
-                # (به‌جای «چند ثانیه از آخرین چک گذشته» که دچار انحراف تصادفی می‌شد)
-                # ============================================================
                 tf_minutes = int(timeframe)
                 tf_seconds = tf_minutes * 60
-                BOUNDARY_SETTLE_BUFFER_SEC = 5  # فرصت برای نهایی‌شدن/انتشار کندل توسط صرافی
+                BOUNDARY_SETTLE_BUFFER_SEC = 5
 
                 current_boundary = int(current_time // tf_seconds) * tf_seconds
 
                 if current_time < current_boundary + BOUNDARY_SETTLE_BUFFER_SEC:
-                    # هنوز به‌اندازه کافی از مرز کندل نگذشته — این دور رد شود
                     continue
 
                 if current_boundary <= last_processed_boundary.get(timeframe, 0):
-                    # این مرز قبلاً پردازش شده — دوباره پردازش نشود
                     continue
 
                 last_processed_boundary[timeframe] = current_boundary
@@ -1000,38 +1064,24 @@ def loop():
                 
                 for symbol in SYMBOLS:
                     try:
-                        # ============================================================
-                        # 🎯 دادهٔ سیگنال: بایننس اسپات — دقیقاً همان منبعی که چارت
-                        # پاین (BINANCE:SYMBOL بدون .P) روی آن اجرا می‌شود.
-                        # ============================================================
                         df_signal = public.fetch_ohlcv_binance(symbol, timeframe)
                         if df_signal.empty:
                             logger.warning(f"Empty BINANCE data for {symbol} {timeframe}m")
                             continue
 
-                        # ============================================================
-                        # دادهٔ صرافی اجرا — برای پایش معاملات باز (باید منعکس‌کنندهٔ
-                        # حرکت قیمت واقعی روی همان صرافی‌ای باشد که پوزیشن آنجا باز شده)
-                        # ============================================================
                         df_exec = public.fetch_ohlcv(symbol, timeframe)
                         if df_exec.empty:
                             logger.warning(f"Empty thetruetrade.io data for {symbol} {timeframe}m")
-                            df_exec = df_signal  # حداقل چیزی برای پایش داشته باشیم
+                            df_exec = df_signal
 
-                        # نگه‌داشتن نام قبلی df برای سازگاری با بقیهٔ کد پایین‌تر
                         df = df_signal
 
-                        # ============================================================
-                        # 📍 نقطه ۳: بروزرسانی معاملات باز با تایم‌فریم
-                        # (روی دادهٔ صرافی اجرا — نه بایننس)
-                        # ============================================================
                         trade_ledger.update_open_trades(symbol, timeframe, df_exec)
 
                         # ============================================================
-                        # اجرای استراتژی روی تایم‌فریم (روی دادهٔ بایننس اسپات)
+                        # اجرای استراتژی — ۶ مقدار
                         # ============================================================
-                        sig, entry, stop_price, target_price, signal_bar_ts_ms, pivot_ts_lo, pivot_ts_hi = calculate_signals(df, symbol, timeframe)
-                        
+                        sig, entry, stop_price, target_price, signal_bar_ts_ms, risk_free_pct = calculate_signals(df, symbol, timeframe)
 
                         logger.info(
                             f"[{timeframe}m] {symbol}: signal={sig}, entry={entry}, "
@@ -1039,9 +1089,6 @@ def loop():
                             f"signal_bar_ts_ms={signal_bar_ts_ms}"
                         )
 
-                        # ============================================================
-                        # 📍 نقطه ۲: ثبت سیگنال در دفترچه (با تایم‌فریم)
-                        # ============================================================
                         if sig and entry is not None:
                             trade_ledger.record_signal(
                                 symbol=symbol,
@@ -1050,9 +1097,6 @@ def loop():
                                 entry=entry,
                                 stop=stop_price,
                                 target=target_price,
-                                # timestamp همان کندل بسته‌ای که strategy_wrapper واقعاً روی آن
-                                # سیگنال را محاسبه کرده (نه df.index[-1] خام، که می‌تواند دقیقاً
-                                # همان کندلی باشد که strategy_wrapper به‌عنوان ناقص حذف کرده است)
                                 entry_time_ms=signal_bar_ts_ms,
                                 leverage=LEVERAGE_MAP.get(symbol, 50),
                                 order_placed=None,
@@ -1063,32 +1107,23 @@ def loop():
 
                         allowed_leverage = LEVERAGE_MAP.get(symbol, 50)
 
-                        # ============================================================
-                        # ۱) محاسبه درصد استاپ
-                        # ============================================================
                         if sig == "LONG":
                             stop_pct = abs(entry - stop_price) / entry if entry > 0 else 0
-                        else:  # SHORT
+                        else:
                             stop_pct = abs(stop_price - entry) / entry if entry > 0 else 0
 
                         if stop_pct <= 0:
                             logger.warning(f"{symbol}: invalid stop_pct={stop_pct}, skip")
                             continue
 
-                        # ============================================================
-                        # ۲) محاسبه درصد تارگت
-                        # ============================================================
                         if target_price is not None and not math.isnan(target_price) and target_price > 0:
                             if sig == "LONG":
                                 target_pct = abs(target_price - entry) / entry
-                            else:  # SHORT
+                            else:
                                 target_pct = abs(entry - target_price) / entry
                         else:
                             target_pct = 0
 
-                        # ============================================================
-                        # ۳) فرمول دقیق بک‌تست — محاسبه سرمایه
-                        # ============================================================
                         old_leverage = 1.0 / stop_pct
 
                         if old_leverage > allowed_leverage:
@@ -1098,9 +1133,6 @@ def loop():
                             required_capital = BASE_CAPITAL
                             leverage_mode = "BASE"
 
-                        # ============================================================
-                        # ۴) مدیریت موجودی
-                        # ============================================================
                         if balance < required_capital:
                             capital = balance * BALANCE_USE_RATIO
                             actual_stop_dollar = capital * stop_pct * allowed_leverage
@@ -1118,14 +1150,8 @@ def loop():
                             )
                             mode = "FULL"
 
-                        # ============================================================
-                        # ۵) محاسبه R
-                        # ============================================================
                         r_value = (target_pct / stop_pct) if target_pct > 0 else None
 
-                        # ============================================================
-                        # ۶) لاگ نهایی — شفاف و دقیق
-                        # ============================================================
                         profit_str = f"{actual_profit_dollar:.4f}" if actual_profit_dollar else "N/A"
                         r_str = f"{r_value:.2f}" if r_value else "N/A"
 
@@ -1141,19 +1167,9 @@ def loop():
                             f"  R={r_str}"
                         )
 
-                        # ============================================================
-                        # 🎯 لنگرگاه قیمت اجرا — چون سیگنال روی دادهٔ بایننس محاسبه شده
-                        # ولی سفارش MARKET روی قیمت زندهٔ thetruetrade.io پر می‌شود،
-                        # سطوح مطلق stop/target (که از بایننس آمده‌اند) را نمی‌توان
-                        # مستقیم به صرافی اجرا فرستاد — چون دو دفتر سفارش با دو
-                        # مقیاس قیمت متفاوت‌اند. به‌جایش همان درصدهای ریسک/ریوارد
-                        # (stop_pct / target_pct) را — که مستقل از مقیاس قیمت‌اند —
-                        # روی آخرین قیمت واقعیِ thetruetrade.io پیاده می‌کنیم، تا هم
-                        # جهت/ساختار سیگنال دقیقاً مطابق پاین بماند و هم سطوح ارسالی
-                        # به صرافی روی مقیاس درست خودش باشد.
-                        # ============================================================
                         exec_stop_price = stop_price
                         exec_target_price = target_price
+                        exec_anchor_price = None
                         try:
                             df_anchor = public.fetch_ohlcv(symbol, "1")
                             if not df_anchor.empty:
@@ -1164,7 +1180,7 @@ def loop():
                                         exec_anchor_price * (1 + target_pct)
                                         if target_pct > 0 else None
                                     )
-                                else:  # SHORT
+                                else:
                                     exec_stop_price = exec_anchor_price * (1 + stop_pct)
                                     exec_target_price = (
                                         exec_anchor_price * (1 - target_pct)
@@ -1176,10 +1192,6 @@ def loop():
                                     f"target(binance)={target_price} → target(exec)={exec_target_price}"
                                 )
                             else:
-                                # ============================================================
-                                # 🔄 FALLBACK: استفاده از داده بایننس (df_signal) به عنوان لنگر
-                                # چون df_signal هم‌اکنون در دسترس است و مقیاس قیمتش با خودش سازگار است
-                                # ============================================================
                                 logger.warning(
                                     f"{symbol}: exec-anchor price unavailable — "
                                     f"using BINANCE anchor from df_signal"
@@ -1191,7 +1203,7 @@ def loop():
                                         binance_anchor_price * (1 + target_pct)
                                         if target_pct > 0 else None
                                     )
-                                else:  # SHORT
+                                else:
                                     exec_stop_price = binance_anchor_price * (1 + stop_pct)
                                     exec_target_price = (
                                         binance_anchor_price * (1 - target_pct)
@@ -1202,9 +1214,6 @@ def loop():
                                     f"stop(exec)={exec_stop_price} | target(exec)={exec_target_price}"
                                 )
                         except Exception as anchor_err:
-                            # ============================================================
-                            # 🛟 EXCEPTION FALLBACK: استفاده از داده بایننس (df_signal)
-                            # ============================================================
                             logger.warning(
                                 f"{symbol}: exec-anchor fetch failed ({anchor_err}) — "
                                 f"using BINANCE anchor from df_signal"
@@ -1217,7 +1226,7 @@ def loop():
                                         binance_anchor_price * (1 + target_pct)
                                         if target_pct > 0 else None
                                     )
-                                else:  # SHORT
+                                else:
                                     exec_stop_price = binance_anchor_price * (1 + stop_pct)
                                     exec_target_price = (
                                         binance_anchor_price * (1 - target_pct)
@@ -1236,9 +1245,9 @@ def loop():
                                 exec_target_price = target_price
 
                         # ============================================================
-                        # ۷) ارسال سفارش با سرمایه دقیق
+                        # ارسال سفارش
                         # ============================================================
-                        exchange.create_order(
+                        order_result = exchange.create_order(
                             symbol,
                             sig,
                             capital,
@@ -1247,20 +1256,46 @@ def loop():
                             stop_loss=exec_stop_price,
                         )
 
-                        # به‌روزرسانی موجودی بعد از سفارش
+                        # ============================================================
+                        # 🛡️ ثبت پندینگ ریسک فری
+                        # ============================================================
+                        if order_result is not None and risk_free_pct is not None:
+                            position_id = None
+                            if isinstance(order_result, dict):
+                                position_id = (
+                                    order_result.get("positionId")
+                                    or order_result.get("id")
+                                    or (order_result.get("position") or {}).get("id")
+                                )
+                            entry_est_val = exec_anchor_price if exec_anchor_price else entry
+                            RISK_FREE_PENDING[f"{symbol}|{sig}|{time.time()}"] = {
+                                "symbol": symbol,
+                                "side": sig,
+                                "timeframe": timeframe,
+                                "position_id": position_id,
+                                "entry_est": float(entry_est_val),
+                                "rf_pct": float(risk_free_pct),
+                                "signal_bar_ts_ms": signal_bar_ts_ms,
+                                "opened_at": time.time(),
+                                "state": "pending",
+                                "missing_cycles": 0,
+                            }
+                            logger.info(
+                                f"[RISK-FREE] {symbol} {sig} pending | "
+                                f"position_id={position_id} | rf_pct={risk_free_pct:.6f}"
+                            )
+
                         balance = exchange.fetch_balance()
                         
                     except Exception as e:
                         logger.exception(f"Error processing {symbol} {timeframe}m: {e}")
                         continue
 
-            # هر ۳۰ ثانیه یک بار چک می‌کند
             STOP_EVENT.wait(30)
 
         except Exception as e:
             logger.exception("Loop error")
             STOP_EVENT.wait(60)
-
 
 
 if __name__ == "__main__":
@@ -1277,9 +1312,6 @@ if __name__ == "__main__":
     )
     health_thread.start()
 
-    # ============================================================
-    # 📍 نقطه ۴: ترد گزارش‌دهنده
-    # ============================================================
     report_thread = threading.Thread(
         target=trade_ledger.scheduler_loop,
         args=(send_telegram_long, STOP_EVENT),
