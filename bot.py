@@ -61,7 +61,7 @@ logger.info("=" * 60)
 # Rate limiter برای درخواست‌های thetruetrade.io
 # تا درخواست‌های پشت‌سرهم باعث HTTP 429 نشوند
 # ============================================================
-TRUETRADE_MIN_INTERVAL = float(os.getenv("TRUETRADE_MIN_INTERVAL", "2.3"))
+TRUETRADE_MIN_INTERVAL = float(os.getenv("TRUETRADE_MIN_INTERVAL", "2.5"))
 _truetrade_lock = threading.Lock()
 _truetrade_last_req = 0.0
 
@@ -219,7 +219,7 @@ class PublicData:
         from_ts = now - bars_needed * 60 - 60
         uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution={timeframe}&from={from_ts}&to={now}&countback={HISTORY_BARS * multiplier}"
 
-        max_attempts = 3
+        max_attempts = 2
         for attempt in range(max_attempts):
             throttle_truetrade()
             try:
