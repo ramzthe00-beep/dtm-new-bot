@@ -30,7 +30,9 @@ SYMBOL_TICK_INFO = {
     "DOGEUSDT": {"mintick": 0.00001, "pricescale": 100000, "basecurrency": "DOGE"},
     "ETHUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "ETH"},
     "BNBUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "BNB"},
+    "PUMPUSDT": {"mintick": 0.00001, "pricescale": 100000, "basecurrency": "PUMP"},
 }
+
 
 # ============================================================
 # تابع ارسال پیام به تلگرام (برای گزارش خطاهای حیاتی)
