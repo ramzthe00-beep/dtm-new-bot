@@ -12,6 +12,7 @@ import pandas as pd
 from strategy_wrapper import calculate_signals
 from datetime import datetime, timezone, timedelta
 import math
+import random  # <-- اضافه شده
 import trade_ledger
 
 # ===== TIMEZONE CONSTANTS =====
@@ -55,6 +56,25 @@ logger = logging.getLogger("BOT")
 logger.info("=" * 60)
 logger.info("BOT STARTING...")
 logger.info("=" * 60)
+
+# ============================================================
+# Rate limiter برای درخواست‌های thetruetrade.io
+# تا درخواست‌های پشت‌سرهم باعث HTTP 429 نشوند
+# ============================================================
+TRUETRADE_MIN_INTERVAL = float(os.getenv("TRUETRADE_MIN_INTERVAL", "0.6"))
+_truetrade_lock = threading.Lock()
+_truetrade_last_req = 0.0
+
+def throttle_truetrade():
+    """فاصله‌گذاری بین درخواست‌های پشت‌سرهم به thetruetrade.io"""
+    global _truetrade_last_req
+    with _truetrade_lock:
+        now = time.monotonic()
+        wait = TRUETRADE_MIN_INTERVAL - (now - _truetrade_last_req)
+        if wait > 0:
+            time.sleep(wait)
+            now = time.monotonic()
+        _truetrade_last_req = now
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -185,62 +205,83 @@ class PublicData:
     def fetch_ohlcv(self, symbol, timeframe="1"):
         """
         دریافت داده OHLCV با تایم‌فریم دلخواه
-        
+
         Args:
             symbol: نام نماد (مثلاً LTCUSDT)
             timeframe: تایم‌فریم به دقیقه (1, 5, 15)
         """
         now = int(time.time())
-        
+
         # محاسبه تعداد کندل بر اساس تایم‌فریم
         multiplier = int(timeframe)
         bars_needed = HISTORY_BARS * multiplier * 2  # ضریب ۲ برای اطمینان
-        
+
         from_ts = now - bars_needed * 60 - 60
         uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution={timeframe}&from={from_ts}&to={now}&countback={HISTORY_BARS * multiplier}"
-        
-        try:
-            r = self.session.get(f"{self.base}{uri}", timeout=20)
-            r.raise_for_status()
-            data = r.json()
-            
-            if data.get('s') != 'ok':
-                logger.warning(f"Data not ok for {symbol} {timeframe}m: {data.get('s')}")
+
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            throttle_truetrade()
+            try:
+                r = self.session.get(f"{self.base}{uri}", timeout=20)
+
+                # Retry هوشمند روی HTTP 429
+                if r.status_code == 429:
+                    if attempt == max_attempts - 1:
+                        logger.error(
+                            f"[thetruetrade 429] {symbol} {timeframe}m — "
+                            f"still rate-limited after {max_attempts} attempts"
+                        )
+                        return pd.DataFrame()
+
+                    wait = min(20, 2 ** attempt) + random.random() * 0.5
+                    logger.warning(
+                        f"[thetruetrade 429] {symbol} {timeframe}m — "
+                        f"attempt {attempt + 1}/{max_attempts}, retry in {wait:.2f}s"
+                    )
+                    time.sleep(wait)
+                    continue
+
+                r.raise_for_status()
+                data = r.json()
+
+                if data.get('s') != 'ok':
+                    logger.warning(f"Data not ok for {symbol} {timeframe}m: {data.get('s')}")
+                    return pd.DataFrame()
+
+                # بررسی وجود داده
+                if not data.get('t') or len(data['t']) == 0:
+                    logger.warning(f"No data for {symbol} {timeframe}m")
+                    return pd.DataFrame()
+
+                t = data['t']
+                o = data['o']
+                h = data['h']
+                l = data['l']
+                c = data['c']
+                v = data.get('v', [None] * len(t))
+
+                df = pd.DataFrame({
+                    'open': pd.to_numeric(o, errors='coerce'),
+                    'high': pd.to_numeric(h, errors='coerce'),
+                    'low': pd.to_numeric(l, errors='coerce'),
+                    'close': pd.to_numeric(c, errors='coerce'),
+                    'volume': pd.to_numeric(v, errors='coerce'),
+                }, index=pd.to_datetime(t, unit='s', utc=True))
+
+                df = df.sort_index()
+                df = df[~df.index.duplicated(keep='last')]
+                df = df.dropna(subset=['open', 'high', 'low', 'close'])
+
+                result = df.tail(HISTORY_BARS)
+                logger.info(f"Fetched {len(result)} candles for {symbol} {timeframe}m")
+                return result
+
+            except Exception as e:
+                logger.error(f"Data error for {symbol} {timeframe}m: {e}")
                 return pd.DataFrame()
-                
-            # بررسی وجود داده
-            if not data.get('t') or len(data['t']) == 0:
-                logger.warning(f"No data for {symbol} {timeframe}m")
-                return pd.DataFrame()
-                
-            t = data['t']
-            o = data['o']
-            h = data['h']
-            l = data['l']
-            c = data['c']
-            v = data.get('v', [None] * len(t))
 
-            df = pd.DataFrame({
-                'open': pd.to_numeric(o, errors='coerce'),
-                'high': pd.to_numeric(h, errors='coerce'),
-                'low': pd.to_numeric(l, errors='coerce'),
-                'close': pd.to_numeric(c, errors='coerce'),
-                'volume': pd.to_numeric(v, errors='coerce'),
-            }, index=pd.to_datetime(t, unit='s', utc=True))
-
-            df = df.sort_index()
-            df = df[~df.index.duplicated(keep='last')]
-            df = df.dropna(subset=['open', 'high', 'low', 'close'])
-
-            result = df.tail(HISTORY_BARS)
-            logger.info(f"Fetched {len(result)} candles for {symbol} {timeframe}m")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Data error for {symbol} {timeframe}m: {e}")
-            return pd.DataFrame()
-
-
+        return pd.DataFrame()
 
 
 class PrivateExchange:
@@ -260,16 +301,6 @@ class PrivateExchange:
         # IMPORTANT: never reuse a previous HTTP response
         self._last_response = None
 
-        ts = str(int(time.time()*1000))
-        sig = self._sign(method, uri, ts)
-
-        headers = {
-            "X-API-Key": self.api_key,
-            "X-Timestamp": ts,
-            "X-Signature": sig,
-            "Content-Type": "application/json"
-        }
-
         url = f"{self.base}{uri}"
 
         # ===== FULL EXCHANGE REQUEST LOG =====
@@ -280,64 +311,102 @@ class PrivateExchange:
             json.dumps(data, ensure_ascii=False) if data else None
         )
 
-        try:
-            r = self.session.request(
-                method,
-                url,
-                headers=headers,
-                json=data,
-                timeout=15
-            )
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            # ساخت امضا برای هر تلاش جداگانه (timestamp تازه)
+            ts = str(int(time.time() * 1000))
+            sig = self._sign(method, uri, ts)
 
-            self._last_response = r
+            headers = {
+                "X-API-Key": self.api_key,
+                "X-Timestamp": ts,
+                "X-Signature": sig,
+                "Content-Type": "application/json"
+            }
 
-            # ===== FULL EXCHANGE RESPONSE LOG =====
-            logger.info(
-                "[EXCHANGE RESPONSE] %s %s | HTTP=%s | BODY=%s",
-                method.upper(),
-                uri,
-                r.status_code,
-                r.text
-            )
+            throttle_truetrade()
 
-            # Keep the COMPLETE raw exchange response visible in log
-            logger.info(
-                "[EXCHANGE RAW RESPONSE COMPLETE] "
-                "method=%s | uri=%s | status=%s | body=%s",
-                method.upper(),
-                uri,
-                r.status_code,
-                r.text,
-            )
+            try:
+                r = self.session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=data,
+                    timeout=15
+                )
 
-            if not r.ok:
-                self.connected = False
+                self._last_response = r
 
-                logger.error(
-                    "[EXCHANGE ERROR] %s %s | HTTP=%s | BODY=%s",
+                # ===== FULL EXCHANGE RESPONSE LOG =====
+                logger.info(
+                    "[EXCHANGE RESPONSE] %s %s | HTTP=%s | BODY=%s",
                     method.upper(),
                     uri,
                     r.status_code,
                     r.text
                 )
 
-                r.raise_for_status()
+                logger.info(
+                    "[EXCHANGE RAW RESPONSE COMPLETE] "
+                    "method=%s | uri=%s | status=%s | body=%s",
+                    method.upper(),
+                    uri,
+                    r.status_code,
+                    r.text,
+                )
 
-            self.connected = True
+                # 429 → تلاش مجدد با backoff
+                if r.status_code == 429:
+                    if attempt == max_attempts - 1:
+                        logger.error(
+                            "[EXCHANGE 429 RATE LIMIT] %s %s | HTTP=%s | "
+                            "giving up after %s attempts | BODY=%s",
+                            method.upper(), uri, r.status_code, max_attempts, r.text
+                        )
+                        r.raise_for_status()
 
-            try:
-                return r.json()
-            except ValueError:
-                return {"raw": r.text}
+                    wait = min(20, 2 ** attempt) + random.random() * 0.5
+                    logger.warning(
+                        "[EXCHANGE 429 RATE LIMIT] %s %s | HTTP=%s | "
+                        "attempt %s/%s, retry in %.2fs",
+                        method.upper(), uri, r.status_code,
+                        attempt + 1, max_attempts, wait
+                    )
+                    time.sleep(wait)
+                    continue
 
-        except Exception as e:
-            logger.error(
-                "[EXCHANGE REQUEST EXCEPTION] %s %s | ERROR=%s",
-                method.upper(),
-                uri,
-                repr(e)
-            )
-            raise
+                if not r.ok:
+                    self.connected = False
+
+                    logger.error(
+                        "[EXCHANGE ERROR] %s %s | HTTP=%s | BODY=%s",
+                        method.upper(),
+                        uri,
+                        r.status_code,
+                        r.text
+                    )
+
+                    r.raise_for_status()
+
+                self.connected = True
+
+                try:
+                    return r.json()
+                except ValueError:
+                    return {"raw": r.text}
+
+            except Exception as e:
+                logger.error(
+                    "[EXCHANGE REQUEST EXCEPTION] %s %s | ERROR=%s",
+                    method.upper(),
+                    uri,
+                    repr(e)
+                )
+                self.connected = False
+                raise
+
+        # اگر به‌دلیلی حلقه بدون موفقیت تمام شد
+        raise RuntimeError(f"Exhausted {max_attempts} attempts for {method} {uri}")
 
     def test_connection(self):
         try:
@@ -1063,7 +1132,7 @@ def loop():
                         # (stop_pct / target_pct) را — که مستقل از مقیاس قیمت‌اند —
                         # روی آخرین قیمت واقعیِ thetruetrade.io پیاده می‌کنیم، تا هم
                         # جهت/ساختار سیگنال دقیقاً مطابق پاین بماند و هم سطوح ارسالی
-                        # به صرافی روی مقیاس درست خودش باشند.
+                        # به صرافی روی مقیاس درست خودش باشد.
                         # ============================================================
                         exec_stop_price = stop_price
                         exec_target_price = target_price
