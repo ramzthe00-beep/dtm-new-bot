@@ -909,7 +909,7 @@ def main():
         meta = {
             "days": args.days, "symbols": symbols, "tfs": tfs,
             "start_date": start_ir.strftime("%Y-%m-%d"), "end_date": now_ir.strftime("%Y-%m-%d"),
-            "generated_at": now_ir_str(), "engine": ENGINE_NAME,
+            "generated_at": now_iran_str(), "engine": ENGINE_NAME,
             "combos": [], "errors": [],
         }
 
