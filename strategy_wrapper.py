@@ -618,12 +618,15 @@ Value: {str(last_values)[:500]}
         # ============================================================
         stop_price, target_price, rr_value, structural_level = None, None, None, None
         risk_free_pct = None
+        
 
         if signal in ("LONG", "SHORT"):
             if symbol == "BNBUSDT" or symbol == "ETHUSDT":
                 buffer_ticks = 9
             elif symbol == "LTCUSDT" or symbol == "DOGEUSDT":
                 buffer_ticks = 3
+            elif symbol == "PUMPUSDT":
+                buffer_ticks = 1   # ← فقط برای PUMPUSDT
             else:
                 buffer_ticks = 5
 
