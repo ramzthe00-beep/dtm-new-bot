@@ -110,19 +110,47 @@ def throttle_truetrade():
         _truetrade_last_req = now
 
 def send_telegram(text):
+    """ارسال پیام به تلگرام با مدیریت خطای 429 (Rate Limit) و retry خودکار"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    try:
-        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=20)
-        if r.status_code == 200:
-            return True
-        else:
-            logger.error(f"[TELEGRAM] Failed to send message: {r.status_code} {r.text[:300]}")
-            return False
-    except Exception as e:
-        logger.error(f"[TELEGRAM] Failed to send message: {e}")
-        return False
+    
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=30)
+            
+            if r.status_code == 429:
+                # استخراج زمان انتظار از پاسخ تلگرام
+                try:
+                    data = r.json()
+                    retry_after = data.get("parameters", {}).get("retry_after", 10)
+                except Exception:
+                    retry_after = 10
+                
+                if attempt == max_attempts - 1:
+                    logger.error(f"[TELEGRAM] Rate limit after {max_attempts} attempts: {r.status_code} {r.text[:300]}")
+                    return False
+                
+                wait = min(retry_after + 2, 30)
+                logger.warning(f"[TELEGRAM] Rate limit, retry in {wait}s (attempt {attempt+1}/{max_attempts})")
+                time.sleep(wait)
+                continue
+            
+            if r.status_code == 200:
+                return True
+            else:
+                logger.error(f"[TELEGRAM] Failed to send message: {r.status_code} {r.text[:300]}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Exception: {e}")
+            if attempt == max_attempts - 1:
+                return False
+            time.sleep(2 ** attempt)
+    
+    return False
 
 def send_telegram_long(text):
+    """ارسال پیام بلند به تلگرام با چند بخش و مدیریت Rate Limit"""
     text = str(text)
     if len(text) <= 4000:
         return send_telegram(text)
@@ -131,7 +159,7 @@ def send_telegram_long(text):
     ok = True
     for i, part in enumerate(parts):
         ok = send_telegram(part) and ok
-        time.sleep(0.5)
+        time.sleep(1.0)  # افزایش فاصله بین بخش‌ها برای جلوگیری از Rate Limit
     return ok
 
 class PublicData:
@@ -744,6 +772,7 @@ def startup_diagnostic(exchange, public):
 
     try:
         send_telegram("🧪 DTM startup diagnostic started")
+        time.sleep(1)  # ⏳ صبر ۱ ثانیه برای جلوگیری از Rate Limit
         telegram_ok = True
     except Exception:
         telegram_ok = False
@@ -874,6 +903,7 @@ def startup_diagnostic(exchange, public):
 
     try:
         send_telegram_long(final_report)
+        time.sleep(1)  # ⏳ صبر ۱ ثانیه برای جلوگیری از Rate Limit
         logger.info(
             "[STARTUP DIAGNOSTIC] TELEGRAM SENT"
         )
@@ -1062,6 +1092,7 @@ def loop():
 
     try:
         startup_diagnostic(exchange, public)
+        time.sleep(2)  # ⏳ صبر ۲ ثانیه بعد از استارت‌آپ برای جلوگیری از Rate Limit
     except Exception as e:
         logger.exception("[STARTUP DIAGNOSTIC] FATAL ERROR: %s", e)
 
