@@ -960,9 +960,7 @@ def main():
                         "raw_hits": raw_hits, "signals": len(trades),
                     })
                     msg = (f"⏳ [{done}/{total}] {sym} {tf}m ✓ | "
-                           f"کندل: {n_bars:,} | خام: {raw_hits} | "
-                           f"خارج‌بازه: {diag.get('out_of_range', 0)} | استاپ‌بد: {diag.get('bad_sltp', 0)} | "
-                           f"سیگنال: {len(trades)} | {time.time() - t0:.0f}s")
+                           f"کندل: {n_bars:,} | سیگنال: {len(trades)} | {time.time() - t0:.0f}s")
                 except Exception as e:
                     meta["errors"].append(f"{sym} {tf}m: {e}")
                     logger.error(f"[COMBO] {sym} {tf}m failed: {e}\n{traceback.format_exc()}")
