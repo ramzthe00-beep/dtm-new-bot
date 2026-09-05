@@ -426,27 +426,40 @@ def run_strategy_pass(candles, symbol, timeframe):
         last_bar_index=len(candles) - 1, inputs=dict(STRATEGY_INPUTS),
     )
     hits = []
-    logging.disable(logging.INFO)  # خفه‌کردن لاگ‌های حجیم strategy.py حین اجرا
+    stats = {"bars": 0, "dicts": 0, "raw": 0, "errors": 0}
+    logging.disable(logging.INFO)
     try:
         for i, result in enumerate(runner.run_iter()):
+            stats["bars"] += 1
             try:
-                if not (isinstance(result, (tuple, list)) and len(result) >= 2):
+                if result is None or len(result) < 2:
                     continue
-                lv = result[1]
-                if not (isinstance(lv, dict) and len(lv) > 0):
+                raw = result[1]
+                if not (isinstance(raw, dict) and len(raw) > 0):
                     continue
+                # 🔴 کلید حل مشکل: کپی مستقل دیکشنری در همان لحظه.
+                # PyneCore همان یک شیء dict را در هر بار استفاده و پاک می‌کند؛
+                # نگه‌داشتن رفرنس = دیکشنری خالی بعد از حلقه
+                # (همان باگی که خود strategy_wrapper با dict(result[1]) حل کرده).
+                lv = dict(raw)
+                stats["dicts"] += 1
                 sig = lv.get("signal")
                 if sig not in ("LONG", "SHORT"):
                     continue
                 entry = _f(lv.get("entry"))
                 if entry is None or entry <= 0:
                     continue
+                stats["raw"] += 1
                 hits.append((i, lv, sig, entry))
             except Exception:
+                stats["errors"] += 1
                 continue
     finally:
         logging.disable(logging.NOTSET)
-    return hits
+    return hits, stats
+
+
+
 
 
 # ============================================================
@@ -514,16 +527,19 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms):
     candles = df_to_candles(df)
     n = len(candles)
     mintick = SYMBOL_TICK_INFO.get(symbol, {"mintick": 0.01})["mintick"]
-    raw_hits = run_strategy_pass(candles, symbol, timeframe)
+    raw_hits, diag = run_strategy_pass(candles, symbol, timeframe)
 
     seen, trades = set(), []
+    drop = {"out_of_range": 0, "bad_sltp": 0, "dup": 0}
     for (i, lv, sig, entry) in raw_hits:
         try:
             ts = int(candles[i].timestamp)
-            if ts < start_ms or ts > end_ms:      # کندل‌های warmup حساب نمی‌شوند
+            if ts < start_ms or ts > end_ms:
+                drop["out_of_range"] += 1
                 continue
             key = (symbol, str(timeframe), ts, sig)
-            if key in seen:                        # ضدتکرار ایمنی
+            if key in seen:
+                drop["dup"] += 1
                 continue
             seen.add(key)
 
@@ -532,17 +548,19 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms):
                 stop, target, rr, struct = _compute_stop_target(
                     candles, sig, lv, mintick, buffer_ticks=buffer_ticks_for(symbol)
                 )
-            except Exception:
-                stop = None
+            except Exception as e:
+                logger.warning(f"[SL/TP] {symbol} {timeframe}m bar {i}: {e}")
             if stop is None or target is None or abs(entry - stop) <= 0:
-                continue  # مثل لایو: سیگنال بدون استاپِ معتبر ثبت نمی‌شود
+                drop["bad_sltp"] += 1
+                continue
 
+            st = signal_type_of(lv)
             tr = {
                 "symbol": symbol, "timeframe": str(timeframe), "direction": sig,
                 "entry": float(entry), "stop": float(stop), "target": float(target),
                 "entry_time_ms": ts, "entry_idx": int(i),
                 "leverage": LEVERAGE_MAP.get(symbol, 50),
-                "signal_type": signal_type_of(lv) or "?", "score": _score_of(lv, signal_type_of(lv)),
+                "signal_type": st or "?", "score": _score_of(lv, st),
                 "rf_pct": compute_rf_pct(sig, entry, stop, struct),
                 "rr_planned": _f(rr),
                 "status": "OPEN", "exit_reason": None, "exit_price": None,
@@ -554,7 +572,11 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms):
             logger.warning(f"[BT] {symbol} {timeframe}m bar {i}: {e}")
             continue
 
-    return trades, n, len(raw_hits)
+    diag.update(drop)
+    diag["trades"] = len(trades)
+    return trades, n, raw_hits, diag
+
+
 
 
 # ============================================================
@@ -747,7 +769,8 @@ def build_overall_report(trades, meta):
         L.append(W)
         L.append("🧮 جزئیات اجرا:")
         for c in meta["combos"]:
-            L.append(f"  • {c['symbol']} {c['tf']}m | کندل: {c['bars']} | سیگنال خام: {c['raw_hits']} | معاملات: {c['signals']}")
+            L.append(f"  • {c['symbol']} {c['tf']}m | کندل: {c['bars']} | خام: {c['raw_hits']} | "
+                     f"خارج‌بازه: {c.get('out_of_range', 0)} | استاپ‌بد: {c.get('bad_sltp', 0)} | معاملات: {c['signals']}")
     if meta.get("errors"):
         L.append(W)
         L.append("⚠️ خطاهای بک‌تست:")
@@ -930,14 +953,16 @@ def main():
                 done += 1
                 t0 = time.time()
                 try:
-                    trades, n_bars, raw_hits = backtest_combo(sym, tf, start_ms, end_ms)
+                    trades, n_bars, raw_hits, diag = backtest_combo(sym, tf, start_ms, end_ms)
                     all_trades.extend(trades)
                     meta["combos"].append({
                         "symbol": sym, "tf": tf, "bars": n_bars,
                         "raw_hits": raw_hits, "signals": len(trades),
                     })
                     msg = (f"⏳ [{done}/{total}] {sym} {tf}m ✓ | "
-                           f"کندل: {n_bars:,} | سیگنال: {len(trades)} | {time.time() - t0:.0f}s")
+                           f"کندل: {n_bars:,} | خام: {raw_hits} | "
+                           f"خارج‌بازه: {diag.get('out_of_range', 0)} | استاپ‌بد: {diag.get('bad_sltp', 0)} | "
+                           f"سیگنال: {len(trades)} | {time.time() - t0:.0f}s")
                 except Exception as e:
                     meta["errors"].append(f"{sym} {tf}m: {e}")
                     logger.error(f"[COMBO] {sym} {tf}m failed: {e}\n{traceback.format_exc()}")
