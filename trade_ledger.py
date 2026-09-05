@@ -95,10 +95,11 @@ def _write_all(rows):
 # ---------------------------------------------------------------------------
 def record_signal(symbol, timeframe, direction, entry, stop, target,
                    entry_time_ms, leverage=None, order_placed=None,
-                   order_reason=""):
+                   order_reason="", risk_free_pct=None):
     entry = _safe_float(entry)
     stop = _safe_float(stop)
     target = _safe_float(target)
+    risk_free_pct = _safe_float(risk_free_pct)
 
     if entry is None or stop is None or direction not in ("LONG", "SHORT"):
         logger.warning(
@@ -132,6 +133,9 @@ def record_signal(symbol, timeframe, direction, entry, stop, target,
         "pnl_r": None,
         "risk_free": False,          # ← جدید: آیا ریسک فری فعال شده؟
         "exit_reason": None,         # ← جدید: RISK_FREE_STOP | TARGET | STOP_LOSS
+        "rf_pct": risk_free_pct,     # 🆕 درصد فعال‌سازی ریسک‌فری (از strategy_wrapper) —
+                                      # برای شبیه‌سازی مستقلِ ریسک‌فری در update_open_trades
+                                      # صرف‌نظر از اینکه سفارش واقعاً روی صرافی اجرا شده یا نه.
     }
 
     with _lock:
@@ -275,6 +279,41 @@ def update_open_trades(symbol, timeframe, df):
 
                     candle_ms = int(ts.timestamp() * 1000) if hasattr(ts, "timestamp") else int(ts.value // 10**6)
 
+                    # ============================================================
+                    # 🆕 شبیه‌سازی مستقلِ ریسک‌فری (بدون نیاز به اجرای واقعی سفارش
+                    # روی صرافی). قبلاً r["risk_free"] فقط از طریق
+                    # update_open_trade_stop ست می‌شد که خودش فقط زمانی صدا زده
+                    # می‌شود که یک پوزیشن واقعی روی صرافی باز شده و استاپش با
+                    # موفقیت جابه‌جا شده باشد. در دورهٔ تست (موجودی/سفارش واقعی
+                    # ناموفق) این هرگز اتفاق نمی‌افتاد و گزارش‌ها همیشه
+                    # «ریسک فری: 0» نشان می‌دادند — حتی برای معاملات فرضیِ برنده.
+                    # اینجا طبق همان rf_pct محاسبه‌شده در strategy_wrapper، مستقیماً
+                    # از روی کندل چک می‌کنیم که آیا قیمت به نقطهٔ ریسک‌فری رسیده،
+                    # و اگر رسیده استاپ محلی (فرضی) را به نقطهٔ سربه‌سر (entry)
+                    # منتقل می‌کنیم. چون این دفترچه اصلاً کارمزد واقعی صرافی را
+                    # نمی‌داند (آن فقط از یک پوزیشن زندهٔ صرافی قابل خواندن است)،
+                    # این یک تقریب سربه‌سرِ بدون کارمزد است، نه دقیقاً همان سطحی
+                    # که bot.py روی صرافی واقعی ست می‌کند.
+                    # ============================================================
+                    if not r.get("risk_free") and r.get("rf_pct") is not None:
+                        rf_pct = r["rf_pct"]
+                        entry_px = r["entry"]
+                        if r["direction"] == "LONG":
+                            rf_trigger = entry_px * (1 + rf_pct)
+                            rf_crossed = high >= rf_trigger
+                        else:
+                            rf_trigger = entry_px * (1 - abs(rf_pct))
+                            rf_crossed = low <= rf_trigger
+                        if rf_crossed:
+                            r["initial_stop"] = r.get("initial_stop", r.get("stop"))
+                            r["stop"] = entry_px  # تقریب سربه‌سر (بدون کارمزد)
+                            r["risk_free"] = True
+                            r["risk_free_armed_ms"] = candle_ms
+                            logger.info(
+                                f"[LEDGER] ریسک‌فری فرضی فعال شد: {r['id']} | "
+                                f"trigger={rf_trigger} | stop -> {entry_px} (سربه‌سر)"
+                            )
+
                     hit_stop = False
                     hit_target = False
 
@@ -389,7 +428,7 @@ def _build_report(rows, title):
             lines.append(f"     برد: {tf_wins} | باخت: {tf_losses} | سود: {tf_pnl:+.2f}$")
             lines.append("     ────────────────────")
             
-            for r in items[:10]:  # فقط ۱۰ معامله آخر
+            for r in items:  # 🆕 همه‌ی معاملات این تایم‌فریم، بدون محدودیت تعداد
                 t = _ms_to_iran(r["entry_time_ms"])
                 t_str = t.strftime("%Y-%m-%d %H:%M") if t else "?"
                 emoji = "✅" if r["status"] == "WIN" else "❌"
@@ -400,9 +439,6 @@ def _build_report(rows, title):
                 lines.append(
                     f"     {emoji} {t_str} | {r['symbol']} {r['direction']} | {pnl_str}"
                 )
-            
-            if len(items) > 10:
-                lines.append(f"     ... و {len(items) - 10} معامله دیگر")
 
     return "\n".join(lines)
 
