@@ -46,7 +46,23 @@ CHECK_INTERVAL = {
 LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75}
 TARGET_RISK = 2.0
 TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01, "PUMPUSDT": 0.000001}
-PRICE_PRECISION = {"LTCUSDT": 2, "DOGEUSDT": 5, "ETHUSDT": 2, "BNBUSDT": 2, "PUMPUSDT": 2}
+
+
+def _precision_from_tick(tick):
+    """
+    تعداد رقم اعشار را مستقیماً از اندازه‌ی تیک (TICK_SIZES) محاسبه می‌کند،
+    تا PRICE_PRECISION هرگز با TICK_SIZES ناهماهنگ نشود.
+    علت باگ قبلی «Stop Loss: 0.00 / Take Profit: 0.00» برای ارزهای ۶ رقمی
+    (مثل PUMPUSDT) دقیقاً همین بود: تیک آن 0.000001 (۶ رقم اعشار) بود اما
+    PRICE_PRECISION آن به‌اشتباه روی 2 هارد-کد شده بود، پس هر قیمتی مثل
+    0.0039 هنگام رند شدن به ۲ رقم اعشار می‌شد 0.00 و همان مقدار نامعتبر هم
+    در پیام تلگرام نمایش داده می‌شد و هم داخل بدنه‌ی سفارش به صرافی ارسال می‌شد.
+    """
+    s = f"{tick:.10f}".rstrip("0")
+    return len(s.split(".")[1]) if "." in s else 0
+
+
+PRICE_PRECISION = {sym: _precision_from_tick(tick) for sym, tick in TICK_SIZES.items()}
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("BOT")
 
@@ -61,6 +77,20 @@ RISK_FREE_ENABLED = os.getenv("RISK_FREE_ENABLED", "1") == "1"
 RISK_FREE_FEE_MODE = os.getenv("RISK_FREE_FEE_MODE", "open")
 RISK_FREE_FEE_DEFAULT = float(os.getenv("RISK_FREE_FEE_DEFAULT", "0.30"))
 RISK_FREE_PENDING = {}
+
+# 🆕 آیا ریسک‌فری در همه‌ی تایم‌فریم‌هایی که ربات روی آن‌ها معامله می‌کند فعال شود،
+# یا فقط روی یک تایم‌فریم مشخص؟
+#   RISK_FREE_ALL_TIMEFRAMES=1  → روی همه‌ی TIMEFRAMES (پیش‌فرض، رفتار قبلی)
+#   RISK_FREE_ALL_TIMEFRAMES=0  → فقط روی تایم‌فریم RISK_FREE_TIMEFRAME (مثلاً "5")
+RISK_FREE_ALL_TIMEFRAMES = os.getenv("RISK_FREE_ALL_TIMEFRAMES", "1") == "1"
+RISK_FREE_TIMEFRAME = os.getenv("RISK_FREE_TIMEFRAME", TIMEFRAMES[0] if TIMEFRAMES else "1")
+
+# 🆕 حداقل «cost» (سرمایه/کولترال) قابل قبول برای ثبت سفارش.
+# صرافی هر سفارشی با cost کمتر از این مقدار را با خطای
+# "Collateral is below the minimum allowed" رد می‌کند. عدد دقیقِ صرافی در
+# مستندات ذکر نشده — این فقط یک مقدار پیش‌فرض احتیاطی است؛ آن را طبق حداقل
+# واقعی TheTrueTrade تنظیم کنید (متغیر محیطی MIN_ORDER_COST_USDT در Railway).
+MIN_ORDER_COST_USDT = float(os.getenv("MIN_ORDER_COST_USDT", "5"))
 
 # ============================================================
 # Rate limiter برای درخواست‌های thetruetrade.io
@@ -422,12 +452,28 @@ class PrivateExchange:
         }
         
         if take_profit is not None and not math.isnan(take_profit) and take_profit > 0:
-            od["takeProfit"] = f"{self._round_price(take_profit, symbol):.{prec}f}"
-            logger.info(f"[TP] Take Profit set at {self._round_price(take_profit, symbol):.{prec}f}")
-        
+            rounded_tp = self._round_price(take_profit, symbol)
+            if rounded_tp > 0:
+                od["takeProfit"] = f"{rounded_tp:.{prec}f}"
+                logger.info(f"[TP] Take Profit set at {rounded_tp:.{prec}f}")
+            else:
+                logger.warning(
+                    f"[TP] {symbol}: raw take_profit={take_profit} rounded to 0 "
+                    f"at precision={prec} (tick={TICK_SIZES.get(symbol.upper())}) — "
+                    f"omitting field instead of sending an invalid 0.00 to the exchange"
+                )
+
         if stop_loss is not None and not math.isnan(stop_loss) and stop_loss > 0:
-            od["stopLoss"] = f"{self._round_price(stop_loss, symbol):.{prec}f}"
-            logger.info(f"[SL] Stop Loss set at {self._round_price(stop_loss, symbol):.{prec}f}")
+            rounded_sl = self._round_price(stop_loss, symbol)
+            if rounded_sl > 0:
+                od["stopLoss"] = f"{rounded_sl:.{prec}f}"
+                logger.info(f"[SL] Stop Loss set at {rounded_sl:.{prec}f}")
+            else:
+                logger.warning(
+                    f"[SL] {symbol}: raw stop_loss={stop_loss} rounded to 0 "
+                    f"at precision={prec} (tick={TICK_SIZES.get(symbol.upper())}) — "
+                    f"omitting field instead of sending an invalid 0.00 to the exchange"
+                )
         
         logger.info(
             "[ORDER REQUEST] %s %s\n%s",
@@ -1099,6 +1145,7 @@ def loop():
                                 entry_time_ms=signal_bar_ts_ms,
                                 leverage=LEVERAGE_MAP.get(symbol, 50),
                                 order_placed=None,
+                                risk_free_pct=risk_free_pct,  # 🆕 برای شبیه‌سازی مستقل ریسک‌فری در گزارش‌ها
                             )
 
                         if not sig or balance <= 0 or stop_price is None or entry is None:
@@ -1165,6 +1212,28 @@ def loop():
                             f"  سود دلاری=${profit_str}\n"
                             f"  R={r_str}"
                         )
+
+                        # ============================================================
+                        # 🆕 بررسی حداقل سرمایه قابل قبول صرافی قبل از ارسال سفارش
+                        # (علت اصلی اینکه ریسک‌فری «اصلاً اجرا نمی‌شد»: تمام سفارش‌ها
+                        # به‌خاطر موجودی/سرمایه‌ی خیلی کم با خطای صرافی
+                        # "Collateral is below the minimum allowed" رد می‌شدند، پس هیچ
+                        # پوزیشنی باز نمی‌شد و ریسک‌فری چیزی برای مانیتور کردن نداشت)
+                        # ============================================================
+                        if capital < MIN_ORDER_COST_USDT:
+                            logger.warning(
+                                f"[SKIP-LOW-BALANCE] {symbol} {sig}: cost محاسبه‌شده "
+                                f"{capital:.4f} USDT کمتر از حداقل مجاز ({MIN_ORDER_COST_USDT} "
+                                f"USDT) است — سفارش ارسال نشد (صرافی حتماً رد می‌کرد)."
+                            )
+                            send_telegram(
+                                f"⚠️ سیگنال {sig} برای {symbol} ({timeframe}m) اجرا نشد\n"
+                                f"سرمایه محاسبه‌شده: {capital:.4f} USDT\n"
+                                f"حداقل مجاز فعلی (تنظیم‌شده): {MIN_ORDER_COST_USDT} USDT\n"
+                                f"موجودی فعلی حساب: {balance:.4f} USDT\n"
+                                f"❗️ تا افزایش موجودی، این سیگنال‌ها معامله نمی‌شوند."
+                            )
+                            continue
 
                         exec_stop_price = stop_price
                         exec_target_price = target_price
@@ -1257,8 +1326,13 @@ def loop():
 
                         # ============================================================
                         # 🛡️ ثبت پندینگ ریسک فری
+                        # 🆕 فقط اگر RISK_FREE_ALL_TIMEFRAMES=1 باشد (همه‌ی تایم‌فریم‌ها)
+                        # یا timeframe فعلی همان RISK_FREE_TIMEFRAME انتخابی باشد.
                         # ============================================================
-                        if order_result is not None and risk_free_pct is not None:
+                        risk_free_tf_allowed = (
+                            RISK_FREE_ALL_TIMEFRAMES or str(timeframe) == str(RISK_FREE_TIMEFRAME)
+                        )
+                        if order_result is not None and risk_free_pct is not None and risk_free_tf_allowed:
                             position_id = None
                             if isinstance(order_result, dict):
                                 position_id = (
@@ -1282,6 +1356,11 @@ def loop():
                             logger.info(
                                 f"[RISK-FREE] {symbol} {sig} pending | "
                                 f"position_id={position_id} | rf_pct={risk_free_pct:.6f}"
+                            )
+                        elif order_result is not None and risk_free_pct is not None:
+                            logger.info(
+                                f"[RISK-FREE] {symbol} {sig} on tf={timeframe} — skipped "
+                                f"(RISK_FREE_ALL_TIMEFRAMES=0, target tf={RISK_FREE_TIMEFRAME})"
                             )
 
                         balance = exchange.fetch_balance()
