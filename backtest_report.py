@@ -289,7 +289,7 @@ def buffer_ticks_for(symbol):
     if symbol in ("LTCUSDT", "DOGEUSDT"):
         return 3
     if symbol == "PUMPUSDT":
-        return 1
+        return 1  # بافر ۱ تیک برای PUMPUSDT
     return 5
 
 
@@ -437,10 +437,6 @@ def run_strategy_pass(candles, symbol, timeframe):
                 raw = result[1]
                 if not (isinstance(raw, dict) and len(raw) > 0):
                     continue
-                # 🔴 کلید حل مشکل: کپی مستقل دیکشنری در همان لحظه.
-                # PyneCore همان یک شیء dict را در هر بار استفاده و پاک می‌کند؛
-                # نگه‌داشتن رفرنس = دیکشنری خالی بعد از حلقه
-                # (همان باگی که خود strategy_wrapper با dict(result[1]) حل کرده).
                 lv = dict(raw)
                 stats["dicts"] += 1
                 sig = lv.get("signal")
@@ -459,9 +455,6 @@ def run_strategy_pass(candles, symbol, timeframe):
     return hits, stats
 
 
-
-
-
 # ============================================================
 # شبیه‌سازی هر معامله — عیناً منطق trade_ledger.update_open_trades
 # (ریسک‌فری: استاپ → ورود؛ در یک کندل اگر هم استاپ هم تارگت → استاپ برنده)
@@ -473,7 +466,7 @@ def simulate_trade(tr, candles, n):
         rf = tr.get("rf_pct")
         stop, risk_free = initial_stop, False
 
-        for j in range(tr["entry_idx"] + 1, n):   # کندل ورود خودش چک نمی‌شود (مثل لایو)
+        for j in range(tr["entry_idx"] + 1, n):
             c = candles[j]
             high, low = float(c.high), float(c.low)
             ts = int(c.timestamp)
@@ -485,7 +478,7 @@ def simulate_trade(tr, candles, n):
                     crossed = low <= entry * (1 - abs(rf))
                 if crossed:
                     risk_free = True
-                    stop = entry  # سربه‌سر (تقریب بدون کارمزد — مثل trade_ledger)
+                    stop = entry
 
             if direction == "LONG":
                 hit_stop = low <= stop
@@ -531,6 +524,15 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms):
 
     seen, trades = set(), []
     drop = {"out_of_range": 0, "bad_sltp": 0, "dup": 0}
+    
+    # آمار raw_hits برای ذخیره در meta (بدون دیکشنری کامل)
+    raw_stats = {
+        "total": len(raw_hits),
+        "by_signal": {"LONG": 0, "SHORT": 0},
+        "by_score": {3: 0, 4: 0, 5: 0},
+        "by_type": {"CD+": 0, "CD-": 0, "HD+": 0, "HD-": 0},
+    }
+    
     for (i, lv, sig, entry) in raw_hits:
         try:
             ts = int(candles[i].timestamp)
@@ -555,16 +557,32 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms):
                 continue
 
             st = signal_type_of(lv)
+            sc = _score_of(lv, st)
+            
+            # به‌روزرسانی آمار raw_hits
+            raw_stats["by_signal"][sig] = raw_stats["by_signal"].get(sig, 0) + 1
+            raw_stats["by_score"][sc] = raw_stats["by_score"].get(sc, 0) + 1
+            if st:
+                raw_stats["by_type"][st] = raw_stats["by_type"].get(st, 0) + 1
+
             tr = {
                 "symbol": symbol, "timeframe": str(timeframe), "direction": sig,
                 "entry": float(entry), "stop": float(stop), "target": float(target),
                 "entry_time_ms": ts, "entry_idx": int(i),
                 "leverage": LEVERAGE_MAP.get(symbol, 50),
-                "signal_type": st or "?", "score": _score_of(lv, st),
+                "signal_type": st or "?", "score": sc,
                 "rf_pct": compute_rf_pct(sig, entry, stop, struct),
                 "rr_planned": _f(rr),
                 "status": "OPEN", "exit_reason": None, "exit_price": None,
                 "exit_time_ms": None, "pnl_usd": None, "pnl_r": None, "risk_free": False,
+                # فیلترهای سیگنال برای تحلیل
+                "filter_rsi": lv.get("classic_bearish_rsi") or lv.get("classic_bullish_rsi") or False,
+                "filter_macd": lv.get("classic_bearish_macd") or lv.get("classic_bullish_macd") or False,
+                "filter_hist": lv.get("classic_bearish_hist") or lv.get("classic_bullish_hist") or False,
+                "filter_fib": lv.get("fib_bearish") or lv.get("fib_bullish") or False,
+                "filter_pa": lv.get("price_action_bearish") or lv.get("price_action_bullish") or False,
+                "trend_bullish_ok": lv.get("trend_bullish_ok", False),
+                "trend_bearish_ok": lv.get("trend_bearish_ok", False),
             }
             simulate_trade(tr, candles, n)
             trades.append(tr)
@@ -574,9 +592,7 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms):
 
     diag.update(drop)
     diag["trades"] = len(trades)
-    return trades, n, raw_hits, diag
-
-
+    return trades, n, raw_stats, diag
 
 
 # ============================================================
@@ -677,52 +693,172 @@ def weekday_fa(t):
     return WD_FA[dt.weekday()] if dt else "?"
 
 
-def build_insights(trades):
-    lines = ["🧠 بینش‌ها و پیشنهاد بهینه‌سازی:"]
+def season_of(t):
+    dt = _ms_to_iran(t["entry_time_ms"])
+    if not dt:
+        return "?"
+    m = dt.month
+    if m in (3, 4, 5):
+        return "بهار"
+    if m in (6, 7, 8):
+        return "تابستان"
+    if m in (9, 10, 11):
+        return "پاییز"
+    return "زمستان"
+
+
+# ============================================================
+# بخش‌های پیشرفته تحلیل
+# ============================================================
+
+def build_seasonal_analysis(trades):
+    """تحلیل عملکرد بر اساس فصل‌های سال"""
+    seasons = {}
+    for t in trades:
+        s = season_of(t)
+        if s not in seasons:
+            seasons[s] = []
+        seasons[s].append(t)
+    
+    lines = ["🌍 تحلیل فصلی:"]
+    for season, items in seasons.items():
+        st = stats_of(items)
+        if st["closed"] >= 5:
+            lines.append(f"  • {season}: {st['closed']} معامله | نرخ {st['winrate']:.0f}٪ | {fmt_money(st['pnl_total'])}")
+    if len(lines) == 1:
+        lines.append("  • داده‌های کافی برای تحلیل فصلی وجود ندارد.")
+    return lines
+
+
+def build_filter_analysis(trades):
+    """تحلیل تأثیر هر فیلتر بر عملکرد"""
+    filters = {
+        "RSI": "filter_rsi",
+        "MACD": "filter_macd",
+        "Histogram": "filter_hist",
+        "Fibonacci": "filter_fib",
+        "Price Action": "filter_pa",
+    }
+    
+    lines = ["🔬 تحلیل فیلترها:"]
     closed = [t for t in trades if t.get("status") in ("WIN", "LOSS")]
-    if len(closed) < 10:
-        lines.append("  • معاملات بسته‌شده کم است؛ بینش معنادار نیست.")
+    base = stats_of(closed) if closed else None
+    
+    for fname, fkey in filters.items():
+        with_filter = [t for t in closed if t.get(fkey, False)]
+        without_filter = [t for t in closed if not t.get(fkey, False)]
+        
+        if len(with_filter) >= 10:
+            st_w = stats_of(with_filter)
+            st_wo = stats_of(without_filter) if without_filter else None
+            
+            diff = st_w["winrate"] - (st_wo["winrate"] if st_wo else 0)
+            emoji = "✅" if diff > 0 else "❌" if diff < 0 else "➖"
+            lines.append(f"  • {fname}: {st_w['winrate']:.0f}٪ ({len(with_filter)} معامله) | "
+                        f"{emoji} تفاوت: {diff:+.1f}٪ | {fmt_money(st_w['pnl_total'])}")
+    
+    if len(lines) == 1:
+        lines.append("  • داده‌های کافی برای تحلیل فیلترها وجود ندارد.")
+    return lines
+
+
+def build_market_analysis(trades):
+    """تحلیل عملکرد در شرایط مختلف بازار"""
+    closed = [t for t in trades if t.get("status") in ("WIN", "LOSS")]
+    trending_up = [t for t in closed if t.get("trend_bullish_ok", False)]
+    trending_down = [t for t in closed if t.get("trend_bearish_ok", False)]
+    neutral = [t for t in closed if not t.get("trend_bullish_ok", False) and not t.get("trend_bearish_ok", False)]
+    
+    lines = ["📈 تحلیل بازار:"]
+    
+    for name, items in [("📈 روند صعودی", trending_up), ("📉 روند نزولی", trending_down), ("➖ خنثی", neutral)]:
+        if len(items) >= 5:
+            st = stats_of(items)
+            lines.append(f"  {name}: {st['closed']} معامله | نرخ {st['winrate']:.0f}٪ | {fmt_money(st['pnl_total'])}")
+    
+    if len(lines) == 1:
+        lines.append("  • داده‌های کافی برای تحلیل بازار وجود ندارد.")
+    return lines
+
+
+def build_advanced_insights(trades):
+    """پیشنهادات بهینه‌سازی مبتنی بر داده"""
+    lines = ["🎯 پیشنهادات بهینه‌سازی:"]
+    
+    closed = [t for t in trades if t.get("status") in ("WIN", "LOSS")]
+    if len(closed) < 20:
+        lines.append("  • داده‌های کافی برای پیشنهاد دقیق وجود ندارد.")
         return lines
-    base = stats_of(trades)
-    lines.append(f"  • ساختار R ثابت است: ضرر −1R | ریسک‌فری 0R | تارگت ≥ +2R → سربه‌سر ≈ ۳۳٪ نرخ برد")
-    lines.append(f"  • نرخ برد پایه: {base['winrate']:.1f}٪ | PF: {fmt_pf(base['pf'])}")
-
+    
+    # 1. بهترین ترکیب ارز/تایم‌فریم
     combos = group_dict(trades, lambda t: f"{t['symbol']} {t['timeframe']}m")
-    qualified = [(k, stats_of(v)) for k, v in combos.items() if stats_of(v)["closed"] >= 5]
-    if qualified:
-        best = max(qualified, key=lambda kv: kv[1]["pnl_total"])
-        worst = min(qualified, key=lambda kv: kv[1]["pnl_total"])
-        lines.append(f"  • بهترین ترکیب: {best[0]} → {fmt_money(best[1]['pnl_total'])} (نرخ {best[1]['winrate']:.0f}٪)")
-        lines.append(f"  • ضعیف‌ترین ترکیب: {worst[0]} → {fmt_money(worst[1]['pnl_total'])} (نرخ {worst[1]['winrate']:.0f}٪)")
-
-    types = [(k, stats_of(v)) for k, v in group_dict(trades, lambda t: t.get("signal_type", "?")).items()
-             if stats_of(v)["closed"] >= 5]
-    if types:
-        bt = max(types, key=lambda kv: kv[1]["pnl_total"])
-        lines.append(f"  • بهترین نوع سیگنال: {bt[0]} → {fmt_money(bt[1]['pnl_total'])} (نرخ {bt[1]['winrate']:.0f}٪)")
-
-    for s in (4, 3):
-        sub = [t for t in closed if (t.get("score") or 0) >= s]
-        if len(sub) >= 10:
-            stg = stats_of(sub)
-            better = "بهتر" if stg["winrate"] > base["winrate"] else "بدتر"
-            lines.append(f"  • فیلتر امتیاز ≥ {s}: نرخ {stg['winrate']:.1f}٪ و {fmt_money(stg['pnl_total'])} "
-                         f"در {stg['closed']} معامله → {better} از پایه ({base['winrate']:.1f}٪)")
-            break
-
-    buckets = [(k, stats_of(v)) for k, v in group_dict(trades, hour_bucket).items()
-               if stats_of(v)["closed"] >= 8]
-    if len(buckets) >= 2:
-        bb = max(buckets, key=lambda kv: kv[1]["pnl_total"])
-        bw = min(buckets, key=lambda kv: kv[1]["pnl_total"])
-        lines.append(f"  • بهترین بازه ساعتی (تهران): {bb[0]} → {fmt_money(bb[1]['pnl_total'])}")
-        lines.append(f"  • بدترین بازه ساعتی (تهران): {bw[0]} → {fmt_money(bw[1]['pnl_total'])}")
-
-    wds = [(k, stats_of(v)) for k, v in group_dict(trades, weekday_fa).items()
-           if stats_of(v)["closed"] >= 8]
-    if len(wds) >= 2:
-        ww = min(wds, key=lambda kv: kv[1]["pnl_total"])
-        lines.append(f"  • بدترین روز هفته: {ww[0]} → {fmt_money(ww[1]['pnl_total'])}")
+    valid_combos = [(k, stats_of(v)) for k, v in combos.items() if stats_of(v)["closed"] >= 10]
+    
+    if valid_combos:
+        best = max(valid_combos, key=lambda kv: kv[1]["winrate"])
+        worst = min(valid_combos, key=lambda kv: kv[1]["winrate"])
+        lines.append(f"  • ✅ بهترین ترکیب: {best[0]} (نرخ {best[1]['winrate']:.0f}٪، {fmt_money(best[1]['pnl_total'])})")
+        lines.append(f"  • ❌ ضعیف‌ترین ترکیب: {worst[0]} (نرخ {worst[1]['winrate']:.0f}٪، {fmt_money(worst[1]['pnl_total'])})")
+    
+    # 2. بهترین نوع سیگنال
+    types = group_dict(trades, lambda t: t.get("signal_type", "?"))
+    valid_types = [(k, stats_of(v)) for k, v in types.items() if stats_of(v)["closed"] >= 10]
+    
+    if valid_types:
+        best_type = max(valid_types, key=lambda kv: kv[1]["winrate"])
+        lines.append(f"  • ✅ بهترین نوع سیگنال: {best_type[0]} (نرخ {best_type[1]['winrate']:.0f}٪)")
+    
+    # 3. بهترین بازه ساعتی
+    hours = group_dict(trades, lambda t: f"{_ms_to_iran(t['entry_time_ms']).hour:02d}:00" if _ms_to_iran(t['entry_time_ms']) else "?")
+    valid_hours = [(k, stats_of(v)) for k, v in hours.items() if stats_of(v)["closed"] >= 8]
+    
+    if len(valid_hours) >= 3:
+        best_hour = max(valid_hours, key=lambda kv: kv[1]["winrate"])
+        worst_hour = min(valid_hours, key=lambda kv: kv[1]["winrate"])
+        lines.append(f"  • 🕐 بهترین ساعت: {best_hour[0]} (نرخ {best_hour[1]['winrate']:.0f}٪)")
+        lines.append(f"  • 🕐 ضعیف‌ترین ساعت: {worst_hour[0]} (نرخ {worst_hour[1]['winrate']:.0f}٪)")
+    
+    # 4. تأثیر امتیاز
+    for score_threshold in [4, 5]:
+        filtered = [t for t in closed if (t.get("score") or 0) >= score_threshold]
+        if len(filtered) >= 10:
+            st = stats_of(filtered)
+            base = stats_of(closed)
+            improvement = st["winrate"] - base["winrate"]
+            if improvement > 2:
+                lines.append(f"  • ⭐ فیلتر امتیاز ≥ {score_threshold}: نرخ {st['winrate']:.0f}٪ "
+                            f"({improvement:+.1f}٪ بهتر از پایه) | {fmt_money(st['pnl_total'])}")
+            else:
+                lines.append(f"  • ⭐ فیلتر امتیاز ≥ {score_threshold}: نرخ {st['winrate']:.0f}٪ "
+                            f"({improvement:+.1f}٪ تغییر) | {fmt_money(st['pnl_total'])}")
+    
+    # 5. تأثیر ریسک فری
+    rf_trades = [t for t in closed if t.get("risk_free", False)]
+    non_rf_trades = [t for t in closed if not t.get("risk_free", False)]
+    
+    if len(rf_trades) >= 10 and len(non_rf_trades) >= 10:
+        rf_st = stats_of(rf_trades)
+        non_rf_st = stats_of(non_rf_trades)
+        rf_impact = rf_st["winrate"] - non_rf_st["winrate"]
+        lines.append(f"  • 🛡️ ریسک‌فری: {rf_st['winrate']:.0f}٪ vs بدون ریسک‌فری {non_rf_st['winrate']:.0f}٪ "
+                    f"({rf_impact:+.1f}٪ تفاوت) | {fmt_money(rf_st['pnl_total'])}")
+    
+    # 6. سودآوری بر اساس R:R
+    rr_groups = group_dict(trades, lambda t: f"1:{round(t.get('rr_planned', 0), 1)}")
+    valid_rr = [(k, stats_of(v)) for k, v in rr_groups.items() if stats_of(v)["closed"] >= 10 and k != "1:nan"]
+    
+    if valid_rr:
+        best_rr = max(valid_rr, key=lambda kv: kv[1]["pnl_total"])
+        lines.append(f"  • 📊 بهترین R:R: {best_rr[0]} (نرخ {best_rr[1]['winrate']:.0f}٪، {fmt_money(best_rr[1]['pnl_total'])})")
+    
+    # 7. جمع‌بندی نهایی
+    total_pnl = stats_of(closed)["pnl_total"]
+    if total_pnl > 0:
+        lines.append(f"  • ✅ استراتژی در مجموع سودآور است: {fmt_money(total_pnl)}")
+    else:
+        lines.append(f"  • ❌ استراتژی در مجموع زیان‌ده است: {fmt_money(total_pnl)}")
+        lines.append("  • 💡 پیشنهاد: حذف ضعیف‌ترین ترکیب‌ها یا تنظیم پارامترهای ورودی")
+    
     return lines
 
 
@@ -752,6 +888,19 @@ def build_overall_report(trades, meta):
     _section(L, "🔀 به تفکیک نوع سیگنال:", trades, lambda t: t.get("signal_type", "?"))
     _section(L, "⭐ به تفکیک امتیاز:", trades, lambda t: f"امتیاز {t.get('score', 0)}")
 
+    L.append(W)
+    L.extend(build_seasonal_analysis(trades))
+    
+    L.append(W)
+    L.extend(build_filter_analysis(trades))
+    
+    L.append(W)
+    L.extend(build_market_analysis(trades))
+    
+    L.append(W)
+    L.extend(build_advanced_insights(trades))
+
+    # معاملات برتر/ضعیف
     cs = sorted([t for t in trades if t.get("pnl_usd") is not None], key=lambda t: t["pnl_usd"])
     if cs:
         L.append(W)
@@ -762,20 +911,28 @@ def build_overall_report(trades, meta):
         for t in cs[:5]:
             L.append(fmt_trade_line(t))
 
-    L.append(W)
-    L.extend(build_insights(trades))
-
+    # خلاصه اجرا بدون raw_hits (فقط آمار)
     if meta.get("combos"):
         L.append(W)
-        L.append("🧮 جزئیات اجرا:")
+        L.append("🧮 خلاصه اجرا:")
         for c in meta["combos"]:
-            L.append(f"  • {c['symbol']} {c['tf']}m | کندل: {c['bars']} | خام: {c['raw_hits']} | "
-                     f"خارج‌بازه: {c.get('out_of_range', 0)} | استاپ‌بد: {c.get('bad_sltp', 0)} | معاملات: {c['signals']}")
+            raw_info = c.get("raw_hits", {})
+            raw_total = raw_info.get("total", 0)
+            raw_by_signal = raw_info.get("by_signal", {})
+            raw_by_type = raw_info.get("by_type", {})
+            lines = f"  • {c['symbol']} {c['tf']}m | کندل: {c['bars']:,} |"
+            lines += f" سیگنال خام: {raw_total}"
+            if raw_by_signal:
+                lines += f" (LONG: {raw_by_signal.get('LONG', 0)} | SHORT: {raw_by_signal.get('SHORT', 0)})"
+            lines += f" | معاملات: {c['signals']}"
+            L.append(lines)
+    
     if meta.get("errors"):
         L.append(W)
         L.append("⚠️ خطاهای بک‌تست:")
-        for e in meta["errors"][:20]:
-            L.append(f"  • {e}")
+        for e in meta["errors"][:10]:
+            L.append(f"  • {e[:150]}...")
+
     L.append(W)
     L.append("⚠️ نتایج فرضی است (بدون اسلیپیج/کارمزد واقعی) — صرفاً برای ارزیابی استراتژی.")
     return "\n".join(L)
@@ -919,7 +1076,6 @@ def main():
             send_reports(trades, meta, args.mode, do_send=not args.no_send)
             return 0
 
-        # قفل روزانه: گزارشِ هر mode روزی فقط یک‌بار ارسال می‌شود
         if (not args.force) and (not args.no_send) and marker_already_sent(args.mode):
             logger.info(f"گزارش '{args.mode}' امروز ({today_str()}) قبلاً ارسال شده. برای اجرای مجدد: --force")
             return 0
@@ -953,14 +1109,18 @@ def main():
                 done += 1
                 t0 = time.time()
                 try:
-                    trades, n_bars, raw_hits, diag = backtest_combo(sym, tf, start_ms, end_ms)
+                    trades, n_bars, raw_stats, diag = backtest_combo(sym, tf, start_ms, end_ms)
                     all_trades.extend(trades)
                     meta["combos"].append({
                         "symbol": sym, "tf": tf, "bars": n_bars,
-                        "raw_hits": raw_hits, "signals": len(trades),
+                        "raw_hits": raw_stats,  # فقط آمار، نه دیکشنری کامل
+                        "signals": len(trades),
+                        "out_of_range": diag.get("out_of_range", 0),
+                        "bad_sltp": diag.get("bad_sltp", 0),
                     })
                     msg = (f"⏳ [{done}/{total}] {sym} {tf}m ✓ | "
-                           f"کندل: {n_bars:,} | سیگنال: {len(trades)} | {time.time() - t0:.0f}s")
+                           f"کندل: {n_bars:,} | سیگنال خام: {raw_stats.get('total', 0)} | "
+                           f"معاملات: {len(trades)} | {time.time() - t0:.0f}s")
                 except Exception as e:
                     meta["errors"].append(f"{sym} {tf}m: {e}")
                     logger.error(f"[COMBO] {sym} {tf}m failed: {e}\n{traceback.format_exc()}")
@@ -988,4 +1148,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
