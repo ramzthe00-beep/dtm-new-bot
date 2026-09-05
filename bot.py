@@ -1398,6 +1398,30 @@ if __name__ == "__main__":
     )
     report_thread.start()
 
+    # ============================================================
+    # 🚀 اجرای خودکار بک‌تست ۶۰ روزه در هر استارت — غیرمسدودکننده
+    # ============================================================
+    def _run_backtest_once():
+        try:
+            import subprocess
+            import sys as _sys
+            from pathlib import Path as _Path
+            bt = _Path(__file__).resolve().parent / "backtest_report.py"
+            if bt.exists():
+                subprocess.Popen(
+                    [_sys.executable, str(bt), "--mode", "both", "--force"],
+                    cwd=str(bt.parent),
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                logger.info("[BACKTEST] launched in background")
+            else:
+                logger.warning("[BACKTEST] backtest_report.py not found")
+        except Exception as e:
+            logger.error(f"[BACKTEST] launch failed: {e}")
+
+    _run_backtest_once()
+
+
     logger.info("DTM WORKER START | HTTP port=%d", port)
 
     try:
@@ -1406,4 +1430,5 @@ if __name__ == "__main__":
         STOP_EVENT.set()
         health_thread.join(timeout=3)
         report_thread.join(timeout=3)
+        
         logger.info("DTM PROCESS EXIT")
