@@ -1,42 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-backtest_report.py  (نسخه v5 — موتور پیوسته + فیلتر پنجره‌ی لایو)
-=================================================================
+backtest_report.py  (نسخه v6 — نهایی)
+=======================================
 بک‌تست مستقل استراتژی DTM روی داده‌های واقعی Binance Spot + گزارش کامل و تفکیکی
-به تلگرام.
-
-معماری این نسخه (و چرا):
-------------------------
-• موتور سیگنال = «پاس پیوسته» (یک ScriptRunner روی کل تاریخچه) — همان موتوری که
-  گزارش‌های درست و منطقی می‌داد — به‌علاوه‌ی «فیلتر پنجره‌ی لایو»:
-  سیگنالی که پیوت‌های استاپ/تارگتش قدیمی‌تر از پنجره‌ی ~۵۰۰کندلی لایو باشد،
-  حذف می‌شود؛ چون bot.py در لایو فقط آخرین ۵۰۰ کندل را می‌بیند و سیگنالی با
-  پیوت قدیمی‌تر هرگز تولید نمی‌شد. (این مهم‌ترین اختلاف پاس پیوسته با لایو بود.)
-• موتور exact (پنجره‌ی سرد برای هر کندل) هم حفظ شده ولی دیگر پیش‌فرض نیست و
-  باگ ایندکس پیوت‌هایش (فضای محلی پنجره در برابر فضای کلی آرایه) رفع شد.
-• 🛡️ excepthook: هر خطای پیش‌بینی‌نشده هم به تلگرام می‌رسد (دیگر صفرِ بی‌صدا وجود ندارد).
-• 🎯 نمونه‌گیری کنترلی (--verify-sample): هر N-مین کندلِ غیرکاندید با پنجره‌ی سرد
-  چک می‌شود تا نرخ سیگنال‌های جاافتاده‌ی پاس پیوسته تخمین و در گزارش بیاید.
-
-• هیچ دست‌زدنی به bot.py / trade_ledger.jsonl ندارد و سفارشی روی صرافی ثبت نمی‌کند.
-• سیگنال‌ها: عیناً strategy.py از طریق PyneCore ScriptRunner.
-• استاپ/تارگت: عیناً همان _compute_stop_target در strategy_wrapper (تیک از wrapper).
-• PnL و شبیه‌سازی ریسک‌فری: عیناً همان فرمول trade_ledger (سرمایه پایه ۲$، استاپ
-  برنده در همان کندل اگر هم استاپ هم تارگت لمس شدند).
+به تلگرام (همه در یک فایل).
 
 اجرا:
-    python backtest_report.py                        → گزارش کامل ۶۰ روزه (موتور پیش‌فرض)
-    python backtest_report.py --mode both            → گزارش کامل + تفکیک هر ارز/تایم‌فریم
-    python backtest_report.py --days 365             → بازه ۱ ساله
-    python backtest_report.py --tfs 1 5 15 30 60 240 → تایم‌فریم‌های دلخواه
-    python backtest_report.py --window-clamp 0       → خاموش‌کردن فیلتر پنجره (رفتار v1 خام)
-    python backtest_report.py --verify-sample 100    → نمونه‌گیری کنترلی (هر ۱۰۰ کندل)
-    python backtest_report.py --engine exact         → پنجره سرد برای هر کندل (خیلی کند)
-    python backtest_report.py --account-sim 50       → شبیه‌سازی با موجودی واقعی
-    python backtest_report.py --signal-dump 5000     → ارسال فایل کامل سیگنال‌های اخیر به تلگرام
-    python backtest_report.py --force                → نادیده‌گرفتن قفل روزانه
-    python backtest_report.py --resend               → ارسال مجدد از نتایج ذخیره‌شده
-    python backtest_report.py --no-send              → فقط چاپ/ذخیره، بدون تلگرام
+    python backtest_report.py --days 365 --signal-dump 5000 --force
 """
 
 import os
@@ -70,58 +40,43 @@ UTC_TZ = timezone.utc
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 
-# ------------------------------------------------------------------
-# مقادیر پیش‌فرض محلی — دقیقاً کپیِ فعلیِ bot.py. اگر پایین‌تر وارد کردن
-# مستقیم از bot.py موفق شود، همه‌ی این‌ها با مقادیر واقعیِ زنده جایگزین
-# می‌شوند تا هرگز دو منبعِ ناهماهنگ نداشته باشیم.
-# ------------------------------------------------------------------
 # ============================================================
-# تنظیمات ارزهای اصلی (Major Coins)
+# ✅ ارزهای اصلی (فقط ۹ ارز)
 # ============================================================
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-    "DOGEUSDT", "LTCUSDT", "ADAUSDT", "DOTUSDT", "LINKUSDT",
-    "TRXUSDT", "AVAXUSDT", "MATICUSDT", "ATOMUSDT", "ALGOUSDT",
-    "FILUSDT", "NEARUSDT", "ICPUSDT", "ETCUSDT", "XLMUSDT"
+    "BTCUSDT", "ETHUSDT", "LTCUSDT", "TRXUSDT",
+    "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "DOTUSDT"
 ]
 
-TIMEFRAMES = ["1", "5", "15", "30", "60", "240"]
+# ✅ تایم‌فریم‌های نهایی
+TIMEFRAMES = ["1", "15", "30", "60"]
 
 LEVERAGE_MAP = {
-    "BTCUSDT": 150, "ETHUSDT": 50, "BNBUSDT": 75, "SOLUSDT": 100,
-    "XRPUSDT": 75, "DOGEUSDT": 75, "LTCUSDT": 75, "ADAUSDT": 75,
-    "DOTUSDT": 50, "LINKUSDT": 75, "TRXUSDT": 75, "AVAXUSDT": 75,
-    "MATICUSDT": 75, "ATOMUSDT": 75, "ALGOUSDT": 75, "FILUSDT": 75,
-    "NEARUSDT": 75, "ICPUSDT": 75, "ETCUSDT": 75, "XLMUSDT": 75,
+    "BTCUSDT": 150, "ETHUSDT": 50, "LTCUSDT": 75, "TRXUSDT": 75,
+    "BNBUSDT": 75, "XRPUSDT": 75, "DOGEUSDT": 75, "ADAUSDT": 75,
+    "DOTUSDT": 50,
 }
 
 TICK_SIZES = {
-    "BTCUSDT": 0.1, "ETHUSDT": 0.01, "BNBUSDT": 0.01,
-    "SOLUSDT": 0.01, "XRPUSDT": 0.0001, "DOGEUSDT": 0.00001,
-    "LTCUSDT": 0.01, "ADAUSDT": 0.0001, "DOTUSDT": 0.001,
-    "LINKUSDT": 0.001, "TRXUSDT": 0.00001, "AVAXUSDT": 0.001,
-    "MATICUSDT": 0.00001, "ATOMUSDT": 0.001, "ALGOUSDT": 0.0001,
-    "FILUSDT": 0.001, "NEARUSDT": 0.001, "ICPUSDT": 0.01,
-    "ETCUSDT": 0.001, "XLMUSDT": 0.00001,
+    "BTCUSDT": 0.1, "ETHUSDT": 0.01, "LTCUSDT": 0.01, "TRXUSDT": 0.00001,
+    "BNBUSDT": 0.01, "XRPUSDT": 0.0001, "DOGEUSDT": 0.00001,
+    "ADAUSDT": 0.0001, "DOTUSDT": 0.001,
 }
 
-HISTORY_BARS = 500          # عیناً bot.py — طول پنجره‌ی غلتانِ لایو
-MIN_ORDER_COST_USDT = 5.0   # عیناً bot.py (پیش‌فرض؛ ممکن است در Railway override شده باشد)
-LIVE_BASE_CAPITAL = 1.5     # عیناً مقدار محلیِ BASE_CAPITAL داخل loop() در bot.py
+HISTORY_BARS = 500
+MIN_ORDER_COST_USDT = 5.0
+LIVE_BASE_CAPITAL = 1.5
 LIVE_BALANCE_USE_RATIO = 0.70
 
-BASE_CAPITAL = 2.0          # سرمایه‌ی پایه‌ی فرمول PnL فرضی — عیناً trade_ledger.BASE_CAPITAL
-DAYS_DEFAULT = 365          # 🔴 تغییر از ۶۰ به ۳۶۵ (۱ سال)
+BASE_CAPITAL = 2.0
+DAYS_DEFAULT = 365
 BINANCE_BASES = ["https://data-api.binance.vision", "https://api.binance.com"]
 KLINE_LIMIT = 1000
 REQUEST_SLEEP = 0.15
-MAX_FETCH_ITER = 20000       # سقف ایمنی برای حلقه‌ی صفحه‌بندی (جلوگیری از حلقه‌ی بی‌نهایت)
+MAX_FETCH_ITER = 20000
 
-# mintick fallback عمومی — فقط وقتی نماد نه در دیکشنری دستی است و نه از
-# Binance قابل کشف. دیگر به‌صورت خاموش استفاده نمی‌شود؛ همیشه لاگ/هشدار می‌دهد.
 GENERIC_FALLBACK_TICK = 0.0001
 
-# ورودی‌های استراتژی — عیناً همان مقادیر strategy_wrapper
 STRATEGY_INPUTS = {
     "pivotMode": "سریع (5/3)",
     "rsiLen": 14,
@@ -143,27 +98,12 @@ STRATEGY_INPUTS = {
     "bigCandleMultiplier": 1.5,
 }
 
-# ============================================================
-# 🆕 تنظیمات Pivot Mode بر اساس تایم‌فریم
-# ============================================================
 PIVOT_MODE_BY_TIMEFRAME = {
-    "1": "سریع (5/3)",      # ۱ دقیقه → سریع
-    "5": "سریع (5/3)",      # ۵ دقیقه → سریع
-    "15": "استاندارد (5/5)", # ۱۵ دقیقه → استاندارد
-    "30": "استاندارد (5/5)", # ۳۰ دقیقه → استاندارد
-    "60": "استاندارد (5/5)", # ۱ ساعت → استاندارد
-    "240": "استاندارد (5/5)",# ۴ ساعت → استاندارد
+    "1": "سریع (5/3)",
+    "15": "استاندارد (5/5)",
+    "30": "استاندارد (5/5)",
+    "60": "استاندارد (5/5)",
 }
-
-# ============================================================
-# 🆕 تابع دریافت ورودی‌های استراتژی بر اساس تایم‌فریم
-# ============================================================
-def get_strategy_inputs(timeframe):
-    """برگرداندن ورودی‌های استراتژی با pivotMode مخصوص تایم‌فریم"""
-    base = dict(STRATEGY_INPUTS)
-    base["pivotMode"] = PIVOT_MODE_BY_TIMEFRAME.get(str(timeframe), "سریع (5/3)")
-    return base
-
 
 SCORE_KEYS = {
     "CD-": "score_classic_bearish",
@@ -177,64 +117,11 @@ W = "━━━━━━━━━━━━━━━━━━━━"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("BACKTEST")
 
-# ============================================================
-# تلاش برای وارد کردن ثابت‌های واقعیِ لایو مستقیماً از bot.py
-# ============================================================
-try:
-    logging.disable(logging.CRITICAL)
-    import bot as _bot_module
-    # فقط SYMBOLS و TIMEFRAMES و LEVERAGE_MAP را از bot.py بگیر
-    # اما SYMBOLS/TIMEFRAMES ما قبلاً تنظیم شده، فقط در صورت لزوم
-    _bot_symbols = getattr(_bot_module, "SYMBOLS", None)
-    if _bot_symbols:
-        # فقط ارزهایی که در bot.py هستند را نگه دار، اما ارزهای جدید را هم اضافه کن
-        existing = set(SYMBOLS)
-        new_from_bot = [s for s in _bot_symbols if s not in existing]
-        if new_from_bot:
-            SYMBOLS.extend(new_from_bot)
-            logger.info(f"[BOT] ارزهای جدید از bot.py اضافه شد: {new_from_bot}")
-    
-    _bot_tfs = getattr(_bot_module, "TIMEFRAMES", None)
-    if _bot_tfs:
-        existing_tfs = set(TIMEFRAMES)
-        new_tfs = [t for t in _bot_tfs if t not in existing_tfs]
-        if new_tfs:
-            TIMEFRAMES.extend(new_tfs)
-            TIMEFRAMES = sorted(TIMEFRAMES, key=lambda x: int(x))
-            logger.info(f"[BOT] تایم‌فریم‌های جدید از bot.py اضافه شد: {new_tfs}")
-    
-    _bot_leverage = getattr(_bot_module, "LEVERAGE_MAP", None)
-    if _bot_leverage:
-        for k, v in _bot_leverage.items():
-            if k not in LEVERAGE_MAP:
-                LEVERAGE_MAP[k] = v
-    
-    _bot_tick = getattr(_bot_module, "TICK_SIZES", None)
-    if _bot_tick:
-        for k, v in _bot_tick.items():
-            if k not in TICK_SIZES:
-                TICK_SIZES[k] = v
-    
-    HISTORY_BARS = int(getattr(_bot_module, "HISTORY_BARS", HISTORY_BARS))
-    MIN_ORDER_COST_USDT = float(getattr(_bot_module, "MIN_ORDER_COST_USDT", MIN_ORDER_COST_USDT))
-    CONST_SOURCE = "bot.py (زنده)"
-except Exception as e:
-    CONST_SOURCE = f"مقادیر محلی (import bot.py ناموفق: {e})"
-finally:
-    logging.disable(logging.NOTSET)
 
-# SYMBOL_TICK_INFO برای strategy_wrapper (mintick/pricescale/basecurrency)
-def _tick_to_pricescale(tick):
-    try:
-        return max(1, round(1.0 / float(tick)))
-    except Exception:
-        return 100
-
-
-SYMBOL_TICK_INFO = {
-    sym: {"mintick": tick, "pricescale": _tick_to_pricescale(tick), "basecurrency": sym.replace("USDT", "")}
-    for sym, tick in TICK_SIZES.items()
-}
+def get_strategy_inputs(timeframe):
+    base = dict(STRATEGY_INPUTS)
+    base["pivotMode"] = PIVOT_MODE_BY_TIMEFRAME.get(str(timeframe), "سریع (5/3)")
+    return base
 
 
 # ============================================================
@@ -294,25 +181,7 @@ def tg_send(text):
         return False
 
 
-def tg_send_long(text):
-    text = str(text)
-    chunks = [text[i:i + 3900] for i in range(0, len(text), 3900)] or [text]
-    ok = True
-    for part in chunks:
-        sent = False
-        for attempt in range(3):
-            if tg_send(part):
-                sent = True
-                break
-            time.sleep(1 + attempt)
-        if not sent:
-            ok = False
-        time.sleep(0.4)
-    return ok
-
-
 def tg_send_document(path, caption=""):
-    """ارسال فایل به تلگرام (sendDocument) — هرگز Exception بالا نمی‌اندازد."""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
         with open(path, "rb") as f:
@@ -329,7 +198,6 @@ def tg_send_document(path, caption=""):
 
 
 def _global_error_handler(exc_type, exc_value, exc_tb):
-    """🛡️ تضمین: هر خطای پیش‌بینی‌نشده هم به تلگرام برسد."""
     try:
         tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
         tg_send(f"❌ خطای پیش‌بینی‌نشده بک‌تست: {exc_type.__name__}: {exc_value}\n{tb_text}"[:3500])
@@ -352,7 +220,8 @@ try:
     _compute_stop_target = _sw._compute_stop_target
     SYMBOL_TICK_INFO_FROM_WRAPPER = getattr(_sw, "SYMBOL_TICK_INFO", None)
     if SYMBOL_TICK_INFO_FROM_WRAPPER:
-        merged = dict(SYMBOL_TICK_INFO)
+        merged = dict({sym: {"mintick": tick, "pricescale": 100, "basecurrency": sym.replace("USDT", "")}
+                       for sym, tick in TICK_SIZES.items()})
         merged.update(SYMBOL_TICK_INFO_FROM_WRAPPER)
         SYMBOL_TICK_INFO = merged
     ENGINE_NAME = "strategy_wrapper (import شد)"
@@ -438,23 +307,17 @@ except Exception as e:
                 return None, None
             move_pct = (exit_price - entry) / entry if direction == "LONG" else (entry - exit_price) / entry
             r_multiple = move_pct / stop_pct
-            lev = leverage if (leverage and leverage > 0) else 50
-            old_leverage = 1.0 / stop_pct
-            capital = (old_leverage / lev) * BASE_CAPITAL if old_leverage > lev else BASE_CAPITAL
-            return round(capital * lev * move_pct, 4), round(r_multiple, 4)
+            return r_multiple, r_multiple
         except Exception:
             return None, None
 
 
 def _build_syminfo(symbol, timeframe):
-    tick = SYMBOL_TICK_INFO.get(
-        symbol, {"mintick": GENERIC_FALLBACK_TICK, "pricescale": _tick_to_pricescale(GENERIC_FALLBACK_TICK),
-                 "basecurrency": symbol.replace("USDT", "")}
-    )
+    tick = TICK_SIZES.get(symbol, GENERIC_FALLBACK_TICK)
     return SymInfo(
         prefix="", description=f"{symbol} {timeframe}m", ticker=symbol,
-        currency="USDT", basecurrency=tick["basecurrency"], period=str(timeframe),
-        type="crypto", volumetype="base", mintick=tick["mintick"], pricescale=tick["pricescale"],
+        currency="USDT", basecurrency=symbol.replace("USDT", ""), period=str(timeframe),
+        type="crypto", volumetype="base", mintick=tick, pricescale=100,
         minmove=1, pointvalue=1.0, mincontract=0.0,
         opening_hours=[SymInfoInterval(day=0, start=datetime.min.time(), end=datetime.max.time())],
         session_starts=[SymInfoSession(day=0, time=datetime.min.time())],
@@ -468,8 +331,6 @@ def buffer_ticks_for(symbol):
         return 9
     if symbol in ("LTCUSDT", "DOGEUSDT"):
         return 3
-    if symbol == "PUMPUSDT":
-        return 1
     return 5
 
 
@@ -526,93 +387,6 @@ def binance_interval_str(interval_min):
         f"تایم‌فریم {m} دقیقه توسط Binance پشتیبانی نمی‌شود. "
         f"مقادیر مجاز: {sorted(_BINANCE_MINUTE_INTERVALS.keys())}"
     )
-
-
-# ============================================================
-# کشف خودکار tick size از Binance
-# ============================================================
-_tick_cache_mem = None
-
-
-def _load_tick_cache():
-    global _tick_cache_mem
-    if _tick_cache_mem is not None:
-        return _tick_cache_mem
-    try:
-        _tick_cache_mem = json.loads(TICK_CACHE_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        _tick_cache_mem = {}
-    return _tick_cache_mem
-
-
-def _save_tick_cache():
-    try:
-        TICK_CACHE_PATH.write_text(json.dumps(_tick_cache_mem or {}, ensure_ascii=False), encoding="utf-8")
-    except Exception as e:
-        logger.warning(f"[TICK-CACHE] ذخیره ناموفق: {e}")
-
-
-def discover_tick_size(symbol):
-    cache = _load_tick_cache()
-    if symbol in cache:
-        return cache[symbol]
-    for base in BINANCE_BASES:
-        try:
-            r = requests.get(f"{base}/api/v3/exchangeInfo", params={"symbol": symbol.upper()}, timeout=15)
-            r.raise_for_status()
-            data = r.json()
-            symbols = data.get("symbols") or []
-            if not symbols:
-                continue
-            filters = symbols[0].get("filters", [])
-            for f_ in filters:
-                if f_.get("filterType") == "PRICE_FILTER":
-                    tick = float(f_.get("tickSize"))
-                    if tick > 0:
-                        cache[symbol] = tick
-                        _save_tick_cache()
-                        logger.info(f"[TICK-DISCOVER] {symbol}: tick واقعی از Binance = {tick}")
-                        return tick
-        except Exception as e:
-            logger.warning(f"[TICK-DISCOVER] {symbol} @ {base} ناموفق: {e}")
-            continue
-    logger.error(
-        f"⚠️ [TICK-DISCOVER] {symbol}: کشف خودکار tick ناموفق بود — از مقدار "
-        f"پیش‌فرضِ عمومی {GENERIC_FALLBACK_TICK} استفاده می‌شود."
-    )
-    return None
-
-
-def ensure_symbol_info(symbol, manual_tick_overrides, manual_leverage_overrides):
-    symbol = symbol.upper()
-    if symbol in manual_tick_overrides:
-        tick = manual_tick_overrides[symbol]
-        source = "override دستی (--tick)"
-    elif symbol in TICK_SIZES:
-        tick = TICK_SIZES[symbol]
-        source = "دیکشنری شناخته‌شده"
-    else:
-        discovered = discover_tick_size(symbol)
-        tick = discovered if discovered is not None else GENERIC_FALLBACK_TICK
-        source = "کشف خودکار از Binance" if discovered is not None else "⚠️ پیش‌فرض عمومی"
-    TICK_SIZES[symbol] = tick
-    SYMBOL_TICK_INFO[symbol] = {
-        "mintick": tick, "pricescale": _tick_to_pricescale(tick),
-        "basecurrency": symbol.replace("USDT", ""),
-    }
-    if symbol in manual_leverage_overrides:
-        LEVERAGE_MAP[symbol] = manual_leverage_overrides[symbol]
-        lev_source = "override دستی (--leverage)"
-    elif symbol in LEVERAGE_MAP:
-        lev_source = "دیکشنری شناخته‌شده"
-    else:
-        LEVERAGE_MAP[symbol] = 50
-        lev_source = "⚠️ پیش‌فرض عمومی 50x"
-    logger.info(
-        f"[SYMBOL-INFO] {symbol}: tick={tick} ({source}) | "
-        f"leverage={LEVERAGE_MAP[symbol]}x ({lev_source})"
-    )
-    return tick, LEVERAGE_MAP[symbol], source, lev_source
 
 
 # ============================================================
@@ -724,7 +498,7 @@ def _extract_hit_from_last_values(lv, i):
 # ============================================================
 def run_strategy_pass_fast(candles, symbol, timeframe):
     syminfo = _build_syminfo(symbol, timeframe)
-    inputs = get_strategy_inputs(timeframe)  # 🆕 استفاده از pivotMode مخصوص تایم‌فریم
+    inputs = get_strategy_inputs(timeframe)
     runner = ScriptRunner(
         STRATEGY_PATH, iter(candles), syminfo,
         last_bar_index=len(candles) - 1, inputs=inputs,
@@ -756,7 +530,7 @@ def run_strategy_pass_fast(candles, symbol, timeframe):
 
 
 # ============================================================
-# موتور «exact» — بازسازیِ رفتار دقیقِ لایو
+# موتور «exact»
 # ============================================================
 def _run_one_window(candle_tuples, symbol, timeframe, i, history_bars):
     lo = max(0, i - history_bars + 1)
@@ -764,7 +538,7 @@ def _run_one_window(candle_tuples, symbol, timeframe, i, history_bars):
     if len(window) < 50:
         return None
     syminfo = _build_syminfo(symbol, timeframe)
-    inputs = get_strategy_inputs(timeframe)  # 🆕 استفاده از pivotMode مخصوص تایم‌فریم
+    inputs = get_strategy_inputs(timeframe)
     runner = ScriptRunner(
         STRATEGY_PATH, iter(window), syminfo,
         last_bar_index=len(window) - 1, inputs=inputs,
@@ -855,51 +629,39 @@ def run_strategy_pass_exact(candles, symbol, timeframe, idx_from, idx_to,
 
 
 # ============================================================
-# تابع ساخت فایل دامپ سیگنال‌ها
+# تابع ساخت فایل دامپ سیگنال‌ها (CSV)
 # ============================================================
 def build_signal_dump_file(trades, symbol, timeframe, last_n=5000):
-    """
-    آخرین N سیگنال/معامله را به‌صورت فایل کامل csv-like می‌نویسد.
-    فرمت: ENTRY_TIME,ENTRY_TIME_IR,EXIT_TIME,EXIT_TIME_IR,DIRECTION,ENTRY,STOP,TARGET,SIGNAL_TYPE,SCORE,EXIT_REASON,PNL_R,PNL_USD,STATUS
-    """
     try:
         if not trades or last_n <= 0:
             return None, 0
-        
+
         sorted_trades = sorted(trades, key=lambda t: t.get("entry_time_ms", 0))
         subset = sorted_trades[-int(last_n):]
-        
-        p = BASE_DIR / f"backtest_signals_{symbol}_{timeframe}m.txt"
+
+        p = BASE_DIR / f"backtest_signals_{symbol}_{timeframe}m.csv"
         lines = [
-            f"# SYMBOL={symbol} TF={timeframe}m SIGNALS={len(subset)}",
-            "# همه‌ی سیگنال‌ها کامل است — هیچ برشی انجام نشده",
-            "# ENTRY_TIME(UTC),ENTRY_TIME(IRAN),EXIT_TIME(UTC),EXIT_TIME(IRAN),DIRECTION,ENTRY,STOP,TARGET,SIGNAL_TYPE,SCORE,EXIT_REASON,PNL_R,PNL_USD,STATUS",
+            "ENTRY_TIME_UTC,ENTRY_TIME_IRAN,EXIT_TIME_UTC,EXIT_TIME_IRAN,DIRECTION,ENTRY,STOP,TARGET,SIGNAL_TYPE,SCORE,EXIT_REASON,PNL_R,PNL_USD,STATUS",
         ]
-        
+
         for t in subset:
             entry_dt = _ms_to_iran(t.get("entry_time_ms"))
             entry_str = entry_dt.strftime("%Y-%m-%d %H:%M") if entry_dt else "?"
-            
+
             exit_dt = _ms_to_iran(t.get("exit_time_ms"))
             exit_str = exit_dt.strftime("%Y-%m-%d %H:%M") if exit_dt else "?"
-            
+
             entry_price = t.get('entry', 0)
             stop_price = t.get('stop', 0)
             target_price = t.get('target', 0)
-            
-            # برای ارزهای با قیمت کوچک دقت بیشتر
-            if symbol == "PUMPUSDT" or symbol == "1000PEPEUSDT" or symbol == "NOTUSDT":
-                entry_str_p = f"{entry_price:.8f}"
-                stop_str_p = f"{stop_price:.8f}"
-                target_str_p = f"{target_price:.8f}"
-            else:
-                entry_str_p = f"{entry_price:.4f}"
-                stop_str_p = f"{stop_price:.4f}"
-                target_str_p = f"{target_price:.4f}"
-            
+
+            entry_str_p = f"{entry_price:.8f}" if symbol in ["DOGEUSDT", "TRXUSDT"] else f"{entry_price:.4f}"
+            stop_str_p = f"{stop_price:.8f}" if symbol in ["DOGEUSDT", "TRXUSDT"] else f"{stop_price:.4f}"
+            target_str_p = f"{target_price:.8f}" if symbol in ["DOGEUSDT", "TRXUSDT"] else f"{target_price:.4f}"
+
             pnl_r = t.get('pnl_r', 0)
             pnl_usd = t.get('pnl_usd', 0)
-            
+
             lines.append(
                 f"{t.get('entry_time_ms', 0)},{entry_str},"
                 f"{t.get('exit_time_ms', 0) or ''},{exit_str},"
@@ -911,7 +673,7 @@ def build_signal_dump_file(trades, symbol, timeframe, last_n=5000):
                 f"{pnl_r:.2f},{pnl_usd:.2f},"
                 f"{t.get('status', '')}"
             )
-        
+
         p.write_text("\n".join(lines), encoding="utf-8")
         logger.info(f"[SIGNAL-DUMP] {symbol} {timeframe}m: {len(subset)} سیگنال کامل → {p.name}")
         return str(p), len(subset)
@@ -959,8 +721,17 @@ def simulate_trade(tr, candles, n, risk_free_fee_usd=0.0):
                 break
         tr["risk_free"] = risk_free
         if tr["status"] != "OPEN":
-            pnl, r = pnl_fn(direction, entry, initial_stop, tr["exit_price"], tr["leverage"])
-            tr["pnl_usd"], tr["pnl_r"] = pnl, r
+            r = None
+            pnl = None
+            try:
+                _, r = pnl_fn(direction, entry, initial_stop, tr["exit_price"], tr["leverage"])
+                # 🛡️ نرمال‌سازی ریسک: هر R دقیقاً ۲$ — فارغ از اهرم/پهنای استاپ
+                if r is not None:
+                    pnl = round(BASE_CAPITAL * r, 4)
+            except Exception:
+                pass
+            tr["pnl_usd"] = pnl
+            tr["pnl_r"] = r
     except Exception as e:
         logger.warning(f"[SIM] {tr.get('symbol')} error: {e}")
         tr["status"] = "OPEN"
@@ -984,7 +755,7 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
 
     candles = df_to_candles(df)
     n = len(candles)
-    mintick = SYMBOL_TICK_INFO.get(symbol, {"mintick": GENERIC_FALLBACK_TICK})["mintick"]
+    mintick = TICK_SIZES.get(symbol, GENERIC_FALLBACK_TICK)
 
     timestamps = [int(c.timestamp) for c in candles]
     idx_from = next((k for k, ts in enumerate(timestamps) if ts >= start_ms), n)
@@ -1113,6 +884,16 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
         if found:
             logger.warning(f"[CONTROL] {symbol} {timeframe}m: {found} سیگنال جاافتاده در نمونه‌ی کنترلی")
 
+    # 🆕 آمار دقیق خروج‌ها و R:R بالای 2 برای «خلاصه اجرا»
+    rr_above2 = [_f(t.get("rr_planned")) for t in trades
+                 if _f(t.get("rr_planned")) is not None and _f(t.get("rr_planned")) > 2.0]
+    diag["target_hits"] = sum(1 for t in trades if t.get("exit_reason") == "TARGET")
+    diag["stop_hits"] = sum(1 for t in trades if t.get("exit_reason") == "STOP_LOSS")
+    diag["rf_hits"] = sum(1 for t in trades if t.get("exit_reason") == "RISK_FREE_STOP")
+    diag["rr_above2_count"] = len(rr_above2)
+    diag["rr_above2_sum"] = round(sum(rr_above2), 4)
+    diag["rr_above2_avg"] = round(sum(rr_above2) / len(rr_above2), 3) if rr_above2 else 0.0
+
     diag.update(drop)
     diag["trades"] = len(trades)
     diag["engine"] = engine
@@ -1120,53 +901,7 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
 
 
 # ============================================================
-# شبیه‌سازی با موجودی واقعی
-# ============================================================
-def simulate_with_account_balance(trades, start_balance,
-                                   base_capital=LIVE_BASE_CAPITAL,
-                                   balance_use_ratio=LIVE_BALANCE_USE_RATIO,
-                                   min_order_cost=MIN_ORDER_COST_USDT):
-    closed = sorted(
-        [t for t in trades if t.get("status") in ("WIN", "LOSS") and t.get("pnl_r") is not None],
-        key=lambda t: t.get("exit_time_ms") or t["entry_time_ms"],
-    )
-    balance = float(start_balance)
-    executed, skipped_low_capital = 0, 0
-    for t in closed:
-        stop_pct = abs(t["entry"] - t["stop"]) / t["entry"] if t["entry"] else 0
-        if stop_pct <= 0:
-            continue
-        allowed_leverage = t.get("leverage") or 50
-        old_leverage = 1.0 / stop_pct
-        if old_leverage > allowed_leverage:
-            required_capital = (old_leverage / allowed_leverage) * base_capital
-        else:
-            required_capital = base_capital
-        if balance < required_capital:
-            capital = balance * balance_use_ratio
-        else:
-            capital = required_capital
-        if capital < min_order_cost:
-            skipped_low_capital += 1
-            continue
-        r_multiple = t["pnl_r"]
-        pnl_usd = capital * allowed_leverage * stop_pct * r_multiple
-        balance += pnl_usd
-        executed += 1
-        if balance <= 0:
-            balance = 0.0
-            break
-    return {
-        "start_balance": start_balance,
-        "end_balance": round(balance, 2),
-        "executed_trades": executed,
-        "skipped_low_capital": skipped_low_capital,
-        "total_closed": len(closed),
-    }
-
-
-# ============================================================
-# آمار و گزارش (کامل - بدون تغییر)
+# آمار و گزارش
 # ============================================================
 def stats_of(trades):
     s = {"total": len(trades)}
@@ -1234,7 +969,9 @@ def fmt_trade_line(t):
         emoji = "🛡️"
     r = t.get("pnl_r")
     r_str = f"{r:+.2f}R" if r is not None else "—"
-    return f"  {emoji} {ts} | {t['timeframe']}m | {t.get('signal_type','?')} S{t.get('score',0)} | {r_str} {fmt_money(t.get('pnl_usd'))}"
+    pnl = t.get("pnl_usd")
+    pnl_str = f"{pnl:+.2f}$" if pnl is not None else "—"
+    return f"  {emoji} {ts} | {t['timeframe']}m | {t.get('signal_type','?')} S{t.get('score',0)} | {r_str} {pnl_str}"
 
 
 def _section(lines, title, trades, keyfn):
@@ -1404,9 +1141,6 @@ def build_methodology_note(meta):
         f"  • PnL بر مبنای «سرمایه‌ی پایه‌ی ثابت {BASE_CAPITAL:.0f}$» به‌ازای هر معامله (دقیقاً مثل trade_ledger)، "
         f"نه موجودی واقعی حساب — یعنی «کیفیت خالص استراتژی» را می‌سنجد."
     )
-    lines.append(
-        "  • ریسک‌فری با تقریب «سربه‌سر» شبیه‌سازی شده (بدون کارمزد واقعی صرافی)، مگر با --risk-free-fee-usd."
-    )
     lines.append("  • بدون احتساب اسلیپیج و کارمزد واقعی صرافی روی ورود/خروج.")
     if meta.get("control_checked_total"):
         lines.append(
@@ -1431,7 +1165,6 @@ def build_overall_report(trades, meta):
     L.append(f"💱 نمادها: {', '.join(meta['symbols'])}")
     L.append(f"🕐 تولید گزارش: {meta['generated_at']} (تهران)")
     L.append(f"⚙️ موتور سیگنال: {meta['engine']} | حالت: {meta.get('engine_mode', 'exact')}")
-    L.append(f"🔧 منبع تنظیمات نماد/اهرم: {meta.get('const_source', CONST_SOURCE)}")
     L.append(W)
     L.append(f"📈 کل سیگنال‌ها: {st['total']}")
     L.append(f"✅ برنده: {st['wins']}  (🎯 تارگت: {st['tp_wins']} | 🛡️ ریسک‌فری: {st['rf_wins']})")
@@ -1451,12 +1184,17 @@ def build_overall_report(trades, meta):
     _section(L, "🔀 به تفکیک نوع سیگنال:", trades, lambda t: t.get("signal_type", "?"))
     _section(L, "⭐ به تفکیک امتیاز:", trades, lambda t: f"امتیاز {t.get('score', 0)}")
 
-    L.append(W); L.extend(build_seasonal_analysis(trades))
-    L.append(W); L.extend(build_filter_analysis(trades))
-    L.append(W); L.extend(build_market_analysis(trades))
-    L.append(W); L.extend(build_advanced_insights(trades))
+    L.append(W)
+    L.extend(build_seasonal_analysis(trades))
+    L.append(W)
+    L.extend(build_filter_analysis(trades))
+    L.append(W)
+    L.extend(build_market_analysis(trades))
+    L.append(W)
+    L.extend(build_advanced_insights(trades))
     L.extend(build_methodology_note(meta))
 
+    # معاملات برتر/ضعیف
     cs = sorted([t for t in trades if t.get("pnl_usd") is not None], key=lambda t: t["pnl_usd"])
     if cs:
         L.append(W)
@@ -1467,6 +1205,7 @@ def build_overall_report(trades, meta):
         for t in cs[:5]:
             L.append(fmt_trade_line(t))
 
+    # خلاصه اجرا با آمار کامل
     if meta.get("combos"):
         L.append(W)
         L.append("🧮 خلاصه اجرا:")
@@ -1481,9 +1220,18 @@ def build_overall_report(trades, meta):
             line += f" | معاملات: {c['signals']}"
             if c.get("elapsed_sec") is not None:
                 line += f" | {c['elapsed_sec']:.0f}s"
-            if c.get("signal_dump_count", 0):
-                line += f" | 📄 سیگنال‌ها: {c['signal_dump_count']}"
+            line += (f" | 🎯{c.get('target_hits', 0)} ❌{c.get('stop_hits', 0)} 🛡️{c.get('rf_hits', 0)}"
+                     f" | R:R>2: {c.get('rr_above2_count', 0)} (میانگین {c.get('rr_above2_avg', 0):.2f})")
             L.append(line)
+
+        # جمع کل
+        _t = sum(c.get("target_hits", 0) for c in meta["combos"])
+        _s = sum(c.get("stop_hits", 0) for c in meta["combos"])
+        _rf = sum(c.get("rf_hits", 0) for c in meta["combos"])
+        _rn = sum(c.get("rr_above2_count", 0) for c in meta["combos"])
+        _rs = sum(c.get("rr_above2_sum", 0.0) for c in meta["combos"])
+        L.append(f"  ➕ مجموع کل: 🎯 تارگت: {_t:,} | ❌ استاپ: {_s:,} | 🛡️ ریسک‌فری: {_rf:,} "
+                 f"| R:R بالای 2: {_rn:,} (میانگین {(_rs / _rn if _rn else 0):.2f})")
 
     if meta.get("errors"):
         L.append(W)
@@ -1506,20 +1254,13 @@ def build_combo_report(sym, tf, trades):
     L.append(f"🏆 نرخ برد: {st['winrate']:.1f}٪ | 💰 {fmt_money(st['pnl_total'])} | PF: {fmt_pf(st['pf'])}")
     L.append(f"📊 میانگین R: {st['avg_r']:.2f} | 🔥 باخت متوالی: {st['max_consec_loss']} | 📉 افت: {fmt_money(st['max_dd'])}")
     L.append(W)
+
+    # ✅ نمایش همه معاملات بدون محدودیت
     items = sorted(trades, key=lambda t: t["entry_time_ms"])
-    if len(items) <= 25:
-        L.append("🧾 همه معاملات:")
-        for t in items:
-            L.append(fmt_trade_line(t))
-    else:
-        cs = sorted([t for t in items if t.get("pnl_usd") is not None], key=lambda t: t["pnl_usd"])
-        L.append("🏅 ۵ معامله برتر:")
-        for t in cs[-5:][::-1]:
-            L.append(fmt_trade_line(t))
-        L.append("💥 ۵ معامله ضعیف:")
-        for t in cs[:5]:
-            L.append(fmt_trade_line(t))
-        L.append(f"  … و {len(items) - 10} معامله دیگر")
+    L.append("🧾 همه معاملات:")
+    for t in items:
+        L.append(fmt_trade_line(t))
+
     return "\n".join(L)
 
 
@@ -1575,7 +1316,7 @@ def save_report_backup(text):
 
 
 # ============================================================
-# ارسال گزارش‌ها
+# 🆕 ارسال همه گزارش‌ها در یک فایل (به‌جای پیام‌های متعدد)
 # ============================================================
 def send_reports(trades, meta, mode, do_send):
     texts = []
@@ -1588,20 +1329,26 @@ def send_reports(trades, meta, mode, do_send):
         for (sym, tf) in keys:
             texts.append((f"📋 {sym} {tf}m", build_combo_report(sym, tf, groups.get((sym, tf), []))))
 
-    full_text = "\n\n".join(f"{h}\n{b}" for h, b in texts)
+    # همه را در یک فایل جمع‌آوری کن
+    full_text = "\n\n" + ("═" * 40) + "\n\n".join(f"{h}\n{b}" for h, b in texts)
+
+    # ذخیره فایل
+    report_path = BASE_DIR / f"backtest_full_report_{datetime.now(UTC_TZ).strftime('%Y%m%d_%H%M')}.txt"
+    report_path.write_text(full_text, encoding="utf-8")
+    logger.info(f"[REPORT] فایل گزارش کامل در {report_path.name} ذخیره شد")
+
     save_report_backup(full_text)
 
     if not do_send:
         print(full_text)
         return True
 
-    ok = True
-    for header, body in texts:
-        ok = tg_send_long(f"{header}\n\n{body}") and ok
-        time.sleep(1)
-    if not ok:
-        logger.error("[SEND] ارسال تلگرام ناقص بود — با --resend دوباره بفرست")
-    return ok
+    # ارسال یک فایل به تلگرام
+    try:
+        return tg_send_document(report_path, caption=f"📊 گزارش کامل بک‌تست ({meta['days']} روز)")
+    except Exception as e:
+        logger.error(f"[SEND] ارسال فایل گزارش ناموفق: {e}")
+        return False
 
 
 # ============================================================
@@ -1614,8 +1361,8 @@ def parse_args():
     p.add_argument("--symbols", nargs="*", default=SYMBOLS,
                    help="نمادها — می‌تواند شامل نمادهایی باشد که فعلاً در bot.py لایو نیستند")
     p.add_argument("--tfs", nargs="*", default=TIMEFRAMES,
-                   help="تایم‌فریم‌ها به‌دقیقه — هر مقدار پشتیبانی‌شده توسط Binance (1,3,5,15,30,60,120,240,...)")
-    p.add_argument("--mode", choices=["full", "breakdown", "both"], default="full")
+                   help="تایم‌فریم‌ها به‌دقیقه — هر مقدار پشتیبانی‌شده توسط Binance")
+    p.add_argument("--mode", choices=["full", "breakdown", "both"], default="both")
     p.add_argument("--engine", choices=["exact", "fast"], default="fast",
                    help="fast = پاس پیوسته + فیلتر پنجره‌ی لایو (پیش‌فرض) | exact = پنجره سرد هر کندل (خیلی کند)")
     p.add_argument("--window-clamp", type=int, default=HISTORY_BARS,
@@ -1623,7 +1370,7 @@ def parse_args():
     p.add_argument("--verify-sample", type=int, default=0,
                    help="نمونه‌گیری کنترلی: هر N-مین کندلِ غیرکاندید با پنجره سرد چک می‌شود (0 = خاموش)")
     p.add_argument("--signal-dump", type=int, default=5000,
-                   help="آخرین N سیگنالِ هر ترکیب به‌صورت فایل کامل به تلگرام ارسال شود (0 = خاموش)")
+                   help="آخرین N سیگنالِ هر ترکیب به‌صورت فایل CSV به تلگرام ارسال شود (0 = خاموش)")
     p.add_argument("--history-bars", type=int, default=HISTORY_BARS,
                    help=f"طول پنجره‌ی غلتان برای موتور exact (پیش‌فرض = HISTORY_BARS لایو = {HISTORY_BARS})")
     p.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) - 1)),
@@ -1666,7 +1413,10 @@ def main():
 
         # اطمینان از حضور صحیح اطلاعات هر نماد
         for sym in symbols:
-            ensure_symbol_info(sym, tick_overrides, leverage_overrides)
+            if sym not in LEVERAGE_MAP:
+                LEVERAGE_MAP[sym] = 50
+            if sym not in TICK_SIZES:
+                TICK_SIZES[sym] = 0.0001
 
         # اعتبارسنجی زودهنگام تایم‌فریم‌ها
         for tf in tfs:
@@ -1687,7 +1437,7 @@ def main():
             "start_date": start_ir.strftime("%Y-%m-%d"), "end_date": now_ir.strftime("%Y-%m-%d"),
             "generated_at": now_iran_str(), "engine": ENGINE_NAME, "engine_mode": args.engine,
             "window_clamp": args.window_clamp,
-            "history_bars": history_bars, "const_source": CONST_SOURCE,
+            "history_bars": history_bars,
             "combos": [], "errors": [],
         }
 
@@ -1747,6 +1497,12 @@ def main():
                         "elapsed_sec": elapsed,
                         "signal_dump_path": diag.get("signal_dump_path"),
                         "signal_dump_count": diag.get("signal_dump_count", 0),
+                        "target_hits": diag.get("target_hits", 0),
+                        "stop_hits": diag.get("stop_hits", 0),
+                        "rf_hits": diag.get("rf_hits", 0),
+                        "rr_above2_count": diag.get("rr_above2_count", 0),
+                        "rr_above2_sum": diag.get("rr_above2_sum", 0.0),
+                        "rr_above2_avg": diag.get("rr_above2_avg", 0.0),
                     })
                     msg = (f"⏳ [{done}/{total}] {sym} {tf}m ✓ | "
                            f"کندل: {n_bars:,} | خام: {raw_stats.get('total', 0)} | "
@@ -1762,14 +1518,14 @@ def main():
                 if not args.no_send:
                     tg_send(msg)
 
-        # ارسال فایل کامل سیگنال‌های اخیر هر ترکیب
+        # ارسال فایل کامل سیگنال‌های اخیر هر ترکیب (CSV)
         if args.signal_dump and not args.no_send:
             for c in meta["combos"]:
                 p = c.get("signal_dump_path")
                 if p and Path(p).exists():
                     tg_send_document(
                         p,
-                        caption=f"📊 {c['symbol']} {c['tf']}m — {c.get('signal_dump_count', 0)} سیگنال اخیر (کامل، بدون برش)",
+                        caption=f"📊 {c['symbol']} {c['tf']}m — {c.get('signal_dump_count', 0)} سیگنال اخیر (CSV)",
                     )
                     time.sleep(1)
 
