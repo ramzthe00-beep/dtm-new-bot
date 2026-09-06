@@ -1655,8 +1655,8 @@ def parse_args():
                    help="حداکثر عمر مجاز پیوت‌ها به کندل (پیش‌فرض ۵۰۰ مثل پنجره لایو | 0 = خاموش)")
     p.add_argument("--verify-sample", type=int, default=0,
                    help="نمونه‌گیری کنترلی: هر N-مین کندلِ غیرکاندید با پنجره سرد چک می‌شود (0 = خاموش)")
-    p.add_argument("--signal-dump", type=int, default=0,
-                   help="آخرین N سیگنالِ هر ترکیب به‌صورت فایل کامل به تلگرام ارسال شود (پیش‌فرض 0 = خاموش)")
+    p.add_argument("--signal-dump", type=int, default=5000,  # ← تغییر از 0 به 5000
+                   help="آخرین N سیگنالِ هر ترکیب به‌صورت فایل کامل به تلگرام ارسال شود (0 = خاموش)")
     p.add_argument("--history-bars", type=int, default=HISTORY_BARS,
                    help=f"طول پنجره‌ی غلتان برای موتور exact (پیش‌فرض = HISTORY_BARS لایو = {HISTORY_BARS})")
     p.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) - 1)),
@@ -1673,6 +1673,7 @@ def parse_args():
     p.add_argument("--resend", action="store_true", help="ارسال مجدد از نتایج ذخیره‌شده")
     p.add_argument("--no-send", action="store_true", help="فقط چاپ/ذخیره، بدون تلگرام")
     return p.parse_args()
+
 
 
 def main():
