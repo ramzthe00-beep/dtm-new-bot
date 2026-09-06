@@ -33,6 +33,7 @@ backtest_report.py  (نسخه v5 — موتور پیوسته + فیلتر پنج
     python backtest_report.py --verify-sample 100    → نمونه‌گیری کنترلی (هر ۱۰۰ کندل)
     python backtest_report.py --engine exact         → پنجره سرد برای هر کندل (خیلی کند)
     python backtest_report.py --account-sim 50       → شبیه‌سازی با موجودی واقعی
+    python backtest_report.py --candle-dump 5000     → ارسال فایل کامل کندل‌های اخیر به تلگرام
     python backtest_report.py --force                → نادیده‌گرفتن قفل روزانه
     python backtest_report.py --resend               → ارسال مجدد از نتایج ذخیره‌شده
     python backtest_report.py --no-send              → فقط چاپ/ذخیره، بدون تلگرام
@@ -237,6 +238,24 @@ def tg_send_long(text):
             ok = False
         time.sleep(0.4)
     return ok
+
+
+# 🆕 تابع ارسال فایل به تلگرام
+def tg_send_document(path, caption=""):
+    """ارسال فایل به تلگرام (sendDocument) — هرگز Exception بالا نمی‌اندازد."""
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        with open(path, "rb") as f:
+            r = requests.post(
+                url,
+                data={"chat_id": TELEGRAM_CHAT_ID, "caption": str(caption)[:1000]},
+                files={"document": f},
+                timeout=120,
+            )
+        return r.ok
+    except Exception as e:
+        logger.error(f"[TG] document error: {e}")
+        return False
 
 
 def _global_error_handler(exc_type, exc_value, exc_tb):
@@ -823,6 +842,40 @@ def _benchmark_exact_engine(candles, symbol, timeframe, idx_from, history_bars, 
 
 
 # ============================================================
+# 🆕 تابع ساخت فایل دامپ کندل‌ها (برای ارسال به تلگرام)
+# ============================================================
+def build_candle_dump_file(candles, symbol, timeframe, last_n=5000):
+    """
+    آخرین last_n کندل را «کامل» در یک فایل txt می‌نویسد — بدون هیچ برش/خلاصه‌سازی.
+    فرمت هر خط: UTC_MS,TEHRAN_DATETIME,OPEN,HIGH,LOW,CLOSE,VOLUME
+    زمان‌ها = زمانِ «باز شدن» کندل (مثل Binance و Pine).
+    """
+    try:
+        if not candles or last_n <= 0:
+            return None, 0
+        subset = candles[-int(last_n):]
+        p = BASE_DIR / f"backtest_candles_{symbol}_{timeframe}m.txt"
+        lines = [
+            f"# SYMBOL={symbol} TF={timeframe}m CANDLES={len(subset)}",
+            "# همه‌ی کندل‌ها کامل است — هیچ برشی انجام نشده",
+            "# UTC_MS,TEHRAN_DATETIME,OPEN,HIGH,LOW,CLOSE,VOLUME",
+        ]
+        for c in subset:
+            dt = _ms_to_iran(int(c.timestamp))
+            dt_str = dt.strftime("%Y-%m-%d %H:%M") if dt else "?"
+            lines.append(
+                f"{int(c.timestamp)},{dt_str},"
+                f"{c.open},{c.high},{c.low},{c.close},{c.volume}"
+            )
+        p.write_text("\n".join(lines), encoding="utf-8")
+        logger.info(f"[CANDLE-DUMP] {symbol} {timeframe}m: {len(subset)} کندل کامل → {p.name}")
+        return str(p), len(subset)
+    except Exception as e:
+        logger.warning(f"[CANDLE-DUMP] {symbol} {timeframe}m ناموفق: {e}")
+        return None, 0
+
+
+# ============================================================
 # شبیه‌سازی هر معامله — عیناً منطق trade_ledger.update_open_trades
 # (ریسک‌فری: استاپ → ورود (+کارمزد اختیاری)؛ در یک کندل اگر هم استاپ هم
 # تارگت لمس شد → استاپ برنده)
@@ -885,7 +938,8 @@ def simulate_trade(tr, candles, n, risk_free_fee_usd=0.0):
 # ============================================================
 def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
                     history_bars=HISTORY_BARS, workers=1, risk_free_fee_usd=0.0,
-                    progress_cb=None, window_clamp=HISTORY_BARS, verify_sample_n=0):
+                    progress_cb=None, window_clamp=HISTORY_BARS, verify_sample_n=0,
+                    candle_dump_n=0):
     tf_minutes = int(timeframe)
     warmup_ms = history_bars * tf_minutes * 60_000 + 3 * 86_400_000  # پنجره کامل + ۳ روز حاشیه ایمنی
     fetch_start = start_ms - warmup_ms
@@ -1002,6 +1056,12 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
         except Exception as e:
             logger.warning(f"[BT] {symbol} {timeframe}m bar {i}: {e}")
             continue
+
+    # 🆕 فایل کامل آخرین N کندل برای چک با Pine Script (بدون هیچ برش)
+    if candle_dump_n and candle_dump_n > 0:
+        dump_path, dump_count = build_candle_dump_file(candles, symbol, timeframe, candle_dump_n)
+        diag["candle_dump_path"] = dump_path
+        diag["candle_dump_count"] = dump_count
 
     # 🆕 تخمین سیگنال‌هایی که پاس پیوسته ممکن است جا انداخته باشد (اختیاری)
     if verify_sample_n and verify_sample_n > 0 and engine == "fast":
@@ -1560,6 +1620,8 @@ def parse_args():
                    help="حداکثر عمر مجاز پیوت‌ها به کندل (پیش‌فرض ۵۰۰ مثل پنجره لایو | 0 = خاموش)")
     p.add_argument("--verify-sample", type=int, default=0,
                    help="نمونه‌گیری کنترلی: هر N-مین کندلِ غیرکاندید با پنجره سرد چک می‌شود (0 = خاموش)")
+    p.add_argument("--candle-dump", type=int, default=5000,
+                   help="آخرین N کندلِ هر ترکیب به‌صورت فایل کامل به تلگرام ارسال شود (0 = خاموش)")
     p.add_argument("--history-bars", type=int, default=HISTORY_BARS,
                    help=f"طول پنجره‌ی غلتان برای موتور exact (پیش‌فرض = HISTORY_BARS لایو = {HISTORY_BARS})")
     p.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) - 1)),
@@ -1665,6 +1727,7 @@ def main():
                         progress_cb=_progress if args.engine == "exact" else None,
                         window_clamp=args.window_clamp,
                         verify_sample_n=args.verify_sample,
+                        candle_dump_n=args.candle_dump,
                     )
                     elapsed = time.time() - t0
                     all_trades.extend(trades)
@@ -1679,6 +1742,8 @@ def main():
                         "control_checked": diag.get("control_checked", 0),
                         "control_found": diag.get("control_found", 0),
                         "elapsed_sec": elapsed,
+                        "candle_dump_path": diag.get("candle_dump_path"),
+                        "candle_dump_count": diag.get("candle_dump_count", 0),
                     })
                     msg = (f"⏳ [{done}/{total}] {sym} {tf}m ✓ | "
                            f"کندل: {n_bars:,} | خام: {raw_stats.get('total', 0)} | "
@@ -1693,6 +1758,17 @@ def main():
                 logger.info(msg)
                 if not args.no_send:
                     tg_send(msg)
+
+        # 🆕 ارسال فایل کامل کندل‌های اخیر هر ترکیب (برای چک با Pine Script)
+        if args.candle_dump and not args.no_send:
+            for c in meta["combos"]:
+                p = c.get("candle_dump_path")
+                if p and Path(p).exists():
+                    tg_send_document(
+                        p,
+                        caption=f"🕯️ {c['symbol']} {c['tf']}m — {c.get('candle_dump_count', 0)} کندل اخیر (کامل، بدون برش)",
+                    )
+                    time.sleep(1)
 
         if args.account_sim is not None:
             meta["account_sim"] = simulate_with_account_balance(all_trades, args.account_sim)
