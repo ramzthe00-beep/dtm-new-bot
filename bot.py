@@ -54,7 +54,7 @@ CHECK_INTERVAL = {
 # مقادیر leverage=50 و tick=0.1 مطابق الگوی نمادهای مشابه (مثل ETHUSDT)
 # به عنوان مقدار پیش‌فرض اضافه شدند — در صورت نیاز با مقدار دقیق صرافی
 # جایگزین کنید.
-LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75, "BTCUSDT": 50}
+LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75, "BTCUSDT": 150}
 TARGET_RISK = 2.0
 TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01, "PUMPUSDT": 0.000001, "BTCUSDT": 0.1}
 
