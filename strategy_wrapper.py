@@ -31,7 +31,16 @@ SYMBOL_TICK_INFO = {
     "ETHUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "ETH"},
     "BNBUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "BNB"},
     "PUMPUSDT": {"mintick": 0.00001, "pricescale": 100000, "basecurrency": "PUMP"},
+    "BTCUSDT":  {"mintick": 0.1,     "pricescale": 10,     "basecurrency": "BTC"},
 }
+
+# ============================================================
+# 🎯 فیلتر ۱ و ۲ (طبق درخواست کاربر) — لایه دفاعی دوم
+# فقط این نمادها و این تایم‌فریم اجازه محاسبه سیگنال دارند، حتی اگر
+# calculate_signals از جایی غیر از bot.py با نماد/تایم‌فریم دیگری صدا زده شود.
+# ============================================================
+ALLOWED_SYMBOLS = {"BTCUSDT", "ETHUSDT"}
+ALLOWED_TIMEFRAME = "1"
 
 
 # ============================================================
@@ -164,6 +173,16 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
     import traceback
 
     logger = logging.getLogger("STRATEGY_WRAPPER")
+
+    # 🎯 فیلتر ۱: فقط BTCUSDT و ETHUSDT
+    if symbol.upper() not in ALLOWED_SYMBOLS:
+        logger.info(f"[FILTER] Symbol {symbol} not in ALLOWED_SYMBOLS={ALLOWED_SYMBOLS} — skipped.")
+        return None, None, None, None, None, None
+
+    # 🎯 فیلتر ۲: فقط تایم‌فریم ۱ دقیقه
+    if str(timeframe) != ALLOWED_TIMEFRAME:
+        logger.info(f"[FILTER] Timeframe {timeframe} != {ALLOWED_TIMEFRAME} — skipped.")
+        return None, None, None, None, None, None
 
     try:
         candles = []
