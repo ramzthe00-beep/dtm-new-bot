@@ -402,8 +402,21 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         entry = None
         
         if isinstance(last_values, dict):
-            signal = last_values.get("signal")
-            entry = last_values.get("entry")
+            # 🔥 مهم: فقط سیگنال‌هایی که final=true هستند را قبول کن
+            is_final_bullish = last_values.get("final_classic_bullish", False) or last_values.get("final_hidden_bullish", False)
+            is_final_bearish = last_values.get("final_classic_bearish", False) or last_values.get("final_hidden_bearish", False)
+            
+            if is_final_bullish:
+                signal = "LONG"
+                entry = last_values.get("entry")
+            elif is_final_bearish:
+                signal = "SHORT"
+                entry = last_values.get("entry")
+            else:
+                # سیگنال توسط فیلترهای پاین رد شده است
+                signal = None
+                entry = None
+                logger.info(f"[FILTER] {symbol}: signal rejected by final filters (final=false)")
         else:
             error_msg = f"""
 ⚠️ WARNING: last_values is not a dictionary
