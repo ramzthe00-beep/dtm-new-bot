@@ -333,14 +333,11 @@ def main(
     # آینده در صورت نیاز فقط با حذف کامنت‌ها و حذف مقادیر False زیر
     # به‌سادگی دوباره فعال شود.
     # ------------------------------------------------------------
-    # hiddenBullishCond1_RSI = priceHigherLow and rsiLowerLowOnTroughs
-    # hiddenBullishCond2_MACDl = priceHigherLow and macdLineLowerLowOnTroughs
-    # hiddenBullishCond3_MACDh = priceHigherLow and histLowerLowOnTroughs and bothTroughsRed and macdColorChangedForLows
-    # hiddenBullishBase3 = enableHidden and priceHigherLow and hiddenBullishCond3_MACDh and hiddenBullishCond1_RSI and hiddenBullishCond2_MACDl
-    hiddenBullishCond1_RSI = False
-    hiddenBullishCond2_MACDl = False
-    hiddenBullishCond3_MACDh = False
-    hiddenBullishBase3 = False
+    hiddenBullishCond1_RSI = priceHigherLow and rsiLowerLowOnTroughs
+    hiddenBullishCond2_MACDl = priceHigherLow and macdLineLowerLowOnTroughs
+    hiddenBullishCond3_MACDh = priceHigherLow and histLowerLowOnTroughs and bothTroughsRed and macdColorChangedForLows
+    hiddenBullishBase3 = enableHidden and priceHigherLow and hiddenBullishCond3_MACDh and hiddenBullishCond1_RSI and hiddenBullishCond2_MACDl
+    
     # ============================================================
 
     
