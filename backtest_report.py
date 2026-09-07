@@ -304,8 +304,8 @@ def _local_compute_stop_target(candles, signal, last_values, mintick, buffer_tic
             return None, None, None, None
         # 🔥 R:R = 3
         rr = (mid_peak - entry) / risk
-        target = mid_peak if rr >= 3 else entry + 3 * risk
-        return stop, target, max(rr, 3.0), mid_peak
+        target = mid_peak if rr >= 2 else entry + 2 * risk
+        return stop, target, max(rr, 2.0), mid_peak
     elif signal == "SHORT":
         high1 = last_values.get("previous_pivot_high_price")
         high2 = last_values.get("pivot_high_price")
@@ -324,8 +324,8 @@ def _local_compute_stop_target(candles, signal, last_values, mintick, buffer_tic
             return None, None, None, None
         # 🔥 R:R = 3
         rr = (entry - mid_trough) / risk
-        target = mid_trough if rr >= 3 else entry - 3 * risk
-        return stop, target, max(rr, 3.0), mid_trough
+        target = mid_trough if rr >= 2 else entry - 2 * risk
+        return stop, target, max(rr, 2.0), mid_trough
     return None, None, None, None
 
 
