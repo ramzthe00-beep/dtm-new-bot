@@ -34,8 +34,15 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 # ============================================================
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
-SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT", "PUMPUSDT"]
-TIMEFRAMES = ["1" , "5"]
+# 🎯 فیلتر ۱ و ۲ (طبق درخواست کاربر):
+#   - فقط BTCUSDT و ETHUSDT معامله شوند.
+#   - فقط تایم‌فریم ۱ دقیقه نگه داشته شود.
+# نمادهای/تایم‌فریم‌های قبلی به صورت کامنت نگه داشته شدند تا در صورت نیاز
+# به‌سادگی قابل بازگردانی باشند.
+# SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT", "PUMPUSDT"]
+# TIMEFRAMES = ["1", "5"]
+SYMBOLS = ["BTCUSDT", "ETHUSDT"]
+TIMEFRAMES = ["1"]
 HISTORY_BARS = 500
 
 CHECK_INTERVAL = {
@@ -43,9 +50,13 @@ CHECK_INTERVAL = {
     "5": 300,
 }
 
-LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75}
+# ⚠️ BTCUSDT قبلاً در این نگاشت‌ها وجود نداشت (چون قبلاً معامله نمی‌شد).
+# مقادیر leverage=50 و tick=0.1 مطابق الگوی نمادهای مشابه (مثل ETHUSDT)
+# به عنوان مقدار پیش‌فرض اضافه شدند — در صورت نیاز با مقدار دقیق صرافی
+# جایگزین کنید.
+LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75, "BTCUSDT": 50}
 TARGET_RISK = 2.0
-TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01, "PUMPUSDT": 0.000001}
+TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01, "PUMPUSDT": 0.000001, "BTCUSDT": 0.1}
 
 
 def _precision_from_tick(tick):
@@ -730,7 +741,7 @@ def startup_diagnostic(exchange, public):
     strategy_ok = False
     test_signal = None
     test_entry = None
-    test_symbol = SYMBOLS[0] if SYMBOLS else "LTCUSDT"
+    test_symbol = SYMBOLS[0] if SYMBOLS else "BTCUSDT"
 
     def add(title, ok, details=""):
         status = "✅ ACTIVE" if ok else "❌ FAILED"
@@ -1463,3 +1474,4 @@ if __name__ == "__main__":
         report_thread.join(timeout=3)
         
         logger.info("DTM PROCESS EXIT")
+
