@@ -61,18 +61,22 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
 # ✅ ارزهای اصلی (فقط ۹ ارز)
 # ============================================================
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", 
+    "BTCUSDT", "ETHUSDT", "LTCUSDT", "TRXUSDT",
+    "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT",
 ]
 
 # ✅ تایم‌فریم‌های نهایی
 TIMEFRAMES = ["1", "15", "30", "60"]
 
 LEVERAGE_MAP = {
-    "BTCUSDT": 150, "ETHUSDT": 50,
+    "BTCUSDT": 150, "ETHUSDT": 50, "LTCUSDT": 75, "TRXUSDT": 75,
+    "BNBUSDT": 75, "XRPUSDT": 75, "DOGEUSDT": 75, "ADAUSDT": 75,
 }
 
 TICK_SIZES = {
-    "BTCUSDT": 0.1, "ETHUSDT": 0.01, 
+    "BTCUSDT": 0.1, "ETHUSDT": 0.01, "LTCUSDT": 0.01, "TRXUSDT": 0.00001,
+    "BNBUSDT": 0.01, "XRPUSDT": 0.0001, "DOGEUSDT": 0.00001,
+    "ADAUSDT": 0.0001, 
 }
 
 HISTORY_BARS = 500
