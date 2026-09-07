@@ -326,10 +326,22 @@ def main(
     macdLineLowerLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 < pl_macdline_1)
     histLowerLowOnTroughs = newPivotLow and (not na(pl_hist_1)) and (pl_hist_2 < pl_hist_1)
 
-    hiddenBullishCond1_RSI = priceHigherLow and rsiLowerLowOnTroughs
-    hiddenBullishCond2_MACDl = priceHigherLow and macdLineLowerLowOnTroughs
-    hiddenBullishCond3_MACDh = priceHigherLow and histLowerLowOnTroughs and bothTroughsRed and macdColorChangedForLows
-    hiddenBullishBase3 = enableHidden and priceHigherLow and hiddenBullishCond3_MACDh and hiddenBullishCond1_RSI and hiddenBullishCond2_MACDl
+    # ============================================================
+    # 🚫 HD+ (واگرایی مخفی صعودی / Hidden Bullish Divergence) — غیرفعال شد
+    # طبق درخواست کاربر، این نوع سیگنال فعلاً نباید معامله شود.
+    # منطق اصلی بررسی شرایط این سیگنال به صورت کامنت نگه داشته شده تا در
+    # آینده در صورت نیاز فقط با حذف کامنت‌ها و حذف مقادیر False زیر
+    # به‌سادگی دوباره فعال شود.
+    # ------------------------------------------------------------
+    # hiddenBullishCond1_RSI = priceHigherLow and rsiLowerLowOnTroughs
+    # hiddenBullishCond2_MACDl = priceHigherLow and macdLineLowerLowOnTroughs
+    # hiddenBullishCond3_MACDh = priceHigherLow and histLowerLowOnTroughs and bothTroughsRed and macdColorChangedForLows
+    # hiddenBullishBase3 = enableHidden and priceHigherLow and hiddenBullishCond3_MACDh and hiddenBullishCond1_RSI and hiddenBullishCond2_MACDl
+    hiddenBullishCond1_RSI = False
+    hiddenBullishCond2_MACDl = False
+    hiddenBullishCond3_MACDh = False
+    hiddenBullishBase3 = False
+    # ============================================================
 
     
     priceLowerHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 < ph_price_1) and (((ph_price_1 - ph_price_2) / ph_price_1) * 100 > PRICE_MIN_GAP_PCT)
