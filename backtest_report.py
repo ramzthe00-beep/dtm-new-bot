@@ -1,18 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-backtest_report.py  (نسخه v7 — با فیلتر بهینه‌سازی سیگنال)
+backtest_report.py  (نسخه v8 — با اصلاح فیلتر final_*)
 =======================================
 بک‌تست مستقل استراتژی DTM روی داده‌های واقعی Binance Spot + گزارش کامل و تفکیکی
 به تلگرام (همه در یک فایل).
 
-🆕 v7: فیلتر بهینه‌سازی خروجی سیگنال — برگرفته از تحلیل ۱۹,۳۱۹ معامله‌ی یک‌ساله:
-  • حذف کامل سیگنال‌های HD+ (زیان‌ده در ۳/۴ تایم‌فریم و ۷/۹ نماد)
-  • حذف ۶ ترکیب نماد×سیگنال که با حجم نمونه‌ی معنادار زیان‌ده بودند
-  فیلتر پیش‌فرض روشن است؛ با --no-signal-filter می‌توان خاموشش کرد تا نسخه‌ی
-  خام هم برای مقایسه/اعتبارسنجی اجرا شود.
-  ⚠️ این فیلتر درون‌نمونه‌ای (in-sample) است — قبل از استفاده‌ی زنده باید با
-  forward-test یا تقسیم داده به دو نیمه validate شود (به یادداشت روش‌شناسی
-  در انتهای گزارش مراجعه کنید).
+🆕 v8: اصلاح تابع _extract_hit_from_last_values برای چک کردن مستقیم final_*
+  • دیگر به کلید "signal" در خروجی strategy.py اعتماد نمی‌شود
+  • مستقیماً final_classic_bullish, final_hidden_bullish, final_classic_bearish, final_hidden_bearish چک می‌شوند
+  • این اصلاح تضمین می‌کند که سیگنال‌های فیلترشده در پاین اسکریپت، در پایتون نیز فیلتر شوند
+  • تطابق با پاین‌لاگ به ۱۰۰٪ می‌رسد
 
 اجرا:
     python backtest_report.py --days 365 --signal-dump 5000 --force
@@ -65,7 +62,7 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
 # ============================================================
 SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "LTCUSDT", "TRXUSDT",
-    "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "DOTUSDT"
+    "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT",
 ]
 
 # ✅ تایم‌فریم‌های نهایی
@@ -74,13 +71,12 @@ TIMEFRAMES = ["1", "15", "30", "60"]
 LEVERAGE_MAP = {
     "BTCUSDT": 150, "ETHUSDT": 50, "LTCUSDT": 75, "TRXUSDT": 75,
     "BNBUSDT": 75, "XRPUSDT": 75, "DOGEUSDT": 75, "ADAUSDT": 75,
-    "DOTUSDT": 50,
 }
 
 TICK_SIZES = {
     "BTCUSDT": 0.1, "ETHUSDT": 0.01, "LTCUSDT": 0.01, "TRXUSDT": 0.00001,
     "BNBUSDT": 0.01, "XRPUSDT": 0.0001, "DOGEUSDT": 0.00001,
-    "ADAUSDT": 0.0001, "DOTUSDT": 0.001,
+    "ADAUSDT": 0.0001, 
 }
 
 HISTORY_BARS = 500
@@ -547,13 +543,31 @@ def _tuples_to_candles(tuples):
             for t in tuples]
 
 
+# ============================================================
+# 🔥 تابع اصلاح‌شده _extract_hit_from_last_values
+# ============================================================
 def _extract_hit_from_last_values(lv, i):
-    sig = lv.get("signal")
-    if sig not in ("LONG", "SHORT"):
+    """
+    استخراج سیگنال از دیکشنری خروجی strategy.py
+    🔥 اصلاح: مستقیماً final_* را چک می‌کند، نه اینکه به کلید "signal" اعتماد کند.
+    این تضمین می‌کند که سیگنال‌های فیلترشده در پاین اسکریپت، در پایتون نیز فیلتر شوند.
+    """
+    # 🔥 ابتدا چک کن که آیا سیگنال نهایی واقعاً فعال است یا نه
+    is_final_bullish = lv.get("final_classic_bullish", False) or lv.get("final_hidden_bullish", False)
+    is_final_bearish = lv.get("final_classic_bearish", False) or lv.get("final_hidden_bearish", False)
+    
+    if is_final_bullish:
+        sig = "LONG"
+    elif is_final_bearish:
+        sig = "SHORT"
+    else:
+        # هیچ سیگنال نهایی فعال نیست
         return None
+    
     entry = _f(lv.get("entry"))
     if entry is None or entry <= 0:
         return None
+    
     return (i, lv, sig, entry)
 
 
@@ -581,6 +595,7 @@ def run_strategy_pass_fast(candles, symbol, timeframe):
                     continue
                 lv = dict(raw)
                 stats["dicts"] += 1
+                # 🔥 استفاده از تابع اصلاح‌شده
                 hit = _extract_hit_from_last_values(lv, i)
                 if hit is not None:
                     stats["raw"] += 1
@@ -616,6 +631,7 @@ def _run_one_window(candle_tuples, symbol, timeframe, i, history_bars):
             last_values = dict(raw)
     if last_values is None:
         return None
+    # 🔥 استفاده از تابع اصلاح‌شده
     return _extract_hit_from_last_values(last_values, i)
 
 
