@@ -1,12 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-backtest_report.py  (نسخه v6 — نهایی)
+backtest_report.py  (نسخه v7 — با فیلتر بهینه‌سازی سیگنال)
 =======================================
 بک‌تست مستقل استراتژی DTM روی داده‌های واقعی Binance Spot + گزارش کامل و تفکیکی
 به تلگرام (همه در یک فایل).
 
+🆕 v7: فیلتر بهینه‌سازی خروجی سیگنال — برگرفته از تحلیل ۱۹,۳۱۹ معامله‌ی یک‌ساله:
+  • حذف کامل سیگنال‌های HD+ (زیان‌ده در ۳/۴ تایم‌فریم و ۷/۹ نماد)
+  • حذف ۶ ترکیب نماد×سیگنال که با حجم نمونه‌ی معنادار زیان‌ده بودند
+  فیلتر پیش‌فرض روشن است؛ با --no-signal-filter می‌توان خاموشش کرد تا نسخه‌ی
+  خام هم برای مقایسه/اعتبارسنجی اجرا شود.
+  ⚠️ این فیلتر درون‌نمونه‌ای (in-sample) است — قبل از استفاده‌ی زنده باید با
+  forward-test یا تقسیم داده به دو نیمه validate شود (به یادداشت روش‌شناسی
+  در انتهای گزارش مراجعه کنید).
+
 اجرا:
     python backtest_report.py --days 365 --signal-dump 5000 --force
+    python backtest_report.py --days 365 --no-signal-filter --force   # نسخه‌ی خام برای مقایسه
 """
 
 import os
@@ -37,8 +47,18 @@ TICK_CACHE_PATH = BASE_DIR / "backtest_tick_cache.json"
 IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 UTC_TZ = timezone.utc
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
+# 🆕 ربات تلگرامِ مخصوص بک‌تست — کاملاً مستقل از ربات لایو (bot.py).
+# عمداً هیچ fallback به مقدار هاردکدشده‌ی ربات لایو نداریم تا هیچ‌وقت اشتباهی
+# گزارش‌های بک‌تست به همون چت ربات فعلی نره. اگر ست نشوند، ارسال تلگرام
+# به‌طور امن غیرفعال می‌شود و فقط در فایل/چاپ ذخیره می‌گردد.
+TELEGRAM_BOT_TOKEN = os.getenv("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM")
+TELEGRAM_CHAT_ID = os.getenv("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
+
+if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    logging.getLogger("BACKTEST").warning(
+        "[TG] BACKTEST_TELEGRAM_BOT_TOKEN / BACKTEST_TELEGRAM_CHAT_ID تنظیم نشده‌اند — "
+        "ارسال به تلگرام برای این اسکریپت غیرفعال است (فقط فایل/چاپ کار می‌کند)."
+    )
 
 # ============================================================
 # ✅ ارزهای اصلی (فقط ۹ ارز)
@@ -125,6 +145,46 @@ def get_strategy_inputs(timeframe):
 
 
 # ============================================================
+# 🆕 فیلتر بهینه‌سازی سیگنال (بر اساس تحلیل ۱۹,۳۱۹ معامله‌ی یک‌ساله)
+# ============================================================
+# HD+ در کلیت -446.34$ (PF=0.927) بوده و در ۳ از ۴ تایم‌فریم و ۷ از ۹ نماد
+# زیان‌ده است → حذف کامل، فارغ از نماد/تایم‌فریم/امتیاز.
+EXCLUDED_SIGNAL_TYPES = {"HD+"}
+
+# ترکیب‌های نماد×سیگنال که با حجم نمونه‌ی معنادار (۱۰۰+ معامله) زیان‌ده بودند.
+# عدد جلوی هرکدام از گزارش تحلیلی است؛ صرفاً برای مستندسازی، در کد استفاده نمی‌شود.
+EXCLUDED_SYMBOL_SIGNAL_COMBOS = {
+    ("DOTUSDT", "CD+"),   # 441 معامله | -115.37$ | PF=0.762
+    ("XRPUSDT", "CD+"),   # 618 معامله | -17.55$  | PF=0.976
+    ("ADAUSDT", "CD-"),   # 422 معامله | -35.17$  | PF=0.924
+    ("TRXUSDT", "CD-"),   # 116 معامله | -21.22$  | PF=0.857
+    ("DOGEUSDT", "HD-"),  # 668 معامله | -37.96$  | PF=0.949
+    ("BTCUSDT", "HD-"),   # 700 معامله | -5.81$   | PF=0.993
+}
+
+
+def is_signal_allowed(symbol, signal_type):
+    """
+    فیلتر بهینه‌سازی خروجی استراتژی — بر پایه‌ی تحلیل درون‌نمونه‌ای بک‌تست یک‌ساله.
+
+    این تابع روی خروجیِ *پس از* تولید سیگنال توسط موتور اعمال می‌شود؛ منطق
+    داخلی استراتژی (شرایط فیبوناچی، کندل تأییدیه، RSI/MACD/هیستوگرام/روند)
+    دست‌نخورده می‌ماند — طبق دستور، فقط لایه‌ی post-filter اضافه شده است.
+
+    ⚠️ درون‌نمونه‌ای (in-sample): قبل از استفاده‌ی زنده حتماً با forward-test
+    یا تقسیم داده به دو نیمه (نیمه‌ی اول = کشف فیلتر، نیمه‌ی دوم = تایید)
+    validate شود.
+    """
+    if not signal_type:
+        return True  # سیگنال بدون نوع مشخص فیلتر نمی‌شود (نباید عملاً اتفاق بیفتد)
+    if signal_type in EXCLUDED_SIGNAL_TYPES:
+        return False
+    if (symbol, signal_type) in EXCLUDED_SYMBOL_SIGNAL_COMBOS:
+        return False
+    return True
+
+
+# ============================================================
 # ابزارهای ایمن
 # ============================================================
 def _f(x):
@@ -172,6 +232,8 @@ def _parse_kv_overrides(items):
 # تلگرام
 # ============================================================
 def tg_send(text):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=30)
@@ -182,6 +244,8 @@ def tg_send(text):
 
 
 def tg_send_document(path, caption=""):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
         with open(path, "rb") as f:
@@ -743,7 +807,7 @@ def simulate_trade(tr, candles, n, risk_free_fee_usd=0.0):
 def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
                     history_bars=HISTORY_BARS, workers=1, risk_free_fee_usd=0.0,
                     progress_cb=None, window_clamp=HISTORY_BARS, verify_sample_n=0,
-                    signal_dump_n=5000):
+                    signal_dump_n=5000, apply_signal_filter=True):
     tf_minutes = int(timeframe)
     warmup_ms = history_bars * tf_minutes * 60_000 + 3 * 86_400_000
     fetch_start = start_ms - warmup_ms
@@ -781,7 +845,10 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
         raw_hits = fixed
 
     seen, trades = set(), []
-    drop = {"out_of_range": 0, "bad_sltp": 0, "dup": 0, "outside_window": 0}
+    drop = {
+        "out_of_range": 0, "bad_sltp": 0, "dup": 0, "outside_window": 0,
+        "filtered_signal_rule": 0,  # 🆕 حذف‌شده توسط فیلتر بهینه‌سازی (HD+ یا ترکیب زیان‌ده)
+    }
     raw_stats = {
         "total": len(raw_hits),
         "by_signal": {"LONG": 0, "SHORT": 0},
@@ -813,6 +880,14 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
                     drop["outside_window"] += 1
                     continue
 
+            st = signal_type_of(lv)
+
+            # 🆕 فیلتر بهینه‌سازی سیگنال — قبل از محاسبه‌ی stop/target (صرفه‌جویی
+            # در محاسبه) اعمال می‌شود، بدون دست‌زدن به منطق داخلی استراتژی.
+            if apply_signal_filter and not is_signal_allowed(symbol, st):
+                drop["filtered_signal_rule"] += 1
+                continue
+
             stop, target, rr, struct = None, None, None, None
             try:
                 stop, target, rr, struct = _compute_stop_target(
@@ -824,7 +899,6 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
                 drop["bad_sltp"] += 1
                 continue
 
-            st = signal_type_of(lv)
             sc = _score_of(lv, st)
 
             raw_stats["by_signal"][sig] = raw_stats["by_signal"].get(sig, 0) + 1
@@ -897,6 +971,7 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
     diag.update(drop)
     diag["trades"] = len(trades)
     diag["engine"] = engine
+    diag["signal_filter_enabled"] = apply_signal_filter
     return trades, n, raw_stats, diag
 
 
@@ -1137,6 +1212,22 @@ def build_methodology_note(meta):
             "  • ⚠️ موتور «پیوسته» بدون فیلتر پنجره — ممکن است سیگنال‌هایی با پیوت خیلی قدیمی بشمارد که لایو نمی‌دید. "
             "فعال‌سازی: --window-clamp 500"
         )
+    # 🆕 وضعیت فیلتر بهینه‌سازی سیگنال
+    if meta.get("signal_filter_enabled", True):
+        total_filtered = sum(c.get("filtered_signal_rule", 0) for c in meta.get("combos", []))
+        lines.append(
+            f"  • 🆕 فیلتر بهینه‌سازی سیگنال: **فعال** — {total_filtered:,} سیگنال حذف شد "
+            f"(کل HD+، به‌علاوه‌ی DOTUSDT/CD+، XRPUSDT/CD+، ADAUSDT/CD-، TRXUSDT/CD-، "
+            f"DOGEUSDT/HD-، BTCUSDT/HD-)."
+        )
+        lines.append(
+            "  • ⚠️ این فیلتر **درون‌نمونه‌ای** (in-sample) است — از همین بازه‌ی زمانی استخراج شده که با آن "
+            "سنجیده شده، پس ریسک overfitting واقعی است. قبل از استفاده‌ی زنده حتماً با forward-test یا "
+            "تقسیم داده به دو نیمه (نیمه‌ی اول = کشف فیلتر، نیمه‌ی دوم = تایید) validate شود. "
+            "برای مقایسه با نسخه‌ی خام: --no-signal-filter"
+        )
+    else:
+        lines.append("  • 🆕 فیلتر بهینه‌سازی سیگنال: **غیرفعال** (--no-signal-filter) — همه‌ی انواع سیگنال محاسبه شده‌اند.")
     lines.append(
         f"  • PnL بر مبنای «سرمایه‌ی پایه‌ی ثابت {BASE_CAPITAL:.0f}$» به‌ازای هر معامله (دقیقاً مثل trade_ledger)، "
         f"نه موجودی واقعی حساب — یعنی «کیفیت خالص استراتژی» را می‌سنجد."
@@ -1165,6 +1256,7 @@ def build_overall_report(trades, meta):
     L.append(f"💱 نمادها: {', '.join(meta['symbols'])}")
     L.append(f"🕐 تولید گزارش: {meta['generated_at']} (تهران)")
     L.append(f"⚙️ موتور سیگنال: {meta['engine']} | حالت: {meta.get('engine_mode', 'exact')}")
+    L.append(f"🆕 فیلتر بهینه‌سازی سیگنال: {'فعال ✅' if meta.get('signal_filter_enabled', True) else 'غیرفعال ⭕'}")
     L.append(W)
     L.append(f"📈 کل سیگنال‌ها: {st['total']}")
     L.append(f"✅ برنده: {st['wins']}  (🎯 تارگت: {st['tp_wins']} | 🛡️ ریسک‌فری: {st['rf_wins']})")
@@ -1214,7 +1306,8 @@ def build_overall_report(trades, meta):
             raw_total = raw_info.get("total", 0)
             raw_by_signal = raw_info.get("by_signal", {})
             line = (f"  • {c['symbol']} {c['tf']}m | کندل: {c['bars']:,} | سیگنال خام: {raw_total}"
-                    f" | خارج‌ازپنجره: {c.get('outside_window', 0)}")
+                    f" | خارج‌ازپنجره: {c.get('outside_window', 0)}"
+                    f" | فیلترشده: {c.get('filtered_signal_rule', 0)}")
             if raw_by_signal:
                 line += f" (LONG: {raw_by_signal.get('LONG', 0)} | SHORT: {raw_by_signal.get('SHORT', 0)})"
             line += f" | معاملات: {c['signals']}"
@@ -1230,8 +1323,9 @@ def build_overall_report(trades, meta):
         _rf = sum(c.get("rf_hits", 0) for c in meta["combos"])
         _rn = sum(c.get("rr_above2_count", 0) for c in meta["combos"])
         _rs = sum(c.get("rr_above2_sum", 0.0) for c in meta["combos"])
+        _flt = sum(c.get("filtered_signal_rule", 0) for c in meta["combos"])
         L.append(f"  ➕ مجموع کل: 🎯 تارگت: {_t:,} | ❌ استاپ: {_s:,} | 🛡️ ریسک‌فری: {_rf:,} "
-                 f"| R:R بالای 2: {_rn:,} (میانگین {(_rs / _rn if _rn else 0):.2f})")
+                 f"| R:R بالای 2: {_rn:,} (میانگین {(_rs / _rn if _rn else 0):.2f}) | 🆕 فیلترشده: {_flt:,}")
 
     if meta.get("errors"):
         L.append(W)
@@ -1383,6 +1477,9 @@ def parse_args():
                    help="کارمزد تقریبی (دلار) برای نزدیک‌ترکردن ریسک‌فری به رفتار واقعی صرافی؛ پیش‌فرض ۰")
     p.add_argument("--account-sim", type=float, default=None,
                    help="اگر ست شود، یک شبیه‌سازی تکمیلی با موجودی شروع داده‌شده و فرمول واقعی position-sizing لایو اجرا می‌شود")
+    p.add_argument("--no-signal-filter", action="store_true",
+                   help="🆕 خاموش‌کردن فیلتر بهینه‌سازی سیگنال (پیش‌فرض: فیلتر روشن است — حذف HD+ و "
+                        "۶ ترکیب نماد×سیگنال زیان‌ده). با این فلگ نسخه‌ی خامِ بدون فیلتر اجرا می‌شود.")
     p.add_argument("--force", action="store_true", help="نادیده‌گرفتن قفل روزانه")
     p.add_argument("--resend", action="store_true", help="ارسال مجدد از نتایج ذخیره‌شده")
     p.add_argument("--no-send", action="store_true", help="فقط چاپ/ذخیره، بدون تلگرام")
@@ -1396,6 +1493,7 @@ def main():
     leverage_overrides = _parse_kv_overrides(args.leverage)
     tick_overrides = _parse_kv_overrides(args.tick)
     history_bars = int(args.history_bars)
+    apply_signal_filter = not args.no_signal_filter  # 🆕 پیش‌فرض: روشن
 
     try:
         if args.resend:
@@ -1438,6 +1536,7 @@ def main():
             "generated_at": now_iran_str(), "engine": ENGINE_NAME, "engine_mode": args.engine,
             "window_clamp": args.window_clamp,
             "history_bars": history_bars,
+            "signal_filter_enabled": apply_signal_filter,  # 🆕
             "combos": [], "errors": [],
         }
 
@@ -1449,6 +1548,7 @@ def main():
                  f"⚙️ موتور: {args.engine}"
                  + (f" (پنجره {history_bars} کندلی)" if args.engine == "exact"
                     else (f" (پیوسته + فیلتر پنجره {args.window_clamp} کندلی)" if args.window_clamp else " (پیوسته)"))
+                 + f"\n🆕 فیلتر بهینه‌سازی سیگنال: {'فعال (حذف HD+ + ۶ ترکیب زیان‌ده)' if apply_signal_filter else 'غیرفعال (نسخه‌ی خام)'}"
                  + "\n⏳ ممکن است زمان‌بر باشد...")
         logger.info(intro.replace("\n", " | "))
         if not args.no_send:
@@ -1481,6 +1581,7 @@ def main():
                         window_clamp=args.window_clamp,
                         verify_sample_n=args.verify_sample,
                         signal_dump_n=args.signal_dump,
+                        apply_signal_filter=apply_signal_filter,  # 🆕
                     )
                     elapsed = time.time() - t0
                     all_trades.extend(trades)
@@ -1492,6 +1593,7 @@ def main():
                         "out_of_range": diag.get("out_of_range", 0),
                         "outside_window": diag.get("outside_window", 0),
                         "bad_sltp": diag.get("bad_sltp", 0),
+                        "filtered_signal_rule": diag.get("filtered_signal_rule", 0),  # 🆕
                         "control_checked": diag.get("control_checked", 0),
                         "control_found": diag.get("control_found", 0),
                         "elapsed_sec": elapsed,
@@ -1507,6 +1609,7 @@ def main():
                     msg = (f"⏳ [{done}/{total}] {sym} {tf}m ✓ | "
                            f"کندل: {n_bars:,} | خام: {raw_stats.get('total', 0)} | "
                            f"خارج‌ازپنجره: {diag.get('outside_window', 0)} | "
+                           f"فیلترشده: {diag.get('filtered_signal_rule', 0)} | "
                            f"معاملات: {len(trades)} | {elapsed:.0f}s"
                            + (f" | کنترلی: {diag.get('control_found', 0)}/{diag.get('control_checked', 0)}"
                               if diag.get("control_checked") else ""))
