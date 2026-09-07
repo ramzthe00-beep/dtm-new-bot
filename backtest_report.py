@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-backtest_report.py  (نسخه v8 — با اصلاح فیلتر final_*)
+backtest_report.py  (نسخه v10 — فقط ۴ ارز منتخب + R:R=3)
 =======================================
-بک‌تست مستقل استراتژی DTM روی داده‌های واقعی Binance Spot + گزارش کامل و تفکیکی
-به تلگرام (همه در یک فایل).
-
-🆕 v8: اصلاح تابع _extract_hit_from_last_values برای چک کردن مستقیم final_*
-  • دیگر به کلید "signal" در خروجی strategy.py اعتماد نمی‌شود
-  • مستقیماً final_classic_bullish, final_hidden_bullish, final_classic_bearish, final_hidden_bearish چک می‌شوند
-  • این اصلاح تضمین می‌کند که سیگنال‌های فیلترشده در پاین اسکریپت، در پایتون نیز فیلتر شوند
-  • تطابق با پاین‌لاگ به ۱۰۰٪ می‌رسد
+🆕 v10:
+  • فقط ۴ ارز: ETHUSDT, LTCUSDT, XRPUSDT, BNBUSDT
+  • فیلتر امتیاز ≥ ۴
+  • فیلتر نوع سیگنال:
+      - ETH: HD- و CD+
+      - BNB, LTC, XRP: HD- و CD-
+  • تغییر R:R از 2 به 3
+  • فیلتر پنجره‌ی پیوت‌ها (window_clamp=500) فعال است
+  • همه‌ی تایم‌فریم‌ها (1, 15, 30, 60) حفظ شده‌اند
 
 اجرا:
     python backtest_report.py --days 365 --signal-dump 5000 --force
-    python backtest_report.py --days 365 --no-signal-filter --force   # نسخه‌ی خام برای مقایسه
 """
 
 import os
@@ -44,10 +44,6 @@ TICK_CACHE_PATH = BASE_DIR / "backtest_tick_cache.json"
 IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 UTC_TZ = timezone.utc
 
-# 🆕 ربات تلگرامِ مخصوص بک‌تست — کاملاً مستقل از ربات لایو (bot.py).
-# عمداً هیچ fallback به مقدار هاردکدشده‌ی ربات لایو نداریم تا هیچ‌وقت اشتباهی
-# گزارش‌های بک‌تست به همون چت ربات فعلی نره. اگر ست نشوند، ارسال تلگرام
-# به‌طور امن غیرفعال می‌شود و فقط در فایل/چاپ ذخیره می‌گردد.
 TELEGRAM_BOT_TOKEN = os.getenv("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM")
 TELEGRAM_CHAT_ID = os.getenv("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
 
@@ -58,25 +54,25 @@ if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
     )
 
 # ============================================================
-# ✅ ارزهای اصلی (فقط ۹ ارز)
+# ✅ ارزهای اصلی (فقط ۴ ارز منتخب)
 # ============================================================
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "LTCUSDT", "TRXUSDT",
-    "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT",
+    "ETHUSDT", "LTCUSDT", "XRPUSDT", "BNBUSDT"
 ]
 
-# ✅ تایم‌فریم‌های نهایی
-TIMEFRAMES = ["1", "15", "30", "60"]
+# ✅ تایم‌فریم‌های نهایی (همه حفظ شده‌اند)
+TIMEFRAMES = ["1"]
 
 LEVERAGE_MAP = {
     "BTCUSDT": 150, "ETHUSDT": 50, "LTCUSDT": 75, "TRXUSDT": 75,
     "BNBUSDT": 75, "XRPUSDT": 75, "DOGEUSDT": 75, "ADAUSDT": 75,
+    "DOTUSDT": 50,
 }
 
 TICK_SIZES = {
     "BTCUSDT": 0.1, "ETHUSDT": 0.01, "LTCUSDT": 0.01, "TRXUSDT": 0.00001,
     "BNBUSDT": 0.01, "XRPUSDT": 0.0001, "DOGEUSDT": 0.00001,
-    "ADAUSDT": 0.0001, 
+    "ADAUSDT": 0.0001, "DOTUSDT": 0.001,
 }
 
 HISTORY_BARS = 500
@@ -141,43 +137,23 @@ def get_strategy_inputs(timeframe):
 
 
 # ============================================================
-# 🆕 فیلتر بهینه‌سازی سیگنال (بر اساس تحلیل ۱۹,۳۱۹ معامله‌ی یک‌ساله)
+# 🆕 فیلترهای نهایی (امتیاز + نوع سیگنال)
 # ============================================================
-# HD+ در کلیت -446.34$ (PF=0.927) بوده و در ۳ از ۴ تایم‌فریم و ۷ از ۹ نماد
-# زیان‌ده است → حذف کامل، فارغ از نماد/تایم‌فریم/امتیاز.
-EXCLUDED_SIGNAL_TYPES = {"HD+"}
-
-# ترکیب‌های نماد×سیگنال که با حجم نمونه‌ی معنادار (۱۰۰+ معامله) زیان‌ده بودند.
-# عدد جلوی هرکدام از گزارش تحلیلی است؛ صرفاً برای مستندسازی، در کد استفاده نمی‌شود.
-EXCLUDED_SYMBOL_SIGNAL_COMBOS = {
-    ("DOTUSDT", "CD+"),   # 441 معامله | -115.37$ | PF=0.762
-    ("XRPUSDT", "CD+"),   # 618 معامله | -17.55$  | PF=0.976
-    ("ADAUSDT", "CD-"),   # 422 معامله | -35.17$  | PF=0.924
-    ("TRXUSDT", "CD-"),   # 116 معامله | -21.22$  | PF=0.857
-    ("DOGEUSDT", "HD-"),  # 668 معامله | -37.96$  | PF=0.949
-    ("BTCUSDT", "HD-"),   # 700 معامله | -5.81$   | PF=0.993
-}
-
-
-def is_signal_allowed(symbol, signal_type):
+def is_signal_allowed(symbol, signal_type, score):
     """
-    فیلتر بهینه‌سازی خروجی استراتژی — بر پایه‌ی تحلیل درون‌نمونه‌ای بک‌تست یک‌ساله.
-
-    این تابع روی خروجیِ *پس از* تولید سیگنال توسط موتور اعمال می‌شود؛ منطق
-    داخلی استراتژی (شرایط فیبوناچی، کندل تأییدیه، RSI/MACD/هیستوگرام/روند)
-    دست‌نخورده می‌ماند — طبق دستور، فقط لایه‌ی post-filter اضافه شده است.
-
-    ⚠️ درون‌نمونه‌ای (in-sample): قبل از استفاده‌ی زنده حتماً با forward-test
-    یا تقسیم داده به دو نیمه (نیمه‌ی اول = کشف فیلتر، نیمه‌ی دوم = تایید)
-    validate شود.
+    فیلتر ترکیبی نهایی:
+      1. امتیاز ≥ ۴
+      2. نوع سیگنال منتخب بر اساس ارز
     """
-    if not signal_type:
-        return True  # سیگنال بدون نوع مشخص فیلتر نمی‌شود (نباید عملاً اتفاق بیفتد)
-    if signal_type in EXCLUDED_SIGNAL_TYPES:
+    # فیلتر اول: امتیاز
+    if score < 4:
         return False
-    if (symbol, signal_type) in EXCLUDED_SYMBOL_SIGNAL_COMBOS:
-        return False
-    return True
+    
+    # فیلتر دوم: نوع سیگنال
+    if symbol == "ETHUSDT":
+        return signal_type in ("HD-", "CD+")
+    else:  # BNB, LTC, XRP
+        return signal_type in ("HD-", "CD-")
 
 
 # ============================================================
@@ -301,6 +277,9 @@ except Exception as e:
 
 
 def _local_compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
+    """
+    🔥 نسخه‌ی محلی با R:R = 3 (تارگت = 3 * ریسک)
+    """
     def _v(x):
         return x is not None and not (isinstance(x, float) and math.isnan(x))
     entry = last_values.get("entry")
@@ -323,9 +302,10 @@ def _local_compute_stop_target(candles, signal, last_values, mintick, buffer_tic
         risk = entry - stop
         if risk <= 0:
             return None, None, None, None
+        # 🔥 R:R = 3
         rr = (mid_peak - entry) / risk
-        target = mid_peak if rr >= 2 else entry + 2 * risk
-        return stop, target, max(rr, 2.0), mid_peak
+        target = mid_peak if rr >= 3 else entry + 3 * risk
+        return stop, target, max(rr, 3.0), mid_peak
     elif signal == "SHORT":
         high1 = last_values.get("previous_pivot_high_price")
         high2 = last_values.get("pivot_high_price")
@@ -342,9 +322,10 @@ def _local_compute_stop_target(candles, signal, last_values, mintick, buffer_tic
         risk = stop - entry
         if risk <= 0:
             return None, None, None, None
+        # 🔥 R:R = 3
         rr = (entry - mid_trough) / risk
-        target = mid_trough if rr >= 2 else entry - 2 * risk
-        return stop, target, max(rr, 2.0), mid_trough
+        target = mid_trough if rr >= 3 else entry - 3 * risk
+        return stop, target, max(rr, 3.0), mid_trough
     return None, None, None, None
 
 
@@ -549,10 +530,8 @@ def _tuples_to_candles(tuples):
 def _extract_hit_from_last_values(lv, i):
     """
     استخراج سیگنال از دیکشنری خروجی strategy.py
-    🔥 اصلاح: مستقیماً final_* را چک می‌کند، نه اینکه به کلید "signal" اعتماد کند.
-    این تضمین می‌کند که سیگنال‌های فیلترشده در پاین اسکریپت، در پایتون نیز فیلتر شوند.
+    🔥 اصلاح: مستقیماً final_* را چک می‌کند.
     """
-    # 🔥 ابتدا چک کن که آیا سیگنال نهایی واقعاً فعال است یا نه
     is_final_bullish = lv.get("final_classic_bullish", False) or lv.get("final_hidden_bullish", False)
     is_final_bearish = lv.get("final_classic_bearish", False) or lv.get("final_hidden_bearish", False)
     
@@ -561,7 +540,6 @@ def _extract_hit_from_last_values(lv, i):
     elif is_final_bearish:
         sig = "SHORT"
     else:
-        # هیچ سیگنال نهایی فعال نیست
         return None
     
     entry = _f(lv.get("entry"))
@@ -595,7 +573,6 @@ def run_strategy_pass_fast(candles, symbol, timeframe):
                     continue
                 lv = dict(raw)
                 stats["dicts"] += 1
-                # 🔥 استفاده از تابع اصلاح‌شده
                 hit = _extract_hit_from_last_values(lv, i)
                 if hit is not None:
                     stats["raw"] += 1
@@ -631,7 +608,6 @@ def _run_one_window(candle_tuples, symbol, timeframe, i, history_bars):
             last_values = dict(raw)
     if last_values is None:
         return None
-    # 🔥 استفاده از تابع اصلاح‌شده
     return _extract_hit_from_last_values(last_values, i)
 
 
@@ -805,7 +781,6 @@ def simulate_trade(tr, candles, n, risk_free_fee_usd=0.0):
             pnl = None
             try:
                 _, r = pnl_fn(direction, entry, initial_stop, tr["exit_price"], tr["leverage"])
-                # 🛡️ نرمال‌سازی ریسک: هر R دقیقاً ۲$ — فارغ از اهرم/پهنای استاپ
                 if r is not None:
                     pnl = round(BASE_CAPITAL * r, 4)
             except Exception:
@@ -823,7 +798,7 @@ def simulate_trade(tr, candles, n, risk_free_fee_usd=0.0):
 def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
                     history_bars=HISTORY_BARS, workers=1, risk_free_fee_usd=0.0,
                     progress_cb=None, window_clamp=HISTORY_BARS, verify_sample_n=0,
-                    signal_dump_n=5000, apply_signal_filter=True):
+                    signal_dump_n=5000):
     tf_minutes = int(timeframe)
     warmup_ms = history_bars * tf_minutes * 60_000 + 3 * 86_400_000
     fetch_start = start_ms - warmup_ms
@@ -863,7 +838,7 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
     seen, trades = set(), []
     drop = {
         "out_of_range": 0, "bad_sltp": 0, "dup": 0, "outside_window": 0,
-        "filtered_signal_rule": 0,  # 🆕 حذف‌شده توسط فیلتر بهینه‌سازی (HD+ یا ترکیب زیان‌ده)
+        "filtered_signal_rule": 0,
     }
     raw_stats = {
         "total": len(raw_hits),
@@ -897,10 +872,10 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
                     continue
 
             st = signal_type_of(lv)
+            sc = _score_of(lv, st)
 
-            # 🆕 فیلتر بهینه‌سازی سیگنال — قبل از محاسبه‌ی stop/target (صرفه‌جویی
-            # در محاسبه) اعمال می‌شود، بدون دست‌زدن به منطق داخلی استراتژی.
-            if apply_signal_filter and not is_signal_allowed(symbol, st):
+            # 🔥 فیلترهای نهایی: امتیاز ≥ ۴ + نوع سیگنال منتخب
+            if not is_signal_allowed(symbol, st, sc):
                 drop["filtered_signal_rule"] += 1
                 continue
 
@@ -914,8 +889,6 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
             if stop is None or target is None or abs(entry - stop) <= 0:
                 drop["bad_sltp"] += 1
                 continue
-
-            sc = _score_of(lv, st)
 
             raw_stats["by_signal"][sig] = raw_stats["by_signal"].get(sig, 0) + 1
             raw_stats["by_score"][sc] = raw_stats["by_score"].get(sc, 0) + 1
@@ -946,13 +919,11 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
             logger.warning(f"[BT] {symbol} {timeframe}m bar {i}: {e}")
             continue
 
-    # فایل کامل آخرین N سیگنال
     if signal_dump_n and signal_dump_n > 0:
         dump_path, dump_count = build_signal_dump_file(trades, symbol, timeframe, signal_dump_n)
         diag["signal_dump_path"] = dump_path
         diag["signal_dump_count"] = dump_count
 
-    # نمونه‌گیری کنترلی
     if verify_sample_n and verify_sample_n > 0 and engine == "fast":
         cand_bars = {h[0] for h in raw_hits}
         tuples_all = _candles_to_tuples(candles)
@@ -974,9 +945,8 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
         if found:
             logger.warning(f"[CONTROL] {symbol} {timeframe}m: {found} سیگنال جاافتاده در نمونه‌ی کنترلی")
 
-    # 🆕 آمار دقیق خروج‌ها و R:R بالای 2 برای «خلاصه اجرا»
     rr_above2 = [_f(t.get("rr_planned")) for t in trades
-                 if _f(t.get("rr_planned")) is not None and _f(t.get("rr_planned")) > 2.0]
+                 if _f(t.get("rr_planned")) is not None and _f(t.get("rr_planned")) > 3.0]
     diag["target_hits"] = sum(1 for t in trades if t.get("exit_reason") == "TARGET")
     diag["stop_hits"] = sum(1 for t in trades if t.get("exit_reason") == "STOP_LOSS")
     diag["rf_hits"] = sum(1 for t in trades if t.get("exit_reason") == "RISK_FREE_STOP")
@@ -987,12 +957,11 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
     diag.update(drop)
     diag["trades"] = len(trades)
     diag["engine"] = engine
-    diag["signal_filter_enabled"] = apply_signal_filter
     return trades, n, raw_stats, diag
 
 
 # ============================================================
-# آمار و گزارش
+# آمار و گزارش (بدون تغییر)
 # ============================================================
 def stats_of(trades):
     s = {"total": len(trades)}
@@ -1228,22 +1197,13 @@ def build_methodology_note(meta):
             "  • ⚠️ موتور «پیوسته» بدون فیلتر پنجره — ممکن است سیگنال‌هایی با پیوت خیلی قدیمی بشمارد که لایو نمی‌دید. "
             "فعال‌سازی: --window-clamp 500"
         )
-    # 🆕 وضعیت فیلتر بهینه‌سازی سیگنال
-    if meta.get("signal_filter_enabled", True):
-        total_filtered = sum(c.get("filtered_signal_rule", 0) for c in meta.get("combos", []))
-        lines.append(
-            f"  • 🆕 فیلتر بهینه‌سازی سیگنال: **فعال** — {total_filtered:,} سیگنال حذف شد "
-            f"(کل HD+، به‌علاوه‌ی DOTUSDT/CD+، XRPUSDT/CD+، ADAUSDT/CD-، TRXUSDT/CD-، "
-            f"DOGEUSDT/HD-، BTCUSDT/HD-)."
-        )
-        lines.append(
-            "  • ⚠️ این فیلتر **درون‌نمونه‌ای** (in-sample) است — از همین بازه‌ی زمانی استخراج شده که با آن "
-            "سنجیده شده، پس ریسک overfitting واقعی است. قبل از استفاده‌ی زنده حتماً با forward-test یا "
-            "تقسیم داده به دو نیمه (نیمه‌ی اول = کشف فیلتر، نیمه‌ی دوم = تایید) validate شود. "
-            "برای مقایسه با نسخه‌ی خام: --no-signal-filter"
-        )
-    else:
-        lines.append("  • 🆕 فیلتر بهینه‌سازی سیگنال: **غیرفعال** (--no-signal-filter) — همه‌ی انواع سیگنال محاسبه شده‌اند.")
+    # 🆕 فیلترهای نهایی
+    lines.append(
+        "  • 🆕 فیلترهای نهایی اعمال‌شده:"
+        "  1) امتیاز ≥ ۴ (S4)"
+        "  2) نوع سیگنال: ETH → HD- و CD+ | BNB, LTC, XRP → HD- و CD-"
+        "  3) R:R = 3 (تارگت = ۳ × ریسک)"
+    )
     lines.append(
         f"  • PnL بر مبنای «سرمایه‌ی پایه‌ی ثابت {BASE_CAPITAL:.0f}$» به‌ازای هر معامله (دقیقاً مثل trade_ledger)، "
         f"نه موجودی واقعی حساب — یعنی «کیفیت خالص استراتژی» را می‌سنجد."
@@ -1272,7 +1232,7 @@ def build_overall_report(trades, meta):
     L.append(f"💱 نمادها: {', '.join(meta['symbols'])}")
     L.append(f"🕐 تولید گزارش: {meta['generated_at']} (تهران)")
     L.append(f"⚙️ موتور سیگنال: {meta['engine']} | حالت: {meta.get('engine_mode', 'exact')}")
-    L.append(f"🆕 فیلتر بهینه‌سازی سیگنال: {'فعال ✅' if meta.get('signal_filter_enabled', True) else 'غیرفعال ⭕'}")
+    L.append("🆕 فیلترهای نهایی: امتیاز ≥ ۴ + نوع سیگنال منتخب + R:R=3 ✅")
     L.append(W)
     L.append(f"📈 کل سیگنال‌ها: {st['total']}")
     L.append(f"✅ برنده: {st['wins']}  (🎯 تارگت: {st['tp_wins']} | 🛡️ ریسک‌فری: {st['rf_wins']})")
@@ -1302,7 +1262,6 @@ def build_overall_report(trades, meta):
     L.extend(build_advanced_insights(trades))
     L.extend(build_methodology_note(meta))
 
-    # معاملات برتر/ضعیف
     cs = sorted([t for t in trades if t.get("pnl_usd") is not None], key=lambda t: t["pnl_usd"])
     if cs:
         L.append(W)
@@ -1313,7 +1272,6 @@ def build_overall_report(trades, meta):
         for t in cs[:5]:
             L.append(fmt_trade_line(t))
 
-    # خلاصه اجرا با آمار کامل
     if meta.get("combos"):
         L.append(W)
         L.append("🧮 خلاصه اجرا:")
@@ -1330,10 +1288,9 @@ def build_overall_report(trades, meta):
             if c.get("elapsed_sec") is not None:
                 line += f" | {c['elapsed_sec']:.0f}s"
             line += (f" | 🎯{c.get('target_hits', 0)} ❌{c.get('stop_hits', 0)} 🛡️{c.get('rf_hits', 0)}"
-                     f" | R:R>2: {c.get('rr_above2_count', 0)} (میانگین {c.get('rr_above2_avg', 0):.2f})")
+                     f" | R:R>3: {c.get('rr_above2_count', 0)} (میانگین {c.get('rr_above2_avg', 0):.2f})")
             L.append(line)
 
-        # جمع کل
         _t = sum(c.get("target_hits", 0) for c in meta["combos"])
         _s = sum(c.get("stop_hits", 0) for c in meta["combos"])
         _rf = sum(c.get("rf_hits", 0) for c in meta["combos"])
@@ -1341,7 +1298,7 @@ def build_overall_report(trades, meta):
         _rs = sum(c.get("rr_above2_sum", 0.0) for c in meta["combos"])
         _flt = sum(c.get("filtered_signal_rule", 0) for c in meta["combos"])
         L.append(f"  ➕ مجموع کل: 🎯 تارگت: {_t:,} | ❌ استاپ: {_s:,} | 🛡️ ریسک‌فری: {_rf:,} "
-                 f"| R:R بالای 2: {_rn:,} (میانگین {(_rs / _rn if _rn else 0):.2f}) | 🆕 فیلترشده: {_flt:,}")
+                 f"| R:R بالای 3: {_rn:,} (میانگین {(_rs / _rn if _rn else 0):.2f}) | 🆕 فیلترشده: {_flt:,}")
 
     if meta.get("errors"):
         L.append(W)
@@ -1365,7 +1322,6 @@ def build_combo_report(sym, tf, trades):
     L.append(f"📊 میانگین R: {st['avg_r']:.2f} | 🔥 باخت متوالی: {st['max_consec_loss']} | 📉 افت: {fmt_money(st['max_dd'])}")
     L.append(W)
 
-    # ✅ نمایش همه معاملات بدون محدودیت
     items = sorted(trades, key=lambda t: t["entry_time_ms"])
     L.append("🧾 همه معاملات:")
     for t in items:
@@ -1425,9 +1381,6 @@ def save_report_backup(text):
         logger.error(f"[BACKUP] {e}")
 
 
-# ============================================================
-# 🆕 ارسال همه گزارش‌ها در یک فایل (به‌جای پیام‌های متعدد)
-# ============================================================
 def send_reports(trades, meta, mode, do_send):
     texts = []
     if mode in ("full", "both"):
@@ -1439,10 +1392,8 @@ def send_reports(trades, meta, mode, do_send):
         for (sym, tf) in keys:
             texts.append((f"📋 {sym} {tf}m", build_combo_report(sym, tf, groups.get((sym, tf), []))))
 
-    # همه را در یک فایل جمع‌آوری کن
     full_text = "\n\n" + ("═" * 40) + "\n\n".join(f"{h}\n{b}" for h, b in texts)
 
-    # ذخیره فایل
     report_path = BASE_DIR / f"backtest_full_report_{datetime.now(UTC_TZ).strftime('%Y%m%d_%H%M')}.txt"
     report_path.write_text(full_text, encoding="utf-8")
     logger.info(f"[REPORT] فایل گزارش کامل در {report_path.name} ذخیره شد")
@@ -1453,9 +1404,8 @@ def send_reports(trades, meta, mode, do_send):
         print(full_text)
         return True
 
-    # ارسال یک فایل به تلگرام
     try:
-        return tg_send_document(report_path, caption=f"📊 گزارش کامل بک‌تست ({meta['days']} روز)")
+        return tg_send_document(report_path, caption=f"📊 گزارش کامل بک‌تست ({meta['days']} روز) — فیلترهای نهایی + R:R=3")
     except Exception as e:
         logger.error(f"[SEND] ارسال فایل گزارش ناموفق: {e}")
         return False
@@ -1493,9 +1443,6 @@ def parse_args():
                    help="کارمزد تقریبی (دلار) برای نزدیک‌ترکردن ریسک‌فری به رفتار واقعی صرافی؛ پیش‌فرض ۰")
     p.add_argument("--account-sim", type=float, default=None,
                    help="اگر ست شود، یک شبیه‌سازی تکمیلی با موجودی شروع داده‌شده و فرمول واقعی position-sizing لایو اجرا می‌شود")
-    p.add_argument("--no-signal-filter", action="store_true",
-                   help="🆕 خاموش‌کردن فیلتر بهینه‌سازی سیگنال (پیش‌فرض: فیلتر روشن است — حذف HD+ و "
-                        "۶ ترکیب نماد×سیگنال زیان‌ده). با این فلگ نسخه‌ی خامِ بدون فیلتر اجرا می‌شود.")
     p.add_argument("--force", action="store_true", help="نادیده‌گرفتن قفل روزانه")
     p.add_argument("--resend", action="store_true", help="ارسال مجدد از نتایج ذخیره‌شده")
     p.add_argument("--no-send", action="store_true", help="فقط چاپ/ذخیره، بدون تلگرام")
@@ -1509,7 +1456,6 @@ def main():
     leverage_overrides = _parse_kv_overrides(args.leverage)
     tick_overrides = _parse_kv_overrides(args.tick)
     history_bars = int(args.history_bars)
-    apply_signal_filter = not args.no_signal_filter  # 🆕 پیش‌فرض: روشن
 
     try:
         if args.resend:
@@ -1525,14 +1471,12 @@ def main():
             logger.info(f"گزارش '{args.mode}' امروز ({today_str()}) قبلاً ارسال شده. برای اجرای مجدد: --force")
             return 0
 
-        # اطمینان از حضور صحیح اطلاعات هر نماد
         for sym in symbols:
             if sym not in LEVERAGE_MAP:
                 LEVERAGE_MAP[sym] = 50
             if sym not in TICK_SIZES:
                 TICK_SIZES[sym] = 0.0001
 
-        # اعتبارسنجی زودهنگام تایم‌فریم‌ها
         for tf in tfs:
             try:
                 binance_interval_str(tf)
@@ -1552,7 +1496,6 @@ def main():
             "generated_at": now_iran_str(), "engine": ENGINE_NAME, "engine_mode": args.engine,
             "window_clamp": args.window_clamp,
             "history_bars": history_bars,
-            "signal_filter_enabled": apply_signal_filter,  # 🆕
             "combos": [], "errors": [],
         }
 
@@ -1564,7 +1507,7 @@ def main():
                  f"⚙️ موتور: {args.engine}"
                  + (f" (پنجره {history_bars} کندلی)" if args.engine == "exact"
                     else (f" (پیوسته + فیلتر پنجره {args.window_clamp} کندلی)" if args.window_clamp else " (پیوسته)"))
-                 + f"\n🆕 فیلتر بهینه‌سازی سیگنال: {'فعال (حذف HD+ + ۶ ترکیب زیان‌ده)' if apply_signal_filter else 'غیرفعال (نسخه‌ی خام)'}"
+                 + "\n🆕 فیلترهای نهایی: امتیاز ≥ ۴ + نوع سیگنال منتخب + R:R=3"
                  + "\n⏳ ممکن است زمان‌بر باشد...")
         logger.info(intro.replace("\n", " | "))
         if not args.no_send:
@@ -1597,7 +1540,6 @@ def main():
                         window_clamp=args.window_clamp,
                         verify_sample_n=args.verify_sample,
                         signal_dump_n=args.signal_dump,
-                        apply_signal_filter=apply_signal_filter,  # 🆕
                     )
                     elapsed = time.time() - t0
                     all_trades.extend(trades)
@@ -1609,7 +1551,7 @@ def main():
                         "out_of_range": diag.get("out_of_range", 0),
                         "outside_window": diag.get("outside_window", 0),
                         "bad_sltp": diag.get("bad_sltp", 0),
-                        "filtered_signal_rule": diag.get("filtered_signal_rule", 0),  # 🆕
+                        "filtered_signal_rule": diag.get("filtered_signal_rule", 0),
                         "control_checked": diag.get("control_checked", 0),
                         "control_found": diag.get("control_found", 0),
                         "elapsed_sec": elapsed,
@@ -1637,7 +1579,6 @@ def main():
                 if not args.no_send:
                     tg_send(msg)
 
-        # ارسال فایل کامل سیگنال‌های اخیر هر ترکیب (CSV)
         if args.signal_dump and not args.no_send:
             for c in meta["combos"]:
                 p = c.get("signal_dump_path")
