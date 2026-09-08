@@ -1,10 +1,39 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-backtest_report.py  (نسخه v8 — با قابلیت‌های پیشرفته اعتبارسنجی)
+backtest_report.py  (نسخه v8.1 — با قابلیت‌های پیشرفته اعتبارسنجی + رفع باگ سکوت)
 =======================================
 بک‌تست مستقل استراتژی DTM روی داده‌های واقعی Binance Spot + گزارش کامل و تفکیکی
 به تلگرام (همه در یک فایل).
+
+🆕 v8.1 (این نسخه): رفع مشکل «هیچ گزارشی نمی‌آید»
+  علت اصلی این نبود که منطق محاسبات غلط باشد؛ بلکه ترکیب سه مشکل عملیاتی زیر بود
+  که باعث می‌شد اجرا یا خیلی طولانی و ساکت شود، یا بی‌صدا با قفل متوقف شود، یا
+  ارسال فایل نهایی بی‌صدا شکست بخورد. هیچ‌کدام از این اصلاحات به منطق محاسبهٔ
+  سیگنال، استاپ/تارگت، یا PnL دست نمی‌زند — نتایج دقیقاً همان چیزی می‌ماند که
+  strategy_wrapper و trade_ledger واقعی تولید می‌کنند (نه بدبینانه، نه خوش‌بینانه):
+
+  1) 🆕 هارت‌بیت پیشرفت داخل حلقهٔ اصلی تولید سیگنال (generate_signals_exact) —
+     برای دیتاست‌های بزرگ (مثلاً ۱ سال کندل ۱دقیقه‌ای ≈ ۵۲۵هزار کندل در هر نماد)
+     که پردازش می‌تواند ساعت‌ها طول بکشد، دیگر بین «شروع» و «پایان» سکوت مطلق
+     نیست — هر progress_every کندل یک پیام وضعیت به تلگرام می‌رود.
+  2) 🆕 آزادسازی تضمینی قفل تک‌اجرایی (RUN_LOCK_FILE) در finally — قبلاً این
+     فایل هیچ‌وقت پاک نمی‌شد، پس هر اجرای بعدی (حتی بعد از یک اجرای ناقص/کرش‌شده)
+     بدون --force بی‌صدا با پیام «قفل وجود دارد» متوقف می‌شد.
+  3) 🆕 اطلاع صریح در تلگرام هنگام شکست ارسال فایل گزارش نهایی (مثلاً به‌خاطر
+     محدودیت حجم فایل تلگرام) + بررسی حجم فایل پیش از تلاش برای ارسال، به‌همراه
+     راهنمای استفاده از --resend.
+  4) 🆕 تخمین زمان اجرا اکنون واقعاً به‌عنوان هشدار در ابتدای اجرا نمایش داده
+     می‌شود و اگر بیش از حد طولانی باشد (چند ساعت)، به‌صراحت به کاربر اطلاع
+     داده می‌شود که صبر لازم است — بدون تغییر رفتار محاسباتی.
+
+⚠️ توجه مهم دربارهٔ کارایی: طراحی فعلی الگوریتم به‌ازای *هر* کندل بسته‌شده یک
+   اجرای کامل و مستقل از calculate_signals روی پنجرهٔ HISTORY_BARS کندلی انجام
+   می‌دهد (بازسازی دقیق رفتار لایو). این عمداً دست‌نخورده باقی مانده چون تغییر
+   آن می‌تواند نتیجهٔ محاسبات را عوض کند. برای TF پایین (مثلاً 1 دقیقه) با
+   --days بزرگ، این می‌تواند بسیار کند باشد؛ برای اجرای اول --days را کوچک
+   نگه دارید تا از صحت خروجی مطمئن شوید، سپس برای اجرای کامل صبر کافی بگذارید
+   یا اجرا را در پس‌زمینه (nohup/screen/systemd) اجرا کنید تا قطع نشود.
 
 🆕 v8: اضافه شدن قابلیت‌های پیشرفته از نسخه بازنویسی‌شده:
   • قفل تک‌اجرایی (RUN_LOCK_FILE) — فقط یک‌بار در هر استارت فرآیند
@@ -30,6 +59,7 @@ backtest_report.py  (نسخه v8 — با قابلیت‌های پیشرفته �
     python backtest_report.py --days 365 --signal-dump 5000 --force
     python backtest_report.py --days 365 --robust --force
     python backtest_report.py --days 365 --no-signal-filter --force   # نسخه خام
+    python backtest_report.py --days 30 --tfs 1 --force               # تست سریع اولیه
 """
 
 from __future__ import annotations
@@ -48,7 +78,7 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
-from typing import Optional
+from typing import Optional, Callable
 
 import requests
 import pandas as pd
@@ -72,6 +102,7 @@ BACKTEST_TELEGRAM_BOT_TOKEN = os.getenv("BACKTEST_TELEGRAM_BOT_TOKEN", "86814482
 BACKTEST_TELEGRAM_CHAT_ID = os.getenv("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
 _TELEGRAM_API_BASE = "https://api.telegram.org"
 _TELEGRAM_MSG_LIMIT = 4000
+_TELEGRAM_FILE_LIMIT_BYTES = 45 * 1024 * 1024  # مرز ایمن زیر ۵۰MB واقعی تلگرام
 
 # ============================================================
 # ✅ ارزهای اصلی
@@ -108,6 +139,10 @@ REQUEST_SLEEP = 0.15
 MAX_FETCH_ITER = 20000
 
 GENERIC_FALLBACK_TICK = 0.0001
+
+# 🆕 پیشرفت هر چند کندل به تلگرام گزارش شود + حداقل فاصلهٔ زمانی بین پیام‌های پیشرفت
+PROGRESS_EVERY_BARS = 20000
+PROGRESS_MIN_INTERVAL_SEC = 45.0
 
 # ============================================================
 # 🆕 تنظیمات صریح pivotMode با مقادیر عددی برای هر تایم‌فریم
@@ -291,8 +326,29 @@ def notify_telegram(message: str) -> bool:
 
 
 def notify_telegram_document(file_path, caption: str = "") -> bool:
-    """ارسال فایل به ربات تلگرام مستقل."""
+    """ارسال فایل به ربات تلگرام مستقل.
+
+    🆕 پیش از تلاش برای آپلود، حجم فایل بررسی می‌شود. تلگرام آپلود فایل‌های
+    بزرگ‌تر از حدود ۵۰MB را از طریق Bot API رد می‌کند؛ بدون این چک، شکست
+    به‌صورت کاملاً بی‌صدا رخ می‌داد (فقط لاگ محلی، بدون اطلاع در تلگرام).
+    """
     if not _telegram_configured():
+        return False
+    try:
+        size = Path(file_path).stat().st_size
+    except Exception as e:
+        logger.warning(f"عدم دسترسی به فایل برای ارسال به تلگرام: {e}")
+        return False
+    if size > _TELEGRAM_FILE_LIMIT_BYTES:
+        logger.warning(
+            f"فایل {Path(file_path).name} بیش از حد مجاز تلگرام است "
+            f"({size / (1024*1024):.1f}MB) — ارسال نشد."
+        )
+        notify_telegram(
+            f"⚠️ فایل «{Path(file_path).name}» به‌خاطر حجم زیاد "
+            f"({size / (1024*1024):.1f}MB) به تلگرام ارسال نشد. "
+            f"فایل روی سرور در مسیر زیر باقی مانده:\n{file_path}"
+        )
         return False
     try:
         with open(file_path, "rb") as f:
@@ -300,19 +356,27 @@ def notify_telegram_document(file_path, caption: str = "") -> bool:
                 f"{_TELEGRAM_API_BASE}/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendDocument",
                 data={"chat_id": BACKTEST_TELEGRAM_CHAT_ID, "caption": caption[:1024]},
                 files={"document": (Path(file_path).name, f)},
-                timeout=60,
+                timeout=120,
             )
         if resp.status_code != 200:
-            logger.warning(f"ارسال فایل به تلگرام شکست خورد ({resp.status_code})")
+            logger.warning(f"ارسال فایل به تلگرام شکست خورد ({resp.status_code}): {resp.text[:300]}")
+            notify_telegram(
+                f"⚠️ ارسال فایل «{Path(file_path).name}» به تلگرام شکست خورد "
+                f"(HTTP {resp.status_code}). فایل روی سرور باقی مانده: {file_path}"
+            )
             return False
         return True
     except Exception as e:
         logger.warning(f"ارسال فایل به تلگرام شکست خورد: {e}")
+        notify_telegram(
+            f"⚠️ ارسال فایل «{Path(file_path).name}» به تلگرام با خطا مواجه شد: {e}\n"
+            f"فایل روی سرور باقی مانده: {file_path}"
+        )
         return False
 
 
 # ============================================================
-# 🆕 قفل تک‌اجرایی
+# 🆕 قفل تک‌اجرایی (با آزادسازی تضمینی)
 # ============================================================
 def check_and_create_lock() -> bool:
     if RUN_LOCK_FILE.exists():
@@ -324,6 +388,15 @@ def check_and_create_lock() -> bool:
         return False
     RUN_LOCK_FILE.write_text(datetime.now(UTC_TZ).isoformat(), encoding="utf-8")
     return True
+
+
+def release_lock() -> None:
+    """🆕 آزادسازی قفل تک‌اجرایی. قبلاً این تابع اصلاً وجود نداشت و قفل تا ابد
+    باقی می‌ماند و باعث می‌شد اجراهای بعدی بدون --force بی‌صدا متوقف شوند."""
+    try:
+        RUN_LOCK_FILE.unlink(missing_ok=True)
+    except Exception as e:
+        logger.warning(f"آزادسازی قفل ناموفق بود: {e}")
 
 
 # ============================================================
@@ -728,7 +801,14 @@ def _worker_process_range(pickled_args):
 def generate_signals_exact(df_full: pd.DataFrame, symbol: str, timeframe: str,
                             history_bars: int = HISTORY_BARS,
                             workers: int = 1, keep_log: bool = True,
-                            apply_signal_filter: bool = True) -> list[SignalEvent]:
+                            apply_signal_filter: bool = True,
+                            progress_cb: Optional[Callable[[int, int], None]] = None,
+                            progress_every: int = PROGRESS_EVERY_BARS) -> list[SignalEvent]:
+    """تولید سیگنال‌ها با بازسازی دقیق رفتار لایو (بدون تغییر در منطق محاسبه).
+
+    🆕 progress_cb اختیاری است و فقط برای اطلاع‌رسانی وضعیت اجرا استفاده می‌شود؛
+    هیچ تأثیری روی نتیجهٔ محاسبات ندارد.
+    """
     n = len(df_full)
     if n < 50:
         return []
@@ -741,10 +821,18 @@ def generate_signals_exact(df_full: pd.DataFrame, symbol: str, timeframe: str,
                 hi = min(n, lo + chunk_size)
                 chunks.append((df_full, lo, hi, symbol, timeframe, history_bars, keep_log, apply_signal_filter))
             events: list[SignalEvent] = []
+            completed_chunks = 0
             with ProcessPoolExecutor(max_workers=workers) as ex:
-                futures = [ex.submit(_worker_process_range, c) for c in chunks]
+                futures = {ex.submit(_worker_process_range, c): idx for idx, c in enumerate(chunks)}
                 for fut in as_completed(futures):
                     events.extend(fut.result())
+                    completed_chunks += 1
+                    # 🆕 در حالت موازی، پیشرفت به سطح «چانک» محدود است (نه هر کندل)
+                    if progress_cb:
+                        try:
+                            progress_cb(min(n, completed_chunks * chunk_size), n)
+                        except Exception:
+                            pass
             events.sort(key=lambda e: e.signal_bar_ts_ms)
             return events
         except Exception as e:
@@ -755,6 +843,17 @@ def generate_signals_exact(df_full: pd.DataFrame, symbol: str, timeframe: str,
         ev = _process_single_bar(df_full, i, symbol, timeframe, history_bars, keep_log, apply_signal_filter)
         if ev is not None:
             events.append(ev)
+        # 🆕 هارت‌بیت پیشرفت — فقط اطلاع‌رسانی، بدون اثر روی نتیجه
+        if progress_cb and progress_every > 0 and i > 0 and (i % progress_every == 0):
+            try:
+                progress_cb(i, n)
+            except Exception:
+                pass
+    if progress_cb:
+        try:
+            progress_cb(n, n)
+        except Exception:
+            pass
     return events
 
 
@@ -1560,7 +1659,7 @@ def render_report(args, run_meta: dict, per_symbol_tf: dict, portfolio_metrics: 
         f"- اعلان‌های تلگرام به ربات مستقل ارسال می‌شوند (BACKTEST_TELEGRAM_*)"
     )
     out.append(
-        f"- قفل تک‌اجرایی ({RUN_LOCK_FILE.name}): فقط یک‌بار در هر استارت فرآیند"
+        f"- قفل تک‌اجرایی ({RUN_LOCK_FILE.name}): فقط یک‌بار در هر استارت فرآیند، و در پایان (موفق یا ناموفق) آزاد می‌شود"
     )
     out.append(
         f"- تنظیمات صریح pivotMode: leftBars/rightBars برای هر تایم‌فریم به‌صورت عددی تعیین شده‌اند"
@@ -1601,10 +1700,12 @@ def backtest_combo(symbol, timeframe, start_ms, end_ms,
     idx_from = next((k for k, ts in enumerate(timestamps) if ts >= start_ms), n)
     idx_to = n
 
+    # 🆕 progress_cb اکنون واقعاً به generate_signals_exact پاس داده می‌شود
     events = generate_signals_exact(
         df_full, symbol, timeframe, history_bars,
         workers=workers, keep_log=keep_log,
-        apply_signal_filter=apply_signal_filter
+        apply_signal_filter=apply_signal_filter,
+        progress_cb=progress_cb,
     )
 
     events = [e for e in events if start_ms <= e.signal_bar_ts_ms <= end_ms]
@@ -1687,9 +1788,14 @@ def send_reports(trades, meta, mode, do_send):
         return True
 
     try:
-        return notify_telegram_document(report_path, caption=f"📊 گزارش کامل بک‌تست ({meta['days']} روز)")
+        ok = notify_telegram_document(report_path, caption=f"📊 گزارش کامل بک‌تست ({meta['days']} روز)")
+        # 🆕 notify_telegram_document خودش در صورت شکست پیام هشدار می‌فرستد؛ اینجا فقط لاگ می‌کنیم
+        if not ok:
+            logger.error(f"[SEND] ارسال فایل گزارش نهایی ناموفق بود؛ فایل در {report_path} باقی مانده است.")
+        return ok
     except Exception as e:
         logger.error(f"[SEND] ارسال فایل گزارش ناموفق: {e}")
+        notify_telegram(f"⚠️ ارسال گزارش نهایی با خطا مواجه شد: {e}\nفایل روی سرور باقی مانده: {report_path}")
         return False
 
 
@@ -1759,7 +1865,7 @@ def _build_recent_1m_report(trades, meta):
 # main
 # ============================================================
 def parse_args():
-    p = argparse.ArgumentParser(description="بک‌تست و گزارش استراتژی DTM — نسخه v8 با قابلیت‌های پیشرفته")
+    p = argparse.ArgumentParser(description="بک‌تست و گزارش استراتژی DTM — نسخه v8.1 با قابلیت‌های پیشرفته + رفع باگ سکوت")
     p.add_argument("--days", type=int, default=DAYS_DEFAULT,
                    help="تعداد روزهای بک‌تست (پیش‌فرض ۳۶۵ = ۱ سال)")
     p.add_argument("--symbols", nargs="*", default=SYMBOLS,
@@ -1802,6 +1908,8 @@ def parse_args():
                    help="فعال‌سازی Monte Carlo Permutation Test و Walk-Forward (سنگین)")
     p.add_argument("--min-samples", type=int, default=MIN_SAMPLE_SIZE_DEFAULT,
                    help="حداقل نمونه آماری اجباری برای هر سلول فیلترشونده")
+    p.add_argument("--progress-every", type=int, default=PROGRESS_EVERY_BARS,
+                   help=f"هر چند کندل یک پیام پیشرفت به تلگرام ارسال شود (پیش‌فرض {PROGRESS_EVERY_BARS}، 0 = خاموش)")
     return p.parse_args()
 
 
@@ -1852,32 +1960,60 @@ def load_results():
         return [], {}
 
 
+def _make_progress_callback(symbol: str, tf: str, do_send: bool,
+                             progress_every: int, combo_idx: int, combo_total: int):
+    """🆕 می‌سازد یک progress_cb که پیشرفت پردازش یک ترکیب symbol/tf را با فاصلهٔ
+    زمانی حداقلی (throttle) به تلگرام گزارش می‌دهد — فقط اطلاع‌رسانی، بدون هیچ
+    اثری روی محاسبات یا نتیجهٔ معاملات."""
+    state = {"last_sent": 0.0}
+
+    def _cb(done_bars: int, total_bars: int):
+        if not do_send or progress_every <= 0:
+            return
+        now = time.time()
+        is_final = done_bars >= total_bars
+        if not is_final and (now - state["last_sent"]) < PROGRESS_MIN_INTERVAL_SEC:
+            return
+        state["last_sent"] = now
+        pct = (done_bars / total_bars * 100) if total_bars else 0.0
+        notify_telegram(
+            f"⏳ [{combo_idx}/{combo_total}] {symbol} {tf}m: "
+            f"{done_bars:,}/{total_bars:,} کندل ({pct:.1f}%) پردازش شد..."
+        )
+
+    return _cb
+
+
 def main():
     args = parse_args()
 
-    if not args.force and not args.resend and not check_and_create_lock():
-        notify_telegram("⏭️ بک‌تست اجرا نشد: قفل اجرا وجود دارد. برای اجرای مجدد: --force")
-        return 0
-
-    symbols = [s.upper() for s in args.symbols]
-    tfs = [str(t) for t in args.tfs]
-    leverage_overrides = _parse_kv_overrides(args.leverage)
-    tick_overrides = _parse_kv_overrides(args.tick)
-    history_bars = int(args.history_bars)
-    apply_signal_filter = not args.no_signal_filter
-
-    for sym, val in leverage_overrides.items():
-        LEVERAGE_MAP[sym] = val
-    for sym, val in tick_overrides.items():
-        TICK_SIZES[sym] = val
-        if sym in _sw.SYMBOL_TICK_INFO:
-            _sw.SYMBOL_TICK_INFO[sym]["mintick"] = val
-
+    lock_acquired = False
     try:
+        if not args.force and not args.resend:
+            if not check_and_create_lock():
+                notify_telegram("⏭️ بک‌تست اجرا نشد: قفل اجرا وجود دارد. برای اجرای مجدد: --force")
+                return 0
+            lock_acquired = True
+
+        symbols = [s.upper() for s in args.symbols]
+        tfs = [str(t) for t in args.tfs]
+        leverage_overrides = _parse_kv_overrides(args.leverage)
+        tick_overrides = _parse_kv_overrides(args.tick)
+        history_bars = int(args.history_bars)
+        apply_signal_filter = not args.no_signal_filter
+
+        for sym, val in leverage_overrides.items():
+            LEVERAGE_MAP[sym] = val
+        for sym, val in tick_overrides.items():
+            TICK_SIZES[sym] = val
+            if sym in _sw.SYMBOL_TICK_INFO:
+                _sw.SYMBOL_TICK_INFO[sym]["mintick"] = val
+
         if args.resend:
             trades, meta = load_results()
             if not trades:
                 logger.error("نتایج ذخیره‌شده‌ای پیدا نشد")
+                notify_telegram("❌ برای --resend هیچ نتیجهٔ ذخیره‌شده‌ای پیدا نشد.")
                 return 1
             logger.info(f"Resend از فایل ذخیره‌شده ({len(trades)} معامله)...")
             send_reports(trades, meta, args.mode, do_send=not args.no_send)
@@ -1886,7 +2022,7 @@ def main():
         for tf in tfs:
             try:
                 to_binance_interval(tf)
-            except Exception as e:
+            except Exception:
                 logger.error(f"تایم‌فریم نامعتبر: {tf}")
                 notify_telegram(f"❌ تایم‌فریم نامعتبر: {tf}")
                 return 1
@@ -1925,11 +2061,18 @@ def main():
             notify_telegram(start_msg)
 
         if est_seconds > 0:
+            est_hours = est_seconds / 3600.0
             eta_msg = (
                 f"⏱️ تخمین زمان پایان: "
                 f"{(datetime.now(UTC_TZ) + timedelta(seconds=est_seconds)).astimezone(IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S')} (تهران)\n"
                 f"⚠️ این فقط یک تخمین تقریبی است."
             )
+            if est_hours > 2:
+                eta_msg += (
+                    f"\n⚠️ توجه: این تخمین حدود {est_hours:.1f} ساعت است. در طول اجرا "
+                    f"هر چند دقیقه یک پیام پیشرفت دریافت خواهید کرد؛ اگر پیام پیشرفت طولانی‌مدت "
+                    f"قطع شد، احتمالاً پردازه متوقف شده — لاگ سرور را بررسی کنید."
+                )
             if not args.no_send:
                 notify_telegram(eta_msg)
 
@@ -1951,12 +2094,18 @@ def main():
             for sym in symbols:
                 done += 1
                 t0 = time.time()
+                progress_cb = _make_progress_callback(
+                    sym, tf, do_send=not args.no_send,
+                    progress_every=args.progress_every,
+                    combo_idx=done, combo_total=total,
+                )
                 try:
                     trades, n_bars, events, diag = backtest_combo(
                         sym, tf, start_ms, end_ms,
                         history_bars=history_bars,
                         workers=args.workers,
                         risk_free_fee_usd=args.risk_free_fee_usd,
+                        progress_cb=progress_cb,
                         window_clamp=args.window_clamp,
                         verify_sample_n=args.verify_sample,
                         signal_dump_n=args.signal_dump,
@@ -2012,6 +2161,15 @@ def main():
                     if not args.no_send:
                         notify_telegram(msg)
 
+        if not all_trades and meta["errors"]:
+            # 🆕 اگر هیچ ترکیبی موفق نشد، صریحاً اطلاع بده که گزارشی برای ارسال وجود ندارد
+            notify_telegram(
+                "⚠️ هیچ ترکیب نماد/تایم‌فریمی با موفقیت پردازش نشد؛ گزارشی برای ارسال وجود ندارد.\n"
+                "خطاهای ثبت‌شده:\n" + "\n".join(f"- {e}" for e in meta["errors"][:10])
+            )
+            save_results(all_trades, meta)
+            return 1
+
         portfolio_metrics = compute_portfolio_metrics(all_trades, pd.DataFrame(), start_ms, end_ms)
 
         breakdown = three_dim_breakdown(all_trades, min_samples=args.min_samples)
@@ -2030,16 +2188,24 @@ def main():
 
         sent_ok = send_reports(all_trades, meta, args.mode, do_send=not args.no_send)
 
-        if sent_ok and not args.no_send:
-            final_msg = (
-                f"🏁 بک‌تست تمام شد.\n"
-                f"کل سیگنال: {portfolio_metrics['n_signals_total']} | "
-                f"بسته‌شده: {portfolio_metrics['n_closed']} | "
-                f"Win Rate: {_fmt(portfolio_metrics['win_rate'], 1, '%')} | "
-                f"PnL کل: ${_fmt(portfolio_metrics['total_pnl_usd'], 2)}\n"
-                f"برچسب اعتبار: {portfolio_metrics.get('validity_label', 'N/A')}"
-            )
-            notify_telegram(final_msg)
+        if not args.no_send:
+            if sent_ok:
+                final_msg = (
+                    f"🏁 بک‌تست تمام شد.\n"
+                    f"کل سیگنال: {portfolio_metrics['n_signals_total']} | "
+                    f"بسته‌شده: {portfolio_metrics['n_closed']} | "
+                    f"Win Rate: {_fmt(portfolio_metrics['win_rate'], 1, '%')} | "
+                    f"PnL کل: ${_fmt(portfolio_metrics['total_pnl_usd'], 2)}\n"
+                    f"برچسب اعتبار: {portfolio_metrics.get('validity_label', 'N/A')}"
+                )
+                notify_telegram(final_msg)
+            else:
+                # 🆕 دیگر شکست ارسال گزارش نهایی بی‌صدا نیست
+                notify_telegram(
+                    "⚠️ محاسبات با موفقیت تمام شد ولی ارسال فایل گزارش نهایی به تلگرام شکست خورد.\n"
+                    "نتایج در backtest_results.json ذخیره شده؛ برای تلاش مجدد اجرا کنید:\n"
+                    "python backtest_report.py --resend"
+                )
 
         return 0
 
@@ -2051,6 +2217,11 @@ def main():
         logger.error(err)
         notify_telegram(err)
         return 1
+    finally:
+        # 🆕 قفل همیشه آزاد می‌شود — چه اجرا موفق باشد، چه با خطا/کیبورد-اینتراپت متوقف شود.
+        # قبلاً این finally اصلاً وجود نداشت و RUN_LOCK_FILE برای همیشه باقی می‌ماند.
+        if lock_acquired:
+            release_lock()
 
 
 if __name__ == "__main__":
