@@ -279,32 +279,47 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         def candle_iterator():
             yield from candles
 
-        # ============================================================
-        # 📌 نمایش نسخه اجرایی PyneCore
-        # ============================================================
+
 
         # ============================================================
-        # 📌 نمایش نسخه اجرایی PyneCore (سازگار با همه نسخه‌ها)
+        # 📌 نمایش نسخه نصب شده و اجرایی PyneCore
         # ============================================================
         try:
-            # روش اول: از خود pynecore
-            import pynecore
-            version = getattr(pynecore, '__version__', None)
-            if version:
-                logger.info(f"📌 PyneCore Runtime Version: {version}")
-            else:
-                # روش دوم: از metadata پکیج
-                try:
-                    from importlib.metadata import version as get_version
-                    version = get_version('pynesys-pynecore')
-                    logger.info(f"📌 PyneCore Runtime Version (from metadata): {version}")
-                except Exception:
-                ‌‌    logger.warning("⚠️ Could not detect PyneCore version via metadata")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not detect PyneCore version: {e}")
+            # نسخه اجرایی (اولویت اول)
+            from importlib.metadata import version
+            runtime_version = version("pynesys-pynecore")
+            logger.info(f"📌 PyneCore Runtime Version: {runtime_version}")
+        except Exception:
+            try:
+                # نسخه اجرایی (روش دوم)
+                import pkg_resources
+                runtime_version = pkg_resources.get_distribution("pynesys-pynecore").version
+                logger.info(f"📌 PyneCore Runtime Version: {runtime_version}")
+            except Exception:
+                runtime_version = None
+                logger.warning("⚠️ Could not detect PyneCore runtime version")
+
+        try:
+            # نسخه نصب شده (از pip)
+            import subprocess
+            result = subprocess.run(
+                ["pip", "show", "pynesys-pynecore"],
+                capture_output=True, text=True
+            )
+            for line in result.stdout.split("\n"):
+                if line.startswith("Version:"):
+                    installed_version = line.split(":")[1].strip()
+                    logger.info(f"📦 PyneCore Installed Version: {installed_version}")
+                    break
+        except Exception:
+            installed_version = None
+            logger.warning("⚠️ Could not detect PyneCore installed version")
+
+        # مقایسه و هشدار در صورت مغایرت
+        if runtime_version and installed_version and runtime_version != installed_version:
+            logger.warning(f"⚠️ VERSION MISMATCH! Runtime={runtime_version}, Installed={installed_version}")
 
     
-        
         # ============================================================
         # 🔍 تست pine_range — فقط برای دیباگ
         # ============================================================
