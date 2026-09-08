@@ -77,8 +77,8 @@ _TELEGRAM_MSG_LIMIT = 4000
 # ✅ ارزهای اصلی
 # ============================================================
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "LTCUSDT", "TRXUSDT",
-    "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "DOTUSDT"
+    "BTCUSDT", "ETHUSDT", "LTCUSDT",
+    "BNBUSDT", "XRPUSDT", "DOGEUSDT"
 ]
 
 TIMEFRAMES = ["1", "15", "30", "60"]
