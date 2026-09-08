@@ -34,15 +34,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 # ============================================================
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
-# 🎯 فیلتر ۱ و ۲ (طبق درخواست کاربر):
-#   - فقط BTCUSDT و ETHUSDT معامله شوند.
-#   - فقط تایم‌فریم ۱ دقیقه نگه داشته شود.
-# نمادهای/تایم‌فریم‌های قبلی به صورت کامنت نگه داشته شدند تا در صورت نیاز
-# به‌سادگی قابل بازگردانی باشند.
-# SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT", "PUMPUSDT"]
-# TIMEFRAMES = ["1", "5"]
-SYMBOLS = ["BTCUSDT", "ETHUSDT"]
-TIMEFRAMES = ["1"]
+SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT", "PUMPUSDT"]
+TIMEFRAMES = ["1" , "5"]
 HISTORY_BARS = 500
 
 CHECK_INTERVAL = {
@@ -50,13 +43,9 @@ CHECK_INTERVAL = {
     "5": 300,
 }
 
-# ⚠️ BTCUSDT قبلاً در این نگاشت‌ها وجود نداشت (چون قبلاً معامله نمی‌شد).
-# مقادیر leverage=50 و tick=0.1 مطابق الگوی نمادهای مشابه (مثل ETHUSDT)
-# به عنوان مقدار پیش‌فرض اضافه شدند — در صورت نیاز با مقدار دقیق صرافی
-# جایگزین کنید.
-LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75, "BTCUSDT": 150}
+LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75}
 TARGET_RISK = 2.0
-TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01, "PUMPUSDT": 0.000001, "BTCUSDT": 0.1}
+TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01, "PUMPUSDT": 0.000001}
 
 
 def _precision_from_tick(tick):
@@ -741,7 +730,7 @@ def startup_diagnostic(exchange, public):
     strategy_ok = False
     test_signal = None
     test_entry = None
-    test_symbol = SYMBOLS[0] if SYMBOLS else "BTCUSDT"
+    test_symbol = SYMBOLS[0] if SYMBOLS else "LTCUSDT"
 
     def add(title, ok, details=""):
         status = "✅ ACTIVE" if ok else "❌ FAILED"
@@ -1257,10 +1246,6 @@ def loop():
 
                         # ============================================================
                         # 🆕 بررسی حداقل سرمایه قابل قبول صرافی قبل از ارسال سفارش
-                        # (علت اصلی اینکه ریسک‌فری «اصلاً اجرا نمی‌شد»: تمام سفارش‌ها
-                        # به‌خاطر موجودی/سرمایه‌ی خیلی کم با خطای صرافی
-                        # "Collateral is below the minimum allowed" رد می‌شدند، پس هیچ
-                        # پوزیشنی باز نمی‌شد و ریسک‌فری چیزی برای مانیتور کردن نداشت)
                         # ============================================================
                         if capital < MIN_ORDER_COST_USDT:
                             logger.warning(
@@ -1368,8 +1353,6 @@ def loop():
 
                         # ============================================================
                         # 🛡️ ثبت پندینگ ریسک فری
-                        # 🆕 فقط اگر RISK_FREE_ALL_TIMEFRAMES=1 باشد (همه‌ی تایم‌فریم‌ها)
-                        # یا timeframe فعلی همان RISK_FREE_TIMEFRAME انتخابی باشد.
                         # ============================================================
                         risk_free_tf_allowed = (
                             RISK_FREE_ALL_TIMEFRAMES or str(timeframe) == str(RISK_FREE_TIMEFRAME)
@@ -1463,7 +1446,6 @@ if __name__ == "__main__":
 
     _run_backtest_once()
 
-
     logger.info("DTM WORKER START | HTTP port=%d", port)
 
     try:
@@ -1474,4 +1456,3 @@ if __name__ == "__main__":
         report_thread.join(timeout=3)
         
         logger.info("DTM PROCESS EXIT")
-
