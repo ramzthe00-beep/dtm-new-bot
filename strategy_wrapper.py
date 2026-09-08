@@ -31,16 +31,7 @@ SYMBOL_TICK_INFO = {
     "ETHUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "ETH"},
     "BNBUSDT":  {"mintick": 0.01,    "pricescale": 100,    "basecurrency": "BNB"},
     "PUMPUSDT": {"mintick": 0.00001, "pricescale": 100000, "basecurrency": "PUMP"},
-    "BTCUSDT":  {"mintick": 0.1,     "pricescale": 10,     "basecurrency": "BTC"},
 }
-
-# ============================================================
-# 🎯 فیلتر ۱ و ۲ (طبق درخواست کاربر) — لایه دفاعی دوم
-# فقط این نمادها و این تایم‌فریم اجازه محاسبه سیگنال دارند، حتی اگر
-# calculate_signals از جایی غیر از bot.py با نماد/تایم‌فریم دیگری صدا زده شود.
-# ============================================================
-ALLOWED_SYMBOLS = {"BTCUSDT", "ETHUSDT"}
-ALLOWED_TIMEFRAME = "1"
 
 
 # ============================================================
@@ -173,16 +164,6 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
     import traceback
 
     logger = logging.getLogger("STRATEGY_WRAPPER")
-
-    # 🎯 فیلتر ۱: فقط BTCUSDT و ETHUSDT
-    if symbol.upper() not in ALLOWED_SYMBOLS:
-        logger.info(f"[FILTER] Symbol {symbol} not in ALLOWED_SYMBOLS={ALLOWED_SYMBOLS} — skipped.")
-        return None, None, None, None, None, None
-
-    # 🎯 فیلتر ۲: فقط تایم‌فریم ۱ دقیقه
-    if str(timeframe) != ALLOWED_TIMEFRAME:
-        logger.info(f"[FILTER] Timeframe {timeframe} != {ALLOWED_TIMEFRAME} — skipped.")
-        return None, None, None, None, None, None
 
     try:
         candles = []
@@ -402,21 +383,8 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         entry = None
         
         if isinstance(last_values, dict):
-            # 🔥 مهم: فقط سیگنال‌هایی که final=true هستند را قبول کن
-            is_final_bullish = last_values.get("final_classic_bullish", False) or last_values.get("final_hidden_bullish", False)
-            is_final_bearish = last_values.get("final_classic_bearish", False) or last_values.get("final_hidden_bearish", False)
-            
-            if is_final_bullish:
-                signal = "LONG"
-                entry = last_values.get("entry")
-            elif is_final_bearish:
-                signal = "SHORT"
-                entry = last_values.get("entry")
-            else:
-                # سیگنال توسط فیلترهای پاین رد شده است
-                signal = None
-                entry = None
-                logger.info(f"[FILTER] {symbol}: signal rejected by final filters (final=false)")
+            signal = last_values.get("signal")
+            entry = last_values.get("entry")
         else:
             error_msg = f"""
 ⚠️ WARNING: last_values is not a dictionary
