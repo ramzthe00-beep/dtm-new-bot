@@ -82,9 +82,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BACKTEST")
 
-TELEGRAM_BOT_TOKEN = os.getenv("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM")
-TELEGRAM_CHAT_ID = os.getenv("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
-
 
 # ============================================================================
 # ۱) اتصال زنده به کدهای لایو — «یک کد، دو مصرف‌کننده» (سند، بخش ۲)
@@ -165,25 +162,28 @@ if not LOGIC_SOURCE_OK:
 #    است — همان بتِ تلگرامِ لایو را (از طریقِ مرجعِ اصلیِ ذخیره‌شده) صدا
 #    می‌زند، فقط با پیام‌های سطح‌بالاتر و کم‌تعداد.
 # ============================================================================
+# ============================================================================
+# ============================================================================
+# ۱-الف) اعلانِ تلگرام روی یک رباتِ جداگانه، مخصوصِ بک‌تست
+#    عمداً کاملاً مستقل از _sw._send_telegram (رباتِ لایو) است تا پیام‌های
+#    بک‌تست با پیام‌های سیگنالِ زندهٔ ربات اصلی قاطی نشوند.
+# ============================================================================
+BACKTEST_TELEGRAM_BOT_TOKEN = os.environ.get("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM")
+BACKTEST_TELEGRAM_CHAT_ID = os.environ.get("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
+
+
 def notify_telegram(message: str) -> None:
     """
-    ارسالِ پیامِ وضعیتِ بک‌تست به تلگرام (شروع/پیشرفت/پایان).
-    هرگز نباید کلِ اجرای بک‌تست را متوقف کند — اگر ارسال شکست بخورد، فقط در
-    لاگ ثبت می‌شود، نه یک Exception که کلِ اسکریپت را بترکاند.
+    ارسالِ پیامِ وضعیتِ بک‌تست به یک رباتِ تلگرامِ جداگانه (مستقل از رباتِ
+    لایو). هرگز نباید کلِ اجرای بک‌تست را متوقف کند.
     """
-    if _original_send_telegram is None:
-        logger.warning("تابعِ _send_telegram در strategy_wrapper پیدا نشد؛ اعلانِ تلگرام رد شد.")
+    if not BACKTEST_TELEGRAM_BOT_TOKEN or not BACKTEST_TELEGRAM_CHAT_ID:
+        logger.warning("توکن/چت‌آیدیِ رباتِ بک‌تست تنظیم نشده؛ اعلانِ تلگرام رد شد.")
         return
+    url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        _original_send_telegram(message)
-    except TypeError:
-        # اگر امضای تابع در لایو با آنچه اینجا فرض کردیم فرق داشت (مثلاً
-        # kwarg-only)، یک تلاشِ دوم با message=... انجام می‌دهیم؛ در بدترین
-        # حالت فقط لاگ می‌کنیم، اجرا را متوقف نمی‌کنیم.
-        try:
-            _original_send_telegram(message=message)
-        except Exception as e:
-            logger.warning(f"ارسالِ پیامِ تلگرام شکست خورد: {e}")
+        r = requests.post(url, json={"chat_id": BACKTEST_TELEGRAM_CHAT_ID, "text": message}, timeout=10)
+        r.raise_for_status()
     except Exception as e:
         logger.warning(f"ارسالِ پیامِ تلگرام شکست خورد: {e}")
 
