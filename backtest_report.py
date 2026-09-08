@@ -17,16 +17,17 @@ bot.py تعیین می‌شوند — یعنی bot.py اصلاً import نمی�
 Railway هیچ تأثیری روی این بک‌تست ندارد. برای تغییرشان مستقیماً همان بخش را
 ویرایش کن (یا از --symbols/--timeframes در خط فرمان استفاده کن).
 
-📣 اعلانِ تلگرام (جدید): در ابتدای اجرا یک پیامِ «شروع شد + تخمینِ زمانِ
-پایان» ارسال می‌شود تا مطمئن شویم اسکریپت واقعاً اجرا شده. بعد از تمام‌شدنِ
-بررسیِ کاملِ هر نماد (روی همهٔ تایم‌فریم‌هایش) یک پیامِ خلاصه ارسال می‌شود، و
-در پایان یک پیامِ جمع‌بندیِ نهایی. این پیام‌ها کاملاً مستقل از پیام‌های
-لحظه‌ایِ خودِ calculate_signals هستند (که در بک‌تست عمداً خاموش شده‌اند تا
-اسپم نشود) — جزئیات در بخش ۱-الف.
+📣 اعلانِ تلگرام: تمامِ پیام‌های وضعیتِ این بک‌تست (شروع، تخمینِ زمان، خلاصهٔ
+قابلیت‌ها، پایانِ هر ترکیبِ نماد/تایم‌فریم، پایانِ هر نماد، گزارشِ نهایی) به یک
+رباتِ تلگرامِ کاملاً جدا و مستقل از رباتِ لایو ارسال می‌شوند — از طریقِ
+BACKTEST_TELEGRAM_BOT_TOKEN / BACKTEST_TELEGRAM_CHAT_ID (متغیرِ محیطی). این
+هیچ ربطی به _send_telegram داخلِ strategy_wrapper.py ندارد و پیام‌های لحظه‌ایِ
+خودِ calculate_signals همچنان (طبق قبل) در بک‌تست خاموش نگه داشته می‌شوند تا
+اسپم نشود — جزئیات در بخش ۱-الف.
 
-🔒 قفلِ تک‌اجرایی (جدید): کلِ این بک‌تست فقط یک‌بار در هر «استارتِ» فرآیند
-باید اجرا شود. این با یک فایلِ قفل تضمین می‌شود — جزئیات و ⚠️ محدودیتِ مهمِ
-آن (در برابرِ ری‌استارتِ واقعیِ سرویس/کانتینر محافظت نمی‌کند) در بخش ۱-ب.
+🔒 قفلِ تک‌اجرایی: کلِ این بک‌تست فقط یک‌بار در هر «استارتِ» فرآیند باید اجرا
+شود. این با یک فایلِ قفل تضمین می‌شود — جزئیات و ⚠️ محدودیتِ مهمِ آن (در برابرِ
+ری‌استارتِ واقعیِ سرویس/کانتینر محافظت نمی‌کند) در بخش ۱-ب.
 
 نحوهٔ اجرا (نمونه):
     python backtest_report.py --from 2024-01-01 --to 2025-01-01
@@ -37,6 +38,12 @@ Railway هیچ تأثیری روی این بک‌تست ندارد. برای ت�
 فایل‌های strategy.py / strategy_wrapper.py / trade_ledger.py باید در همان
 پوشه (یا در PYTHONPATH) کنار این فایل باشند — دقیقاً همان منطقی که در Railway
 دیپلوی شده (bot.py خودش لازم نیست، فقط این سه فایل).
+
+متغیرهای محیطیِ لازم برای اعلانِ تلگرام (رباتِ جدید، جدا از رباتِ لایو):
+    BACKTEST_TELEGRAM_BOT_TOKEN   ← توکنِ رباتِ جدید از BotFather
+    BACKTEST_TELEGRAM_CHAT_ID     ← chat_id مقصد (کاربر/گروه/کانال)
+اگر این دو ست نشوند، بک‌تست بدون کرش ادامه می‌یابد؛ فقط یک هشدار در لاگ
+چاپ می‌شود و هیچ پیامی ارسال نمی‌شود.
 """
 
 from __future__ import annotations
@@ -96,7 +103,7 @@ CONST_SOURCE = "دستی — مستقل از bot.py (تعیین‌شده در خ
 # تعیین می‌شوند. هر تغییری در bot.py روی این مقادیر هیچ اثری ندارد.
 # ============================================================================
 SYMBOLS: list[str] = ["BNBUSDT", "ETHUSDT", "SOLUSDT"]          # ← نمادهای موردنظر خودت
-TIMEFRAMES: list[str] = ["1", "5", "15", "60"]                  # ← تایم‌فریم‌ها (دقیقه، رشته)
+TIMEFRAMES: list[str] = ["1"]                  # ← تایم‌فریم‌ها (دقیقه، رشته)
 HISTORY_BARS: int = 500                                         # ← تعداد کندلِ هر پنجره
 
 LEVERAGE_MAP: dict = {"BNBUSDT": 75, "ETHUSDT": 50, "SOLUSDT": 60}
@@ -107,7 +114,7 @@ _BINANCE_BASES = ["https://data-api.binance.vision", "https://api.binance.com"]
 
 LOGIC_SOURCE_OK = True
 _logic_import_error: Optional[str] = None
-_original_send_telegram = None  # پیش از override با no-op، مرجعِ اصلیِ تابعِ ارسالِ تلگرام اینجا نگه داشته می‌شود
+_original_send_telegram = None  # مرجعِ تابعِ ارسالِ تلگرامِ خودِ strategy_wrapper (دیگر برای اعلاناتِ این فایل استفاده نمی‌شود؛ فقط برای رفرنس نگه داشته شده)
 try:
     import strategy_wrapper as _sw  # noqa: E402
     import trade_ledger as _tl  # noqa: E402
@@ -115,11 +122,9 @@ try:
     from trade_ledger import _hypothetical_pnl_usd as ledger_pnl_usd  # noqa: E402
     from trade_ledger import BASE_CAPITAL  # noqa: E402
 
-    # قبل از خاموش‌کردنِ پیام‌های لحظه‌ایِ calculate_signals (خطِ بعدی)، مرجعِ
-    # اصلیِ تابعِ ارسالِ تلگرام را نگه می‌داریم تا برای اعلان‌های سطحِ اجرا
-    # (شروعِ اجرا، پایانِ هر نماد، پایانِ کامل — نه هر سیگنال) از همان بتِ
-    # تلگرام و همان توکن/چت‌آیدیِ پیکربندی‌شدهٔ لایو استفاده کنیم، بدون این‌که
-    # چیزی از منطقِ لایو بازنویسی شود.
+    # مرجعِ اصلیِ تابعِ ارسالِ تلگرامِ لایو را نگه می‌داریم (صرفاً برای رفرنس/دیباگ)،
+    # ولی اعلاناتِ این فایل دیگر از آن استفاده نمی‌کنند — به یک رباتِ کاملاً
+    # جدا و مستقل می‌روند (بخشِ notify_telegram پایین‌تر).
     _original_send_telegram = getattr(_sw, "_send_telegram", None)
 
     # جلوگیری از اسپم تلگرام: strategy_wrapper به‌ازای هر سیگنال/خطا پیام
@@ -157,34 +162,84 @@ if not LOGIC_SOURCE_OK:
 
 
 # ============================================================================
-# ۱-الف) اعلانِ تلگرامِ سطحِ اجرا (شروع / پایانِ هر نماد / پایانِ کامل)
-#    این کاملاً مستقل از سرکوبِ پیام‌های لحظه‌ایِ calculate_signals (بالا)
-#    است — همان بتِ تلگرامِ لایو را (از طریقِ مرجعِ اصلیِ ذخیره‌شده) صدا
-#    می‌زند، فقط با پیام‌های سطح‌بالاتر و کم‌تعداد.
+# ۱-الف) اعلانِ تلگرام — رباتِ کاملاً جدا و مستقل از رباتِ لایو
+#    این تابع دیگر به هیچ‌وجه به _send_telegram داخلِ strategy_wrapper وابسته
+#    نیست (که در بالا هم‌زمان به no-op تبدیل شده تا اسپمِ لحظه‌ایِ سیگنال‌ها
+#    خاموش شود). اینجا مستقیماً با requests به Bot API تلگرام زده می‌شود، با
+#    توکن/چت‌آیدیِ یک رباتِ تازه که فقط برای وضعیتِ بک‌تست استفاده می‌شود.
 # ============================================================================
-# ============================================================================
-# ۱-الف) اعلانِ تلگرام روی یک رباتِ جداگانه، مخصوصِ بک‌تست
-#    عمداً کاملاً مستقل از _sw._send_telegram (رباتِ لایو) است تا پیام‌های
-#    بک‌تست با پیام‌های سیگنالِ زندهٔ ربات اصلی قاطی نشوند.
-# ============================================================================
-BACKTEST_TELEGRAM_BOT_TOKEN = os.environ.get("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM")
-BACKTEST_TELEGRAM_CHAT_ID = os.environ.get("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
+BACKTEST_TELEGRAM_BOT_TOKEN = os.environ.get("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM").strip()
+BACKTEST_TELEGRAM_CHAT_ID = os.environ.get("BACKTEST_TELEGRAM_CHAT_ID", "7402770612").strip()
+_TELEGRAM_API_BASE = "https://api.telegram.org"
+_TELEGRAM_MSG_LIMIT = 4000  # مرزِ ایمن زیرِ سقفِ ۴۰۹۶ کاراکتریِ تلگرام برایِ sendMessage
+_telegram_config_warned = False
 
 
-def notify_telegram(message: str) -> None:
+def _telegram_configured() -> bool:
+    """چک می‌کند که توکن/چت‌آیدیِ رباتِ جدید ست شده‌اند. اگر نه، فقط یک‌بار در
+    کلِ اجرا هشدار می‌دهد (نه به‌ازای هر پیام) تا لاگ شلوغ نشود."""
+    global _telegram_config_warned
+    ok = bool(BACKTEST_TELEGRAM_BOT_TOKEN and BACKTEST_TELEGRAM_CHAT_ID)
+    if not ok and not _telegram_config_warned:
+        logger.warning(
+            "⚠️ BACKTEST_TELEGRAM_BOT_TOKEN و/یا BACKTEST_TELEGRAM_CHAT_ID تنظیم نشده؛ "
+            "هیچ پیامی به تلگرام ارسال نمی‌شود. این دو را به‌عنوانِ متغیرِ محیطی ست کنید "
+            "(BotFather → توکن، @userinfobot یا افزودنِ ربات به گروه/کانال → chat_id)."
+        )
+        _telegram_config_warned = True
+    return ok
+
+
+def notify_telegram(message: str) -> bool:
     """
-    ارسالِ پیامِ وضعیتِ بک‌تست به یک رباتِ تلگرامِ جداگانه (مستقل از رباتِ
-    لایو). هرگز نباید کلِ اجرای بک‌تست را متوقف کند.
+    ارسالِ پیامِ متنیِ وضعیتِ بک‌تست به رباتِ تلگرامِ جدید (شروع/تخمینِ زمان/
+    خلاصهٔ قابلیت‌ها/پایانِ هر نماد-تایم‌فریم/گزارشِ نهایی). کاملاً مستقل از
+    رباتِ لایو است. هرگز نباید کلِ اجرای بک‌تست را متوقف کند — اگر ارسال شکست
+    بخورد، فقط در لاگ ثبت می‌شود، نه یک Exception که کلِ اسکریپت را بترکاند.
+    پیام‌های طولانی‌تر از سقفِ تلگرام به‌صورتِ خودکار تکه‌تکه ارسال می‌شوند.
     """
-    if not BACKTEST_TELEGRAM_BOT_TOKEN or not BACKTEST_TELEGRAM_CHAT_ID:
-        logger.warning("توکن/چت‌آیدیِ رباتِ بک‌تست تنظیم نشده؛ اعلانِ تلگرام رد شد.")
-        return
-    url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendMessage"
+    if not _telegram_configured():
+        return False
+    ok_all = True
+    chunks = [message[i:i + _TELEGRAM_MSG_LIMIT] for i in range(0, len(message), _TELEGRAM_MSG_LIMIT)] or [message]
+    for chunk in chunks:
+        try:
+            resp = requests.post(
+                f"{_TELEGRAM_API_BASE}/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendMessage",
+                data={"chat_id": BACKTEST_TELEGRAM_CHAT_ID, "text": chunk},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                logger.warning(f"ارسالِ پیامِ تلگرام شکست خورد ({resp.status_code}): {resp.text[:300]}")
+                ok_all = False
+        except Exception as e:
+            logger.warning(f"ارسالِ پیامِ تلگرام شکست خورد: {e}")
+            ok_all = False
+    return ok_all
+
+
+def notify_telegram_document(file_path, caption: str = "") -> bool:
+    """
+    ارسالِ یک فایل (txt/xlsx/...) به همان رباتِ تلگرامِ جدید — برای گزارشِ
+    نهاییِ ۷ روزِ اخیرِ تایم‌فریمِ ۱ دقیقه. هرگز اجرای بک‌تست را متوقف نمی‌کند.
+    """
+    if not _telegram_configured():
+        return False
     try:
-        r = requests.post(url, json={"chat_id": BACKTEST_TELEGRAM_CHAT_ID, "text": message}, timeout=10)
-        r.raise_for_status()
+        with open(file_path, "rb") as f:
+            resp = requests.post(
+                f"{_TELEGRAM_API_BASE}/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendDocument",
+                data={"chat_id": BACKTEST_TELEGRAM_CHAT_ID, "caption": caption[:1024]},
+                files={"document": (Path(file_path).name, f)},
+                timeout=60,
+            )
+        if resp.status_code != 200:
+            logger.warning(f"ارسالِ فایل به تلگرام شکست خورد ({resp.status_code}): {resp.text[:300]}")
+            return False
+        return True
     except Exception as e:
-        logger.warning(f"ارسالِ پیامِ تلگرام شکست خورد: {e}")
+        logger.warning(f"ارسالِ فایل به تلگرام شکست خورد: {e}")
+        return False
 
 
 # ============================================================================
@@ -1322,9 +1377,11 @@ def render_report(args, run_meta: dict, per_symbol_tf: dict, portfolio_metrics: 
         "(سند، بخش ۷/۱۱)؛ فقط ۱m→۷روز و ۵m→۲۲روز مستقیماً از کاربر گرفته شده‌اند."
     )
     out.append(
-        "- اعلان‌های تلگرام (شروعِ اجرا با تخمینِ زمانِ پایان، پایانِ بررسیِ کاملِ هر نماد، و "
-        "پایانِ کاملِ بک‌تست) مستقل از پیام‌های لحظه‌ایِ خودِ calculate_signals ارسال می‌شوند (که در "
-        "بک‌تست عمداً خاموش شده‌اند تا اسپم نشود) — از همان بتِ تلگرام/توکنِ پیکربندی‌شدهٔ لایو استفاده می‌کنند."
+        "- اعلان‌های تلگرام (شروعِ اجرا، تخمینِ زمانِ پایان، خلاصهٔ قابلیت‌های همین اجرا، پایانِ هر "
+        "ترکیبِ نماد/تایم‌فریم، پایانِ هر نماد، و گزارشِ نهایی) به یک رباتِ تلگرامِ کاملاً جدا و مستقل "
+        "از رباتِ لایو ارسال می‌شوند (BACKTEST_TELEGRAM_BOT_TOKEN/BACKTEST_TELEGRAM_CHAT_ID) — این "
+        "کاملاً مستقل از پیام‌های لحظه‌ایِ خودِ calculate_signals است (که در بک‌تست عمداً خاموش شده‌اند "
+        "تا اسپم نشود)."
     )
     out.append(
         f"- کلِ این بک‌تست فقط یک‌بار در هر اجرا/استارتِ فرآیند اجرا می‌شود (قفلِ فایلی: "
@@ -1341,6 +1398,29 @@ def render_report(args, run_meta: dict, per_symbol_tf: dict, portfolio_metrics: 
 
     out.append("=" * 78)
     return "\n".join(out)
+
+
+# ============================================================================
+# ۱۳-الف) پیامِ خلاصهٔ قابلیت‌ها/کارهایی که در همین اجرا انجام می‌شود
+#    (داینامیک — بر اساسِ آرگومان‌های واقعیِ همین اجرا، نه یک متنِ ثابت)
+# ============================================================================
+def build_capabilities_message(args, symbols: list[str], timeframes: list[str]) -> str:
+    lines = ["🧩 کارهایی که در این اجرا انجام می‌شود:"]
+    lines.append(f"• موتورِ سیگنال: {'⚠️ fast (تقریبی)' if args.engine == 'fast' else 'exact/event-driven (بازسازیِ دقیقِ لایو)'}")
+    lines.append(f"• نمادها: {', '.join(symbols)}")
+    lines.append(f"• تایم‌فریم‌ها: {', '.join(timeframes)} دقیقه")
+    lines.append(f"• بازهٔ زمانی: {args.date_from} → {args.date_to}")
+    lines.append(f"• تعدادِ پردازه‌های موازی: {args.workers}")
+    lines.append("• حلِ ابهامِ استاپ/تارگتِ هم‌کندل با دادهٔ ۱ دقیقه‌ای: همیشه فعال")
+    lines.append("• شبیه‌سازیِ ریسک‌فری با فرمولِ trade_ledger: همیشه فعال")
+    lines.append(f"• چکِ Determinism: {'فعال' if args.determinism_check else 'غیرفعال'}")
+    lines.append(f"• چکِ خودتشخیصیِ لوک‌اِهد: {'فعال' if args.lookahead_check else 'غیرفعال'}")
+    lines.append(f"• اعتبارسنجیِ سنگین (Monte Carlo + Walk-Forward، --robust): {'فعال' if args.robust else 'غیرفعال'}")
+    lines.append(f"• حداقلِ نمونهٔ آماریِ اجباری برای هر سلولِ فیلترشده: {args.min_samples}")
+    lines.append(f"• ضبطِ لاگِ کاملِ الگوریتمیِ هر سیگنال: {'فعال' if args.keep_log else 'غیرفعال'}")
+    lines.append("• پس از پایان: آمارِ کلیِ سبد + تفکیکِ نماد/تایم‌فریم + تحلیلِ سه‌بعدی + اعتبارسنجیِ نیم‌اول/نیم‌دوم")
+    lines.append("• در پایان: گزارشِ ۷ روزِ اخیرِ تایم‌فریمِ ۱ دقیقه (txt + xlsx) به همین چت ارسال می‌شود.")
+    return "\n".join(lines)
 
 
 # ============================================================================
@@ -1477,6 +1557,8 @@ def main():
     all_trades: list[TradeResult] = []
     per_symbol_tf: dict = {}
     recent_sections: list[str] = []
+    recent_1m_sections: list[str] = []
+    recent_1m_trades: list = []
     robust_extra: dict = {}
     global_start_ms = utc_ms(start_dt)
     global_end_ms = utc_ms(end_dt)
@@ -1489,7 +1571,7 @@ def main():
         logger.warning("⚠️ در حالِ اجرا با --engine fast — نتیجه تقریبی است.")
 
     # ------------------------------------------------------------------
-    # پیامِ شروع + تخمینِ زمانِ پایان — تا مطمئن شویم اجرا واقعاً استارت خورده
+    # اعلاناتِ شروعِ اجرا — سه پیامِ جداگانه به رباتِ جدید (بخش ۱-الف)
     # ------------------------------------------------------------------
     run_start_mono = _time_mod.time()
     try:
@@ -1498,27 +1580,34 @@ def main():
         logger.warning(f"تخمینِ زمانِ اجرا شکست خورد: {e}")
         est_seconds, est_bars = 0.0, 0
 
-    if est_seconds > 0:
-        eta_dt = datetime.now(UTC) + timedelta(seconds=est_seconds)
-        eta_line = (
-            f"⏱️ زمانِ تخمینیِ پایان: {eta_dt.astimezone(IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S')} (تهران)\n"
-            "⚠️ این فقط یک تخمینِ تقریبی بر اساسِ سرعتِ اندازه‌گیری‌شده روی یک نمونهٔ کوچک است؛ "
-            "بسته به شبکه/بارِ سیستم می‌تواند به‌طورِ محسوسی فرق کند."
-        )
-    else:
-        eta_line = "⏱️ زمانِ تخمینیِ پایان: قابلِ محاسبه نبود (به لاگ نگاه کنید)."
-
-    startup_msg = (
+    # پیامِ ۱: شروعِ بک‌تست
+    start_msg = (
         "🚀 بک‌تستِ DTM شروع شد.\n"
         f"بازه: {args.date_from} → {args.date_to}\n"
         f"نمادها: {', '.join(symbols)}\n"
         f"تایم‌فریم‌ها: {', '.join(timeframes)}\n"
-        f"موتور: {'⚠️ fast (تقریبی)' if args.engine == 'fast' else 'exact/event-driven'}\n"
-        f"تخمینِ تعدادِ کندلِ قابلِ پردازش: ~{est_bars:,}\n"
-        f"{eta_line}"
+        f"موتور: {'⚠️ fast (تقریبی)' if args.engine == 'fast' else 'exact/event-driven'}"
     )
-    logger.warning(startup_msg)
-    notify_telegram(startup_msg)
+    logger.warning(start_msg)
+    notify_telegram(start_msg)
+
+    # پیامِ ۲: زمانِ تخمینیِ آماده‌شدنِ گزارش
+    if est_seconds > 0:
+        eta_dt = datetime.now(UTC) + timedelta(seconds=est_seconds)
+        eta_msg = (
+            f"⏱️ تخمینِ زمانِ پایان: {eta_dt.astimezone(IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S')} (تهران)\n"
+            f"تخمینِ تعدادِ کندلِ قابلِ پردازش: ~{est_bars:,}\n"
+            "⚠️ این فقط یک تخمینِ تقریبی بر اساسِ سرعتِ اندازه‌گیری‌شده روی یک نمونهٔ کوچک است."
+        )
+    else:
+        eta_msg = "⏱️ زمانِ تخمینیِ پایان: قابلِ محاسبه نبود (به لاگ نگاه کنید)."
+    logger.warning(eta_msg)
+    notify_telegram(eta_msg)
+
+    # پیامِ ۳: خلاصهٔ داینامیکِ قابلیت‌ها/کارهای همین اجرا
+    capabilities_msg = build_capabilities_message(args, symbols, timeframes)
+    logger.warning(capabilities_msg)
+    notify_telegram(capabilities_msg)
 
     for symbol in symbols:
         symbol_start_mono = _time_mod.time()
@@ -1563,6 +1652,29 @@ def main():
 
             trades_by_bar = {t.event.signal_bar_ts_ms: t for t in trades}
             recent_sections.append(build_recent_signals_section(events, trades_by_bar, tf, recent_anchor_ms))
+
+            # ----------------------------------------------------------------
+            # پیامِ پایانِ این ترکیبِ خاصِ (نماد، تایم‌فریم)
+            # ----------------------------------------------------------------
+            tf_closed = _closed(trades)
+            tf_pnl = sum(t.pnl_usd for t in tf_closed if t.pnl_usd is not None)
+            tf_win_rate = (len([t for t in tf_closed if t.status == "WIN"]) / len(tf_closed) * 100) if tf_closed else None
+            tf_done_msg = (
+                f"☑️ {symbol} | تایم‌فریم {tf} دقیقه تمام شد.\n"
+                f"سیگنال: {len(events)}  |  معاملهٔ بسته‌شده: {len(tf_closed)}  |  "
+                f"Win Rate: {_fmt(tf_win_rate, 1, '%')}  |  PnL: ${_fmt(tf_pnl, 2)}"
+            )
+            logger.warning(tf_done_msg)
+            notify_telegram(tf_done_msg)
+
+            # جمع‌آوریِ دادهٔ تایم‌فریمِ ۱ دقیقه برای گزارشِ نهاییِ ۷روزه (txt+xlsx)
+            if str(tf) == "1":
+                recent_1m_sections.append(build_recent_signals_section(events, trades_by_bar, tf, recent_anchor_ms))
+                _days1m, _ = recent_window_days("1")
+                _cutoff1m_ms = recent_anchor_ms - _days1m * 86400 * 1000
+                for ev in events:
+                    if ev.signal_bar_ts_ms >= _cutoff1m_ms:
+                        recent_1m_trades.append(trades_by_bar.get(ev.signal_bar_ts_ms))
 
             if args.determinism_check:
                 run_meta["determinism"][(symbol, tf)] = determinism_check(df_full, symbol, tf, HISTORY_BARS)
@@ -1614,24 +1726,6 @@ def main():
     print(report_text)
     print(f"\n[گزارش در فایل ذخیره شد: {out_path}]")
 
-    # ارسال فایل گزارش به تلگرام (مثل روش فایل backtest_report-2.py)
-    try:
-        if os.path.exists(out_path):
-            url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendDocument"
-            with open(out_path, "rb") as f:
-                files = {"document": f}
-                data = {
-                    "chat_id": BACKTEST_TELEGRAM_CHAT_ID,
-                    "caption": f"📊 گزارش بک‌تست DTM\nبازه: {args.date_from} → {args.date_to}"
-                }
-                r = requests.post(url, files=files, data=data, timeout=120)
-                if r.status_code == 200:
-                    logger.info(f"[TG] فایل گزارش با موفقیت ارسال شد: {out_path}")
-                else:
-                    logger.warning(f"[TG] ارسال فایل گزارش ناموفق: {r.status_code} - {r.text}")
-    except Exception as e:
-        logger.warning(f"[TG] خطا در ارسال فایل گزارش: {e}")
-
     if args.json_output:
         def _trade_to_dict(t: TradeResult) -> dict:
             d = asdict(t)
@@ -1640,24 +1734,67 @@ def main():
         with open(args.json_output, "w", encoding="utf-8") as f:
             json.dump([_trade_to_dict(t) for t in all_trades], f, ensure_ascii=False, indent=2, default=str)
         print(f"[dumpِ کاملِ JSON معاملات: {args.json_output}]")
-        
-        # ارسال فایل JSON هم به تلگرام (مثل روش فایل backtest_report-2.py)
+
+    # ------------------------------------------------------------------
+    # گزارشِ ۷ روزِ اخیرِ تایم‌فریمِ ۱ دقیقه — txt + xlsx، به رباتِ جدید
+    # ------------------------------------------------------------------
+    if recent_1m_sections:
+        days_1m, confirmed_1m = recent_window_days("1")
+        header = (
+            f"گزارشِ سیگنال‌های {days_1m} روزِ اخیر — تایم‌فریمِ ۱ دقیقه "
+            f"({'✅ بازهٔ تاییدشده' if confirmed_1m else '⚠️ بازهٔ برون‌یابی‌شده'})\n"
+            f"تولیدشده در: {datetime.now(UTC).astimezone(IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S')} (تهران)\n"
+            + "=" * 78 + "\n"
+        )
+        recent_1m_text = header + "\n".join(recent_1m_sections)
+        recent_1m_txt_path = f"recent_7d_1m_report_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.txt"
+        with open(recent_1m_txt_path, "w", encoding="utf-8") as f:
+            f.write(recent_1m_text)
+
+        recent_1m_xlsx_path = None
         try:
-            if os.path.exists(args.json_output):
-                url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendDocument"
-                with open(args.json_output, "rb") as f:
-                    files = {"document": f}
-                    data = {
-                        "chat_id": BACKTEST_TELEGRAM_CHAT_ID,
-                        "caption": f"📈 داده‌های کامل معاملات JSON\nبازه: {args.date_from} → {args.date_to}"
-                    }
-                    r = requests.post(url, files=files, data=data, timeout=120)
-                    if r.status_code == 200:
-                        logger.info(f"[TG] فایل JSON با موفقیت ارسال شد: {args.json_output}")
-                    else:
-                        logger.warning(f"[TG] ارسال فایل JSON ناموفق: {r.status_code} - {r.text}")
+            rows = []
+            for t in recent_1m_trades:
+                if t is None:
+                    continue
+                rows.append({
+                    "symbol": t.event.symbol,
+                    "signal": t.event.signal,
+                    "signal_time_utc": ms_to_dt(t.event.signal_bar_ts_ms),
+                    "entry": t.event.entry,
+                    "stop": t.event.stop,
+                    "target": t.event.target,
+                    "status": t.status,
+                    "exit_reason": t.exit_reason,
+                    "exit_price": t.exit_price,
+                    "exit_time_utc": ms_to_dt(t.exit_time_ms) if t.exit_time_ms else None,
+                    "pnl_usd": t.pnl_usd,
+                    "pnl_r": t.pnl_r,
+                    "resolution_method": t.resolution_method,
+                    "mae_pct": t.mae_pct,
+                    "mfe_pct": t.mfe_pct,
+                    "bars_held": t.bars_held,
+                })
+            if rows:
+                df_recent_1m = pd.DataFrame(rows)
+                recent_1m_xlsx_path = f"recent_7d_1m_report_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.xlsx"
+                df_recent_1m.to_excel(recent_1m_xlsx_path, index=False)
         except Exception as e:
-            logger.warning(f"[TG] خطا در ارسال فایل JSON: {e}")
+            logger.warning(f"ساختِ فایلِ اکسلِ گزارشِ ۷روزهٔ ۱دقیقه‌ای شکست خورد: {e}")
+            recent_1m_xlsx_path = None
+
+        notify_telegram_document(
+            recent_1m_txt_path,
+            caption=f"📄 گزارشِ سیگنال‌های {days_1m} روزِ اخیر — تایم‌فریمِ ۱ دقیقه (txt)",
+        )
+        if recent_1m_xlsx_path:
+            notify_telegram_document(
+                recent_1m_xlsx_path,
+                caption=f"📊 نسخهٔ اکسلِ همان گزارش ({days_1m} روزِ اخیر، ۱ دقیقه)",
+            )
+    else:
+        logger.warning("⚠️ برای گزارشِ ۷روزهٔ تایم‌فریمِ ۱ دقیقه سیگنالی یافت نشد (یا '1' جزوِ --timeframes نبود).")
+        notify_telegram("⚠️ گزارشِ ۷روزهٔ تایم‌فریمِ ۱ دقیقه ساخته نشد: سیگنال/دادهٔ منطبقی پیدا نشد.")
 
     # ------------------------------------------------------------------
     # پیامِ پایانِ کاملِ بک‌تست
@@ -1678,3 +1815,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
