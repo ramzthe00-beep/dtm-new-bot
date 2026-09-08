@@ -280,6 +280,33 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             yield from candles
 
         # ============================================================
+        # 📌 نمایش نسخه اجرایی PyneCore
+        # ============================================================
+        try:
+            # نسخه اجرایی (همون چیزی که واقعاً داره اجرا میشه)
+            import pynecore
+            runtime_version = pynecore.__version__
+            logger.info(f"📌 PyneCore Runtime Version: {runtime_version}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not detect PyneCore runtime version: {e}")
+            runtime_version = None
+
+        try:
+            # نسخه نصب‌شده (چیزی که با pip install شده)
+            import pkg_resources
+            installed_version = pkg_resources.get_distribution('pynesys-pynecore').version
+            logger.info(f"📦 PyneCore Installed Version: {installed_version}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not detect PyneCore installed version: {e}")
+            installed_version = None
+
+        # مقایسه و اخطار در صورت مغایرت
+        if runtime_version and installed_version and runtime_version != installed_version:
+            logger.warning(
+                f"⚠️ VERSION MISMATCH! Runtime={runtime_version}, Installed={installed_version}"
+            )
+    
+        # ============================================================
         # 🔍 تست pine_range — فقط برای دیباگ
         # ============================================================
         try:
