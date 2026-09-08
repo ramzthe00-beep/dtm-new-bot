@@ -77,11 +77,11 @@ _TELEGRAM_MSG_LIMIT = 4000
 # ✅ ارزهای اصلی
 # ============================================================
 SYMBOLS = [
-    "BTCUSDT", "ETHUSDT", "LTCUSDT",
-    "BNBUSDT", "XRPUSDT", "DOGEUSDT"
+    "ETHUSDT",
+    "BNBUSDT"
 ]
 
-TIMEFRAMES = ["1", "15", "30", "60"]
+TIMEFRAMES = ["1"]
 
 LEVERAGE_MAP = {
     "BTCUSDT": 150, "ETHUSDT": 50, "LTCUSDT": 75, "TRXUSDT": 75,
