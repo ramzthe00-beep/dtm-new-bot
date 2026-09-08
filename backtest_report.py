@@ -17,6 +17,17 @@ bot.py تعیین می‌شوند — یعنی bot.py اصلاً import نمی�
 Railway هیچ تأثیری روی این بک‌تست ندارد. برای تغییرشان مستقیماً همان بخش را
 ویرایش کن (یا از --symbols/--timeframes در خط فرمان استفاده کن).
 
+📣 اعلانِ تلگرام (جدید): در ابتدای اجرا یک پیامِ «شروع شد + تخمینِ زمانِ
+پایان» ارسال می‌شود تا مطمئن شویم اسکریپت واقعاً اجرا شده. بعد از تمام‌شدنِ
+بررسیِ کاملِ هر نماد (روی همهٔ تایم‌فریم‌هایش) یک پیامِ خلاصه ارسال می‌شود، و
+در پایان یک پیامِ جمع‌بندیِ نهایی. این پیام‌ها کاملاً مستقل از پیام‌های
+لحظه‌ایِ خودِ calculate_signals هستند (که در بک‌تست عمداً خاموش شده‌اند تا
+اسپم نشود) — جزئیات در بخش ۱-الف.
+
+🔒 قفلِ تک‌اجرایی (جدید): کلِ این بک‌تست فقط یک‌بار در هر «استارتِ» فرآیند
+باید اجرا شود. این با یک فایلِ قفل تضمین می‌شود — جزئیات و ⚠️ محدودیتِ مهمِ
+آن (در برابرِ ری‌استارتِ واقعیِ سرویس/کانتینر محافظت نمی‌کند) در بخش ۱-ب.
+
 نحوهٔ اجرا (نمونه):
     python backtest_report.py --from 2024-01-01 --to 2025-01-01
     python backtest_report.py --symbols BNBUSDT,ETHUSDT --timeframes 1,5
@@ -57,7 +68,6 @@ if str(BASE_DIR) not in sys.path:
 UTC = timezone.utc
 IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 
-
 # ============================================================================
 # بازهٔ زمانیِ پیش‌فرضِ بک‌تست — هر وقت خواستی همین دو رشته را عوض کن
 # (فرمت: "YYYY-MM-DD"). اگر موقع اجرا --from/--to بدهی، همان‌ها اولویت دارند
@@ -71,7 +81,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
 )
 logger = logging.getLogger("BACKTEST")
-
 
 TELEGRAM_BOT_TOKEN = os.getenv("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM")
 TELEGRAM_CHAT_ID = os.getenv("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
@@ -101,12 +110,20 @@ _BINANCE_BASES = ["https://data-api.binance.vision", "https://api.binance.com"]
 
 LOGIC_SOURCE_OK = True
 _logic_import_error: Optional[str] = None
+_original_send_telegram = None  # پیش از override با no-op، مرجعِ اصلیِ تابعِ ارسالِ تلگرام اینجا نگه داشته می‌شود
 try:
     import strategy_wrapper as _sw  # noqa: E402
     import trade_ledger as _tl  # noqa: E402
 
     from trade_ledger import _hypothetical_pnl_usd as ledger_pnl_usd  # noqa: E402
     from trade_ledger import BASE_CAPITAL  # noqa: E402
+
+    # قبل از خاموش‌کردنِ پیام‌های لحظه‌ایِ calculate_signals (خطِ بعدی)، مرجعِ
+    # اصلیِ تابعِ ارسالِ تلگرام را نگه می‌داریم تا برای اعلان‌های سطحِ اجرا
+    # (شروعِ اجرا، پایانِ هر نماد، پایانِ کامل — نه هر سیگنال) از همان بتِ
+    # تلگرام و همان توکن/چت‌آیدیِ پیکربندی‌شدهٔ لایو استفاده کنیم، بدون این‌که
+    # چیزی از منطقِ لایو بازنویسی شود.
+    _original_send_telegram = getattr(_sw, "_send_telegram", None)
 
     # جلوگیری از اسپم تلگرام: strategy_wrapper به‌ازای هر سیگنال/خطا پیام
     # می‌فرستد. در بک‌تست ممکن است هزاران کندل پردازش شود — این باید خاموش شود
@@ -140,6 +157,53 @@ if not LOGIC_SOURCE_OK:
         "(pip install pynecore).\n"
     )
     sys.exit(1)
+
+
+# ============================================================================
+# ۱-الف) اعلانِ تلگرامِ سطحِ اجرا (شروع / پایانِ هر نماد / پایانِ کامل)
+#    این کاملاً مستقل از سرکوبِ پیام‌های لحظه‌ایِ calculate_signals (بالا)
+#    است — همان بتِ تلگرامِ لایو را (از طریقِ مرجعِ اصلیِ ذخیره‌شده) صدا
+#    می‌زند، فقط با پیام‌های سطح‌بالاتر و کم‌تعداد.
+# ============================================================================
+def notify_telegram(message: str) -> None:
+    """
+    ارسالِ پیامِ وضعیتِ بک‌تست به تلگرام (شروع/پیشرفت/پایان).
+    هرگز نباید کلِ اجرای بک‌تست را متوقف کند — اگر ارسال شکست بخورد، فقط در
+    لاگ ثبت می‌شود، نه یک Exception که کلِ اسکریپت را بترکاند.
+    """
+    if _original_send_telegram is None:
+        logger.warning("تابعِ _send_telegram در strategy_wrapper پیدا نشد؛ اعلانِ تلگرام رد شد.")
+        return
+    try:
+        _original_send_telegram(message)
+    except TypeError:
+        # اگر امضای تابع در لایو با آنچه اینجا فرض کردیم فرق داشت (مثلاً
+        # kwarg-only)، یک تلاشِ دوم با message=... انجام می‌دهیم؛ در بدترین
+        # حالت فقط لاگ می‌کنیم، اجرا را متوقف نمی‌کنیم.
+        try:
+            _original_send_telegram(message=message)
+        except Exception as e:
+            logger.warning(f"ارسالِ پیامِ تلگرام شکست خورد: {e}")
+    except Exception as e:
+        logger.warning(f"ارسالِ پیامِ تلگرام شکست خورد: {e}")
+
+
+# ============================================================================
+# ۱-ب) قفلِ تک‌اجراییِ فرآیند
+#    کلِ این بک‌تست باید فقط یک‌بار در هر «استارت» اجرا شود، نه دوباره. این
+#    فایل به‌عنوانِ نشانگرِ «این فرآیند/کانتینر قبلاً یک‌بار بک‌تستِ کامل را
+#    شروع کرده» عمل می‌کند.
+#
+#    ⚠️ محدودیتِ صادقانه (حتماً به آن توجه کن): این قفل صرفاً یک فایل روی
+#    دیسکِ همین کانتینر است. اگر سرویس (مثلاً روی Railway) واقعاً ری‌استارت
+#    شود، یک فرآیند/کانتینرِ *جدید* بالا می‌آید، فایلِ قفل هم به‌طورِ طبیعی از
+#    بین می‌رود (مگر این‌که روی یک volume دائمی mount شده باشد) — یعنی با هر
+#    ری‌استارتِ واقعیِ سرویس، بک‌تست دوباره از اول اجرا خواهد شد. این قفل فقط
+#    جلوی «فراخوانیِ تصادفیِ دوبارهٔ main() در طولِ عمرِ همان یک فرآیند»
+#    (مثلاً به‌خاطرِ باگ یا retry logic) را می‌گیرد، نه جلوی خودِ ری‌استارتِ
+#    سرویس/کانتینر را.
+# ============================================================================
+RUN_LOCK_FILE = BASE_DIR / ".backtest_run.lock"
 
 
 # ============================================================================
@@ -1258,6 +1322,17 @@ def render_report(args, run_meta: dict, per_symbol_tf: dict, portfolio_metrics: 
         f"- جدولِ بازهٔ «سیگنال‌های اخیر» برای تایم‌فریم‌های ≥۱۵ دقیقه برون‌یابی‌شده و باید تایید شود "
         "(سند، بخش ۷/۱۱)؛ فقط ۱m→۷روز و ۵m→۲۲روز مستقیماً از کاربر گرفته شده‌اند."
     )
+    out.append(
+        "- اعلان‌های تلگرام (شروعِ اجرا با تخمینِ زمانِ پایان، پایانِ بررسیِ کاملِ هر نماد، و "
+        "پایانِ کاملِ بک‌تست) مستقل از پیام‌های لحظه‌ایِ خودِ calculate_signals ارسال می‌شوند (که در "
+        "بک‌تست عمداً خاموش شده‌اند تا اسپم نشود) — از همان بتِ تلگرام/توکنِ پیکربندی‌شدهٔ لایو استفاده می‌کنند."
+    )
+    out.append(
+        f"- کلِ این بک‌تست فقط یک‌بار در هر اجرا/استارتِ فرآیند اجرا می‌شود (قفلِ فایلی: "
+        f"{RUN_LOCK_FILE.name}). ⚠️ این قفل فقط در طولِ عمرِ همان فرآیند/کانتینر معتبر است؛ با "
+        "ری‌استارتِ واقعیِ سرویس (کانتینرِ جدید، مثلاً روی Railway) از بین می‌رود و بک‌تست دوباره از "
+        "اول اجرا خواهد شد، مگر این‌که مسیرِ قفل روی یک volume دائمی mount شده باشد."
+    )
     if not args.robust:
         out.append("- Monte Carlo Permutation Test و Walk-Forward اجرا نشدند (پیش‌فرض خاموش؛ با --robust فعال می‌شوند).")
     if args.engine == "fast":
@@ -1310,8 +1385,86 @@ def _fast_engine_placeholder(*a, **kw):
     )
 
 
+def estimate_total_runtime(symbols: list[str], timeframes: list[str],
+                            start_dt: datetime, end_dt: datetime, workers: int) -> tuple[float, int]:
+    """
+    تخمینِ زمانِ کلِ اجرا: به‌جای یک عددِ ثابتِ حدسی، ابتدا تعدادِ کندلِ
+    موردِ انتظار در کلِ بازه/نمادها/تایم‌فریم‌ها را از روی خودِ بازهٔ زمانی
+    محاسبه می‌کند (بدون نیاز به دانلود)، سپس یک کالیبراسیونِ واقعیِ کوچک
+    (پردازشِ چند ده کندلِ اولِ اولین ترکیبِ نماد/تایم‌فریم، تک‌پردازه‌ای) انجام
+    می‌دهد تا سرعتِ واقعیِ همین سیستم را اندازه بگیرد و آن را تعمیم دهد.
+
+    ⚠️ این فقط یک تخمین است، نه تضمین — صرفاً برای اطلاع‌رسانیِ اولیه در
+    پیامِ تلگرام و لاگ، نه برای برنامه‌ریزیِ دقیق.
+    برمی‌گرداند: (ثانیهٔ تخمینی, تعدادِ کندلِ تخمینی)
+    """
+    total_bars_est = 0
+    minutes_span = (end_dt - start_dt).total_seconds() / 60.0
+    for tf in timeframes:
+        try:
+            tf_min = int(tf)
+        except Exception:
+            tf_min = 1
+        total_bars_est += int(minutes_span / max(tf_min, 1)) * len(symbols)
+
+    if not symbols or not timeframes or total_bars_est <= 0:
+        return 0.0, 0
+
+    calib_symbol, calib_tf = symbols[0], timeframes[0]
+    calib_bars_target = 40
+    sec_per_bar_single_core = 0.05  # حدسِ محافظه‌کارانهٔ fallback اگر کالیبراسیون شکست بخورد
+
+    try:
+        calib_tf_min = int(calib_tf)
+        calib_fetch_start = start_dt - timedelta(minutes=calib_tf_min * (HISTORY_BARS + calib_bars_target) * 1.2 + 60)
+        calib_fetch_end = start_dt + timedelta(minutes=calib_tf_min * calib_bars_target)
+        df_calib = fetch_full_history(calib_symbol, calib_tf, calib_fetch_start, calib_fetch_end)
+        if df_calib.empty or len(df_calib) < 60:
+            raise ValueError("دادهٔ کالیبراسیون ناکافی بود.")
+        n_calib = min(calib_bars_target, len(df_calib) - 50)
+        n_calib = max(n_calib, 5)
+        t0 = _time_mod.time()
+        # کالیبراسیون عمداً تک‌پردازه‌ای (workers=1) تا سرعتِ خالصِ محاسبه‌ی
+        # هر کندل روی یک هسته اندازه‌گیری شود؛ سپس با فرضِ speedupِ نزدیک‌به‌
+        # خطیِ workerها (با ضریبِ کاراییِ محافظه‌کارانهٔ ۰.۸) تعمیم داده می‌شود.
+        _ = generate_signals_exact(df_calib.iloc[-(n_calib + 50):], calib_symbol, calib_tf,
+                                    HISTORY_BARS, workers=1, keep_log=False)
+        elapsed = _time_mod.time() - t0
+        sec_per_bar_single_core = elapsed / max(n_calib, 1)
+    except Exception as e:
+        logger.warning(f"کالیبراسیونِ تخمینِ زمان شکست خورد ({e})؛ از یک تخمینِ خیلی تقریبی استفاده می‌شود.")
+
+    effective_workers = max(1, workers)
+    est_seconds = (total_bars_est * sec_per_bar_single_core) / (effective_workers * 0.8)
+    # به‌علاوهٔ سربارِ تقریبیِ دانلودِ دادهٔ تاریخی برای هر ترکیبِ نماد/تایم‌فریم
+    est_seconds += len(symbols) * len(timeframes) * 15.0
+    return max(0.0, est_seconds), total_bars_est
+
+
 def main():
     args = parse_args()
+
+    # ------------------------------------------------------------------
+    # قفلِ تک‌اجرایی (بخش ۱-ب): کلِ بک‌تست باید فقط یک‌بار در طولِ عمرِ همین
+    # فرآیند/کانتینر اجرا شود. اگر قفل از قبل وجود دارد، فقط یک پیامِ کوتاه
+    # می‌دهیم و خارج می‌شویم — بدون هیچ محاسبهٔ سنگینی.
+    # ------------------------------------------------------------------
+    if RUN_LOCK_FILE.exists():
+        try:
+            prev_ts = RUN_LOCK_FILE.read_text(encoding="utf-8").strip()
+        except Exception:
+            prev_ts = "نامشخص"
+        skip_msg = (
+            "⏭️ بک‌تست اجرا نشد: طبقِ قفلِ اجرا، این فرآیند/کانتینر قبلاً یک‌بار بک‌تست را "
+            f"شروع کرده (زمانِ شروعِ اجرایِ قبلی: {prev_ts}).\n"
+            f"برای اجرای دوباره در همین کانتینر، فایلِ قفل ({RUN_LOCK_FILE}) را دستی حذف کنید."
+        )
+        logger.warning(skip_msg)
+        notify_telegram(skip_msg)
+        print(skip_msg)
+        return
+    RUN_LOCK_FILE.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+
     start_dt = datetime.strptime(args.date_from, "%Y-%m-%d").replace(tzinfo=UTC)
     end_dt = datetime.strptime(args.date_to, "%Y-%m-%d").replace(tzinfo=UTC)
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
@@ -1336,7 +1489,43 @@ def main():
     if args.engine == "fast":
         logger.warning("⚠️ در حالِ اجرا با --engine fast — نتیجه تقریبی است.")
 
+    # ------------------------------------------------------------------
+    # پیامِ شروع + تخمینِ زمانِ پایان — تا مطمئن شویم اجرا واقعاً استارت خورده
+    # ------------------------------------------------------------------
+    run_start_mono = _time_mod.time()
+    try:
+        est_seconds, est_bars = estimate_total_runtime(symbols, timeframes, start_dt, end_dt, args.workers)
+    except Exception as e:
+        logger.warning(f"تخمینِ زمانِ اجرا شکست خورد: {e}")
+        est_seconds, est_bars = 0.0, 0
+
+    if est_seconds > 0:
+        eta_dt = datetime.now(UTC) + timedelta(seconds=est_seconds)
+        eta_line = (
+            f"⏱️ زمانِ تخمینیِ پایان: {eta_dt.astimezone(IRAN_TZ).strftime('%Y-%m-%d %H:%M:%S')} (تهران)\n"
+            "⚠️ این فقط یک تخمینِ تقریبی بر اساسِ سرعتِ اندازه‌گیری‌شده روی یک نمونهٔ کوچک است؛ "
+            "بسته به شبکه/بارِ سیستم می‌تواند به‌طورِ محسوسی فرق کند."
+        )
+    else:
+        eta_line = "⏱️ زمانِ تخمینیِ پایان: قابلِ محاسبه نبود (به لاگ نگاه کنید)."
+
+    startup_msg = (
+        "🚀 بک‌تستِ DTM شروع شد.\n"
+        f"بازه: {args.date_from} → {args.date_to}\n"
+        f"نمادها: {', '.join(symbols)}\n"
+        f"تایم‌فریم‌ها: {', '.join(timeframes)}\n"
+        f"موتور: {'⚠️ fast (تقریبی)' if args.engine == 'fast' else 'exact/event-driven'}\n"
+        f"تخمینِ تعدادِ کندلِ قابلِ پردازش: ~{est_bars:,}\n"
+        f"{eta_line}"
+    )
+    logger.warning(startup_msg)
+    notify_telegram(startup_msg)
+
     for symbol in symbols:
+        symbol_start_mono = _time_mod.time()
+        symbol_trades: list[TradeResult] = []
+        symbol_n_events = 0
+
         for tf in timeframes:
             logger.warning(f"[{symbol} {tf}m] دریافتِ دادهٔ تاریخی از بایننس...")
             # کمی حاشیه به عقب برای این‌که اولین کندلِ واقعیِ بازه هم history_bars کاملِ خودش را داشته باشد
@@ -1367,6 +1556,8 @@ def main():
             ts_to_idx = {int(ts.timestamp() * 1000): i for i, ts in enumerate(df_full.index)}
             trades = [resolve_trade(ev, df_full, ts_to_idx) for ev in events]
             all_trades.extend(trades)
+            symbol_trades.extend(trades)
+            symbol_n_events += len(events)
 
             sub_metrics = compute_portfolio_metrics(trades, df_full, global_start_ms, global_end_ms)
             per_symbol_tf[(symbol, tf)] = sub_metrics
@@ -1384,6 +1575,23 @@ def main():
                 robust_extra.setdefault("walk_forward", {})[(symbol, tf)] = walk_forward_validation(
                     df_full, symbol, tf, HISTORY_BARS, args.workers
                 )
+
+        # ----------------------------------------------------------------
+        # پیامِ پایانِ بررسیِ کاملِ این نماد (روی همهٔ تایم‌فریم‌هایش)
+        # ----------------------------------------------------------------
+        symbol_elapsed_min = (_time_mod.time() - symbol_start_mono) / 60.0
+        symbol_closed = _closed(symbol_trades)
+        symbol_pnl = sum(t.pnl_usd for t in symbol_closed if t.pnl_usd is not None)
+        symbol_wins = len([t for t in symbol_closed if t.status == "WIN"])
+        symbol_win_rate = (symbol_wins / len(symbol_closed) * 100) if symbol_closed else None
+        symbol_done_msg = (
+            f"✅ بررسیِ {symbol} روی تایم‌فریم‌های [{', '.join(timeframes)}] تمام شد "
+            f"({symbol_elapsed_min:.1f} دقیقه طول کشید).\n"
+            f"سیگنال: {symbol_n_events}  |  معاملهٔ بسته‌شده: {len(symbol_closed)}  |  "
+            f"Win Rate: {_fmt(symbol_win_rate, 1, '%')}  |  PnL: ${_fmt(symbol_pnl, 2)}"
+        )
+        logger.warning(symbol_done_msg)
+        notify_telegram(symbol_done_msg)
 
     if args.robust:
         robust_extra["monte_carlo"] = monte_carlo_permutation_test(all_trades)
@@ -1416,7 +1624,22 @@ def main():
             json.dump([_trade_to_dict(t) for t in all_trades], f, ensure_ascii=False, indent=2, default=str)
         print(f"[dumpِ کاملِ JSON معاملات: {args.json_output}]")
 
+    # ------------------------------------------------------------------
+    # پیامِ پایانِ کاملِ بک‌تست
+    # ------------------------------------------------------------------
+    total_elapsed_min = (_time_mod.time() - run_start_mono) / 60.0
+    final_msg = (
+        "🏁 بک‌تست به‌طورِ کامل تمام شد.\n"
+        f"مدتِ کلِ اجرا: {total_elapsed_min:.1f} دقیقه\n"
+        f"کل سیگنال: {portfolio_metrics['n_signals_total']}  |  بسته‌شده: {portfolio_metrics['n_closed']}\n"
+        f"Win Rate: {_fmt(portfolio_metrics['win_rate'], 1, '%')}  |  "
+        f"PnL کل: ${_fmt(portfolio_metrics['total_pnl_usd'], 2)}\n"
+        f"برچسبِ اعتبار: {portfolio_metrics.get('validity_label')}\n"
+        f"فایلِ گزارش: {out_path}"
+    )
+    logger.warning(final_msg)
+    notify_telegram(final_msg)
+
 
 if __name__ == "__main__":
     main()
-
