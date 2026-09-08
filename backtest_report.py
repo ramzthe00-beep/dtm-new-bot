@@ -157,6 +157,12 @@ if not LOGIC_SOURCE_OK:
 
 
 # ============================================================================
+# ۱-الف) اعلانِ تلگرامِ سطحِ اجرا (شروع / پایانِ هر نماد / پایانِ کامل)
+#    این کاملاً مستقل از سرکوبِ پیام‌های لحظه‌ایِ calculate_signals (بالا)
+#    است — همان بتِ تلگرامِ لایو را (از طریقِ مرجعِ اصلیِ ذخیره‌شده) صدا
+#    می‌زند، فقط با پیام‌های سطح‌بالاتر و کم‌تعداد.
+# ============================================================================
+# ============================================================================
 # ۱-الف) اعلانِ تلگرام روی یک رباتِ جداگانه، مخصوصِ بک‌تست
 #    عمداً کاملاً مستقل از _sw._send_telegram (رباتِ لایو) است تا پیام‌های
 #    بک‌تست با پیام‌های سیگنالِ زندهٔ ربات اصلی قاطی نشوند.
@@ -165,66 +171,20 @@ BACKTEST_TELEGRAM_BOT_TOKEN = os.environ.get("BACKTEST_TELEGRAM_BOT_TOKEN", "868
 BACKTEST_TELEGRAM_CHAT_ID = os.environ.get("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
 
 
-def send_telegram_message(message: str) -> bool:
-    """
-    ارسال پیام ساده به تلگرام
-    برمی‌گرداند: True اگر موفق بود، False اگر ناموفق بود
-    """
-    if not BACKTEST_TELEGRAM_BOT_TOKEN or not BACKTEST_TELEGRAM_CHAT_ID:
-        logger.warning("توکن/چت‌آیدیِ رباتِ بک‌تست تنظیم نشده")
-        return False
-    
-    url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendMessage"
-    try:
-        r = requests.post(url, json={
-            "chat_id": BACKTEST_TELEGRAM_CHAT_ID, 
-            "text": message,
-            "parse_mode": "HTML"
-        }, timeout=30)
-        r.raise_for_status()
-        logger.info(f"✅ پیام به تلگرام ارسال شد: {message[:50]}...")
-        return True
-    except Exception as e:
-        logger.warning(f"❌ ارسال پیام به تلگرام شکست خورد: {e}")
-        return False
-
-
-def send_telegram_file(file_path: str, caption: str = "") -> bool:
-    """
-    ارسال فایل به تلگرام
-    برمی‌گرداند: True اگر موفق بود، False اگر ناموفق بود
-    """
-    if not BACKTEST_TELEGRAM_BOT_TOKEN or not BACKTEST_TELEGRAM_CHAT_ID:
-        logger.warning("توکن/چت‌آیدیِ رباتِ بک‌تست تنظیم نشده")
-        return False
-    
-    if not os.path.exists(file_path):
-        logger.warning(f"فایل {file_path} وجود ندارد")
-        return False
-    
-    url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendDocument"
-    try:
-        with open(file_path, 'rb') as f:
-            files = {'document': f}
-            data = {'chat_id': BACKTEST_TELEGRAM_CHAT_ID}
-            if caption:
-                data['caption'] = caption
-            r = requests.post(url, files=files, data=data, timeout=60)
-            r.raise_for_status()
-            logger.info(f"✅ فایل {os.path.basename(file_path)} به تلگرام ارسال شد")
-            return True
-    except Exception as e:
-        logger.warning(f"❌ ارسال فایل به تلگرام شکست خورد: {e}")
-        return False
-
-
 def notify_telegram(message: str) -> None:
     """
-    ارسالِ پیامِ وضعیتِ بک‌تست به تلگرام (شروع/پیشرفت/پایان).
-    هرگز نباید کلِ اجرای بک‌تست را متوقف کند — اگر ارسال شکست بخورد، فقط در
-    لاگ ثبت می‌شود، نه یک Exception که کلِ اسکریپت را بترکاند.
+    ارسالِ پیامِ وضعیتِ بک‌تست به یک رباتِ تلگرامِ جداگانه (مستقل از رباتِ
+    لایو). هرگز نباید کلِ اجرای بک‌تست را متوقف کند.
     """
-    send_telegram_message(message)
+    if not BACKTEST_TELEGRAM_BOT_TOKEN or not BACKTEST_TELEGRAM_CHAT_ID:
+        logger.warning("توکن/چت‌آیدیِ رباتِ بک‌تست تنظیم نشده؛ اعلانِ تلگرام رد شد.")
+        return
+    url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendMessage"
+    try:
+        r = requests.post(url, json={"chat_id": BACKTEST_TELEGRAM_CHAT_ID, "text": message}, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        logger.warning(f"ارسالِ پیامِ تلگرام شکست خورد: {e}")
 
 
 # ============================================================================
@@ -1654,8 +1614,23 @@ def main():
     print(report_text)
     print(f"\n[گزارش در فایل ذخیره شد: {out_path}]")
 
-    # ارسال فایل گزارش به تلگرام
-    send_telegram_file(out_path, f"📊 گزارش بک‌تست DTM\nبازه: {args.date_from} → {args.date_to}")
+    # ارسال فایل گزارش به تلگرام (مثل روش فایل backtest_report-2.py)
+    try:
+        if os.path.exists(out_path):
+            url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendDocument"
+            with open(out_path, "rb") as f:
+                files = {"document": f}
+                data = {
+                    "chat_id": BACKTEST_TELEGRAM_CHAT_ID,
+                    "caption": f"📊 گزارش بک‌تست DTM\nبازه: {args.date_from} → {args.date_to}"
+                }
+                r = requests.post(url, files=files, data=data, timeout=120)
+                if r.status_code == 200:
+                    logger.info(f"[TG] فایل گزارش با موفقیت ارسال شد: {out_path}")
+                else:
+                    logger.warning(f"[TG] ارسال فایل گزارش ناموفق: {r.status_code} - {r.text}")
+    except Exception as e:
+        logger.warning(f"[TG] خطا در ارسال فایل گزارش: {e}")
 
     if args.json_output:
         def _trade_to_dict(t: TradeResult) -> dict:
@@ -1665,8 +1640,24 @@ def main():
         with open(args.json_output, "w", encoding="utf-8") as f:
             json.dump([_trade_to_dict(t) for t in all_trades], f, ensure_ascii=False, indent=2, default=str)
         print(f"[dumpِ کاملِ JSON معاملات: {args.json_output}]")
-        # ارسال فایل JSON هم به تلگرام
-        send_telegram_file(args.json_output, f"📈 داده‌های کامل معاملات JSON\nبازه: {args.date_from} → {args.date_to}")
+        
+        # ارسال فایل JSON هم به تلگرام (مثل روش فایل backtest_report-2.py)
+        try:
+            if os.path.exists(args.json_output):
+                url = f"https://api.telegram.org/bot{BACKTEST_TELEGRAM_BOT_TOKEN}/sendDocument"
+                with open(args.json_output, "rb") as f:
+                    files = {"document": f}
+                    data = {
+                        "chat_id": BACKTEST_TELEGRAM_CHAT_ID,
+                        "caption": f"📈 داده‌های کامل معاملات JSON\nبازه: {args.date_from} → {args.date_to}"
+                    }
+                    r = requests.post(url, files=files, data=data, timeout=120)
+                    if r.status_code == 200:
+                        logger.info(f"[TG] فایل JSON با موفقیت ارسال شد: {args.json_output}")
+                    else:
+                        logger.warning(f"[TG] ارسال فایل JSON ناموفق: {r.status_code} - {r.text}")
+        except Exception as e:
+            logger.warning(f"[TG] خطا در ارسال فایل JSON: {e}")
 
     # ------------------------------------------------------------------
     # پیامِ پایانِ کاملِ بک‌تست
