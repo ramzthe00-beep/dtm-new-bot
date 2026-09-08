@@ -77,11 +77,11 @@ def main(
     macdLineAtPivotLow = ta.valuewhen(not na(pivotLowPrice), macdLine[rightBars], 0)
     histAtPivotHigh = ta.valuewhen(not na(pivotHighPrice), histLine[rightBars], 0)
     histAtPivotLow = ta.valuewhen(not na(pivotLowPrice), histLine[rightBars], 0)
-
+     
     ph_price_2: Persistent[float] = na(float)
     ph_price_1: Persistent[float] = na(float)
-    ph_bar_2: Persistent[int] = na(int)
-    ph_bar_1: Persistent[int] = na(int)
+    ph_bar_2: Persistent[float] = na(float)
+    ph_bar_1: Persistent[float] = na(float)
     ph_rsi_2: Persistent[float] = na(float)
     ph_rsi_1: Persistent[float] = na(float)
     ph_macdline_2: Persistent[float] = na(float)
@@ -92,8 +92,8 @@ def main(
 
     pl_price_2: Persistent[float] = na(float)
     pl_price_1: Persistent[float] = na(float)
-    pl_bar_2: Persistent[int] = na(int)
-    pl_bar_1: Persistent[int] = na(int)
+    pl_bar_2: Persistent[float] = na(float)
+    pl_bar_1: Persistent[float] = na(float)
     pl_rsi_2: Persistent[float] = na(float)
     pl_rsi_1: Persistent[float] = na(float)
     pl_macdline_2: Persistent[float] = na(float)
