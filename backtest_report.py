@@ -1,1678 +1,1422 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-backtest_report.py  (نسخه v8 — با اصلاح فیلتر final_*)
-=======================================
-بک‌تست مستقل استراتژی DTM روی داده‌های واقعی Binance Spot + گزارش کامل و تفکیکی
-به تلگرام (همه در یک فایل).
+backtest_report.py
+===================
+بک‌تستِ «exact / event-driven» استراتژیِ DTM — دقیقاً بر پایهٔ همان کدی که در
+لایو سیگنال می‌سازد (strategy_wrapper.calculate_signals → strategy.py از طریق
+PyneCore ScriptRunner، و trade_ledger برای فرمول PnL) اجرا می‌شود.
 
-🆕 v8: اصلاح تابع _extract_hit_from_last_values برای چک کردن مستقیم final_*
-  • دیگر به کلید "signal" در خروجی strategy.py اعتماد نمی‌شود
-  • مستقیماً final_classic_bullish, final_hidden_bullish, final_classic_bearish, final_hidden_bearish چک می‌شوند
-  • این اصلاح تضمین می‌کند که سیگنال‌های فیلترشده در پاین اسکریپت، در پایتون نیز فیلتر شوند
-  • تطابق با پاین‌لاگ به ۱۰۰٪ می‌رسد
+طبق سند طراحی (بخش ۲ — «یک کد، دو مصرف‌کننده»): این فایل هیچ منطق تصمیم‌گیریِ
+مستقلی ندارد. سیگنال، استاپ/تارگت، و فرمول PnL همگی import مستقیم از
+strategy_wrapper.py / trade_ledger.py هستند؛ چیزی کپی/بازنویسی نشده. اگر فردا
+در آن فایل‌ها چیزی عوض شود، این بک‌تست خودکار هماهنگ می‌شود.
 
-اجرا:
-    python backtest_report.py --days 365 --signal-dump 5000 --force
-    python backtest_report.py --days 365 --no-signal-filter --force   # نسخه‌ی خام برای مقایسه
+⚠️ نمادها/تایم‌فریم‌ها/لوریج/تیک‌سایز اینجا (بخش ۱ زیر) به‌صورت مستقل از
+bot.py تعیین می‌شوند — یعنی bot.py اصلاً import نمی‌شود و اجرای لایو روی
+Railway هیچ تأثیری روی این بک‌تست ندارد. برای تغییرشان مستقیماً همان بخش را
+ویرایش کن (یا از --symbols/--timeframes در خط فرمان استفاده کن).
+
+نحوهٔ اجرا (نمونه):
+    python backtest_report.py --from 2024-01-01 --to 2025-01-01
+    python backtest_report.py --symbols BNBUSDT,ETHUSDT --timeframes 1,5
+    python backtest_report.py --from 2024-06-01 --to 2024-09-01 --robust
+    python backtest_report.py --engine fast   # ⚠️ فقط برای مقایسهٔ سریع؛ هرگز پیش‌فرض نیست
+
+فایل‌های strategy.py / strategy_wrapper.py / trade_ledger.py باید در همان
+پوشه (یا در PYTHONPATH) کنار این فایل باشند — دقیقاً همان منطقی که در Railway
+دیپلوی شده (bot.py خودش لازم نیست، فقط این سه فایل).
 """
 
-import os
-import sys
-import json
-import math
-import time
+from __future__ import annotations
+
 import argparse
+import contextlib
+import json
 import logging
+import math
+import os
+import statistics
+import sys
+import time as _time_mod
 import traceback
-import multiprocessing as mp
-from pathlib import Path
-from datetime import datetime, timedelta, timezone
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import dataclass, asdict
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from typing import Optional
 
-import requests
+import numpy as np
 import pandas as pd
+import requests
 
-# ============================================================
-# مسیرها و ثابت‌ها
-# ============================================================
 BASE_DIR = Path(__file__).resolve().parent
-STRATEGY_PATH = BASE_DIR / "strategy.py"
-RESULTS_PATH = BASE_DIR / "backtest_results.json"
-MARKER_PATH = BASE_DIR / "backtest_report_state.json"
-TICK_CACHE_PATH = BASE_DIR / "backtest_tick_cache.json"
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
+UTC = timezone.utc
 IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
-UTC_TZ = timezone.utc
 
-# 🆕 ربات تلگرامِ مخصوص بک‌تست — کاملاً مستقل از ربات لایو (bot.py).
-# عمداً هیچ fallback به مقدار هاردکدشده‌ی ربات لایو نداریم تا هیچ‌وقت اشتباهی
-# گزارش‌های بک‌تست به همون چت ربات فعلی نره. اگر ست نشوند، ارسال تلگرام
-# به‌طور امن غیرفعال می‌شود و فقط در فایل/چاپ ذخیره می‌گردد.
-TELEGRAM_BOT_TOKEN = os.getenv("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM")
-TELEGRAM_CHAT_ID = os.getenv("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
 
-if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    logging.getLogger("BACKTEST").warning(
-        "[TG] BACKTEST_TELEGRAM_BOT_TOKEN / BACKTEST_TELEGRAM_CHAT_ID تنظیم نشده‌اند — "
-        "ارسال به تلگرام برای این اسکریپت غیرفعال است (فقط فایل/چاپ کار می‌کند)."
-    )
+# ============================================================================
+# بازهٔ زمانیِ پیش‌فرضِ بک‌تست — هر وقت خواستی همین دو رشته را عوض کن
+# (فرمت: "YYYY-MM-DD"). اگر موقع اجرا --from/--to بدهی، همان‌ها اولویت دارند
+# و این پیش‌فرض‌ها نادیده گرفته می‌شوند.
+# ============================================================================
+DEFAULT_DATE_FROM = "2024-09-08"
+DEFAULT_DATE_TO = "2025-09-08"
 
-# ============================================================
-# ✅ ارزهای اصلی (فقط ۹ ارز)
-# ============================================================
-SYMBOLS = [
-    "ETHUSDT", "LTCUSDT",
-    "BNBUSDT", "XRPUSDT", "DOGEUSDT"
-]
-
-# ✅ تایم‌فریم‌های نهایی
-TIMEFRAMES = ["1"]
-
-LEVERAGE_MAP = {
-    "BTCUSDT": 150, "ETHUSDT": 50, "LTCUSDT": 75, "TRXUSDT": 75,
-    "BNBUSDT": 75, "XRPUSDT": 75, "DOGEUSDT": 75, "ADAUSDT": 75,
-    "DOTUSDT": 50,
-}
-
-TICK_SIZES = {
-    "BTCUSDT": 0.1, "ETHUSDT": 0.01, "LTCUSDT": 0.01, "TRXUSDT": 0.00001,
-    "BNBUSDT": 0.01, "XRPUSDT": 0.0001, "DOGEUSDT": 0.00001,
-    "ADAUSDT": 0.0001, "DOTUSDT": 0.001,
-}
-
-HISTORY_BARS = 500
-MIN_ORDER_COST_USDT = 5.0
-LIVE_BASE_CAPITAL = 1.5
-LIVE_BALANCE_USE_RATIO = 0.70
-
-BASE_CAPITAL = 2.0
-DAYS_DEFAULT = 365
-BINANCE_BASES = ["https://data-api.binance.vision", "https://api.binance.com"]
-KLINE_LIMIT = 1000
-REQUEST_SLEEP = 0.15
-MAX_FETCH_ITER = 20000
-
-GENERIC_FALLBACK_TICK = 0.0001
-
-STRATEGY_INPUTS = {
-    "pivotMode": "سریع (5/3)",
-    "rsiLen": 14,
-    "macdFast": 12,
-    "macdSlow": 26,
-    "macdSig": 9,
-    "trendLookback": 20,
-    "trendSlopeMinPct": 0.05,
-    "minConfirmations": "۳ تعییدیه (حداقل مجاز)",
-    "enableHidden": True,
-    "fibUse618": True,
-    "fibUse786": True,
-    "fibTolerancePct": 0.5,
-    "fibTrendSearchBars": 100,
-    "shadowToBodyRatio": 2.0,
-    "maxOppositeShadowPct": 20.0,
-    "minCandleATRRatio": 0.3,
-    "bigCandleAvgLen": 14,
-    "bigCandleMultiplier": 1.5,
-}
-
-PIVOT_MODE_BY_TIMEFRAME = {
-    "1": "سریع (5/3)",
-    "15": "استاندارد (5/5)",
-    "30": "استاندارد (5/5)",
-    "60": "استاندارد (5/5)",
-}
-
-SCORE_KEYS = {
-    "CD-": "score_classic_bearish",
-    "CD+": "score_classic_bullish",
-    "HD+": "score_hidden_bullish",
-    "HD-": "score_hidden_bearish",
-}
-WD_FA = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
-W = "━━━━━━━━━━━━━━━━━━━━"
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.WARNING,  # جزئیاتِ لایو (INFO) خیلی پرحجم است؛ فقط بالاتر از این را روی کنسول نشان بده.
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+)
 logger = logging.getLogger("BACKTEST")
 
 
-def get_strategy_inputs(timeframe):
-    base = dict(STRATEGY_INPUTS)
-    base["pivotMode"] = PIVOT_MODE_BY_TIMEFRAME.get(str(timeframe), "سریع (5/3)")
-    return base
+TELEGRAM_BOT_TOKEN = os.getenv("BACKTEST_TELEGRAM_BOT_TOKEN", "8681448214:AAG4Ve-8GUTtQQS3wb5V9FDcuTeOoGbA4oM")
+TELEGRAM_CHAT_ID = os.getenv("BACKTEST_TELEGRAM_CHAT_ID", "7402770612")
 
 
-# ============================================================
-# 🆕 فیلتر بهینه‌سازی سیگنال (بر اساس تحلیل ۱۹,۳۱۹ معامله‌ی یک‌ساله)
-# ============================================================
-# HD+ در کلیت -446.34$ (PF=0.927) بوده و در ۳ از ۴ تایم‌فریم و ۷ از ۹ نماد
-# زیان‌ده است → حذف کامل، فارغ از نماد/تایم‌فریم/امتیاز.
-EXCLUDED_SIGNAL_TYPES = {"HD+"}
+# ============================================================================
+# ۱) اتصال زنده به کدهای لایو — «یک کد، دو مصرف‌کننده» (سند، بخش ۲)
+#    هیچ‌کدام از این‌ها اینجا کپی نمی‌شوند؛ مستقیماً از ماژول‌های واقعی
+#    خوانده می‌شوند تا هر تغییری در آن‌ها خودکار در بک‌تست منعکس شود.
+# ============================================================================
 
-# ترکیب‌های نماد×سیگنال که با حجم نمونه‌ی معنادار (۱۰۰+ معامله) زیان‌ده بودند.
-# عدد جلوی هرکدام از گزارش تحلیلی است؛ صرفاً برای مستندسازی، در کد استفاده نمی‌شود.
-EXCLUDED_SYMBOL_SIGNAL_COMBOS = {
-    ("DOTUSDT", "CD+"),   # 441 معامله | -115.37$ | PF=0.762
-    ("XRPUSDT", "CD+"),   # 618 معامله | -17.55$  | PF=0.976
-    ("ADAUSDT", "CD-"),   # 422 معامله | -35.17$  | PF=0.924
-    ("TRXUSDT", "CD-"),   # 116 معامله | -21.22$  | PF=0.857
-    ("DOGEUSDT", "HD-"),  # 668 معامله | -37.96$  | PF=0.949
-    ("BTCUSDT", "HD-"),   # 700 معامله | -5.81$   | PF=0.993
-}
+CONST_SOURCE = "دستی — مستقل از bot.py (تعیین‌شده در خود backtest_report.py)"
 
+# ============================================================================
+# نمادها/تایم‌فریم‌ها/لوریج/تیک‌سایز اینجا به‌صورت مستقل از bot.py (لایو)
+# تعیین می‌شوند. هر تغییری در bot.py روی این مقادیر هیچ اثری ندارد.
+# ============================================================================
+SYMBOLS: list[str] = ["BNBUSDT", "ETHUSDT", "SOLUSDT"]          # ← نمادهای موردنظر خودت
+TIMEFRAMES: list[str] = ["1", "5"]                  # ← تایم‌فریم‌ها (دقیقه، رشته)
+HISTORY_BARS: int = 500                                         # ← تعداد کندلِ هر پنجره
 
-def is_signal_allowed(symbol, signal_type):
-    """
-    فیلتر بهینه‌سازی خروجی استراتژی — بر پایه‌ی تحلیل درون‌نمونه‌ای بک‌تست یک‌ساله.
+LEVERAGE_MAP: dict = {"BNBUSDT": 75, "ETHUSDT": 50, "SOLUSDT": 60}
+TICK_SIZES: dict = {"BNBUSDT": 0.01, "ETHUSDT": 0.01, "SOLUSDT": 0.001}
 
-    این تابع روی خروجیِ *پس از* تولید سیگنال توسط موتور اعمال می‌شود؛ منطق
-    داخلی استراتژی (شرایط فیبوناچی، کندل تأییدیه، RSI/MACD/هیستوگرام/روند)
-    دست‌نخورده می‌ماند — طبق دستور، فقط لایه‌ی post-filter اضافه شده است.
+MIN_ORDER_COST_USDT: float = 5.0
+_BINANCE_BASES = ["https://data-api.binance.vision", "https://api.binance.com"]
 
-    ⚠️ درون‌نمونه‌ای (in-sample): قبل از استفاده‌ی زنده حتماً با forward-test
-    یا تقسیم داده به دو نیمه (نیمه‌ی اول = کشف فیلتر، نیمه‌ی دوم = تایید)
-    validate شود.
-    """
-    if not signal_type:
-        return True  # سیگنال بدون نوع مشخص فیلتر نمی‌شود (نباید عملاً اتفاق بیفتد)
-    if signal_type in EXCLUDED_SIGNAL_TYPES:
-        return False
-    if (symbol, signal_type) in EXCLUDED_SYMBOL_SIGNAL_COMBOS:
-        return False
-    return True
-
-
-# ============================================================
-# ابزارهای ایمن
-# ============================================================
-def _f(x):
-    try:
-        if x is None:
-            return None
-        v = float(x)
-        if math.isnan(v) or math.isinf(v):
-            return None
-        return v
-    except (TypeError, ValueError):
-        return None
-
-
-def _ms_to_iran(ms):
-    try:
-        return datetime.fromtimestamp(int(ms) / 1000.0, tz=UTC_TZ).astimezone(IRAN_TZ)
-    except Exception:
-        return None
-
-
-def now_iran_str():
-    return datetime.now(UTC_TZ).astimezone(IRAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def today_str():
-    return datetime.now(UTC_TZ).astimezone(IRAN_TZ).strftime("%Y-%m-%d")
-
-
-def _parse_kv_overrides(items):
-    out = {}
-    for it in items or []:
-        if "=" not in it:
-            continue
-        k, v = it.split("=", 1)
-        k = k.strip().upper()
-        try:
-            out[k] = float(v.strip())
-        except ValueError:
-            logger.warning(f"[ARGS] مقدار نامعتبر نادیده گرفته شد: {it}")
-    return out
-
-
-# ============================================================
-# تلگرام
-# ============================================================
-def tg_send(text):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=30)
-        return r.ok
-    except Exception as e:
-        logger.error(f"[TG] send error: {e}")
-        return False
-
-
-def tg_send_document(path, caption=""):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
-        with open(path, "rb") as f:
-            r = requests.post(
-                url,
-                data={"chat_id": TELEGRAM_CHAT_ID, "caption": str(caption)[:1000]},
-                files={"document": f},
-                timeout=120,
-            )
-        return r.ok
-    except Exception as e:
-        logger.error(f"[TG] document error: {e}")
-        return False
-
-
-def _global_error_handler(exc_type, exc_value, exc_tb):
-    try:
-        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-        tg_send(f"❌ خطای پیش‌بینی‌نشده بک‌تست: {exc_type.__name__}: {exc_value}\n{tb_text}"[:3500])
-    except Exception:
-        pass
-
-
-sys.excepthook = _global_error_handler
-
-
-# ============================================================
-# موتور استراتژی
-# ============================================================
+LOGIC_SOURCE_OK = True
+_logic_import_error: Optional[str] = None
 try:
-    import strategy_wrapper as _sw
-    try:
-        _sw._send_telegram = lambda text: True
-    except Exception:
-        pass
-    _compute_stop_target = _sw._compute_stop_target
-    SYMBOL_TICK_INFO_FROM_WRAPPER = getattr(_sw, "SYMBOL_TICK_INFO", None)
-    if SYMBOL_TICK_INFO_FROM_WRAPPER:
-        merged = dict({sym: {"mintick": tick, "pricescale": 100, "basecurrency": sym.replace("USDT", "")}
-                       for sym, tick in TICK_SIZES.items()})
-        merged.update(SYMBOL_TICK_INFO_FROM_WRAPPER)
-        SYMBOL_TICK_INFO = merged
-    ENGINE_NAME = "strategy_wrapper (import شد)"
-except Exception as e:
-    logger.warning(f"[ENGINE] strategy_wrapper import نشد → fallback محلی: {e}")
-    ENGINE_NAME = "fallback محلی"
-    _sw = None
+    import strategy_wrapper as _sw  # noqa: E402
+    import trade_ledger as _tl  # noqa: E402
 
-try:
-    from pynecore.core.ohlcv import OHLCV
-    from pynecore.core.syminfo import SymInfo, SymInfoInterval, SymInfoSession
-    from pynecore.core.script_runner import ScriptRunner
+    from trade_ledger import _hypothetical_pnl_usd as ledger_pnl_usd  # noqa: E402
+    from trade_ledger import BASE_CAPITAL  # noqa: E402
+
+    # جلوگیری از اسپم تلگرام: strategy_wrapper به‌ازای هر سیگنال/خطا پیام
+    # می‌فرستد. در بک‌تست ممکن است هزاران کندل پردازش شود — این باید خاموش شود
+    # بدون این‌که هیچ منطقِ تصمیم‌گیری تغییر کند (فقط کانال ارسال، نه محاسبه).
+    _sw._send_telegram = lambda *a, **k: True  # type: ignore
+
+    # نمادهای جدیدی که در SYMBOL_TICK_INFO خودِ strategy_wrapper.py نیستند را
+    # اینجا runtime تزریق می‌کنیم، وگرنه با mintick پیش‌فرض 0.01 محاسبه می‌شوند
+    # (که برای نمادهایی با تیک متفاوت باعث محاسبهٔ اشتباهِ استاپ/تارگت می‌شود).
+    for _sym, _tick in TICK_SIZES.items():
+        if _sym not in _sw.SYMBOL_TICK_INFO:
+            _sw.SYMBOL_TICK_INFO[_sym] = {
+                "mintick": _tick,
+                "pricescale": int(round(1 / _tick)),
+                "basecurrency": _sym.replace("USDT", ""),
+            }
 except Exception as e:
-    logger.error(f"[FATAL] pynecore در دسترس نیست: {e}")
-    tg_send(f"❌ backtest_report: pynecore نصب نیست یا خراب است:\n{e}")
+    LOGIC_SOURCE_OK = False
+    _logic_import_error = f"{type(e).__name__}: {e}"
+
+if not LOGIC_SOURCE_OK:
+    # طبق خواستهٔ ۱ کاربر («دقیقاً همان‌طور که در لایو محاسبه می‌شود»)، بدون
+    # این import، ادامهٔ کار به‌معنیِ شبیه‌سازیِ مستقل (=دقیقاً همان چیزی که رد
+    # شد) خواهد بود. پس با پیام روشن متوقف می‌شویم، نه سقوط بی‌صدا.
+    sys.stderr.write(
+        "\n❌ FATAL: نمی‌توان strategy_wrapper.py / trade_ledger.py را import کرد:\n"
+        f"   {_logic_import_error}\n\n"
+        "طبق اصل «یک کد، دو مصرف‌کننده» (سند طراحی، بخش ۲)، این بک‌تست هرگز منطق "
+        "سیگنال/PnL را بازنویسی نمی‌کند. مطمئن شوید strategy.py و strategy_wrapper.py "
+        "و trade_ledger.py (با همین نام‌ها) کنار این فایل هستند و pynecore نصب است "
+        "(pip install pynecore).\n"
+    )
     sys.exit(1)
 
 
-def _local_compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
-    def _v(x):
-        return x is not None and not (isinstance(x, float) and math.isnan(x))
-    entry = last_values.get("entry")
-    if not _v(entry):
-        return None, None, None, None
-    buffer_abs = buffer_ticks * mintick
-    if signal == "LONG":
-        low1 = last_values.get("previous_pivot_low_price")
-        low2 = last_values.get("pivot_low_price")
-        bar1 = last_values.get("previous_pivot_low_index")
-        bar2 = last_values.get("pivot_low_index")
-        if not (_v(low1) and _v(low2) and _v(bar1) and _v(bar2)):
-            return None, None, None, None
-        stop = min(low1, low2) - buffer_abs
-        lo, hi = sorted((int(bar1), int(bar2)))
-        lo, hi = max(lo, 0), min(hi, len(candles) - 1)
-        if hi < lo:
-            return None, None, None, None
-        mid_peak = max(c.high for c in candles[lo:hi + 1])
-        risk = entry - stop
-        if risk <= 0:
-            return None, None, None, None
-        rr = (mid_peak - entry) / risk
-        target = mid_peak if rr >= 2 else entry + 2 * risk
-        return stop, target, max(rr, 2.0), mid_peak
-    elif signal == "SHORT":
-        high1 = last_values.get("previous_pivot_high_price")
-        high2 = last_values.get("pivot_high_price")
-        bar1 = last_values.get("previous_pivot_high_index")
-        bar2 = last_values.get("pivot_high_index")
-        if not (_v(high1) and _v(high2) and _v(bar1) and _v(bar2)):
-            return None, None, None, None
-        stop = max(high1, high2) + buffer_abs
-        lo, hi = sorted((int(bar1), int(bar2)))
-        lo, hi = max(lo, 0), min(hi, len(candles) - 1)
-        if hi < lo:
-            return None, None, None, None
-        mid_trough = min(c.low for c in candles[lo:hi + 1])
-        risk = stop - entry
-        if risk <= 0:
-            return None, None, None, None
-        rr = (entry - mid_trough) / risk
-        target = mid_trough if rr >= 2 else entry - 2 * risk
-        return stop, target, max(rr, 2.0), mid_trough
-    return None, None, None, None
-
-
-if _sw is None:
-    _compute_stop_target = _local_compute_stop_target
-
-try:
-    from trade_ledger import _hypothetical_pnl_usd as pnl_fn
-    from trade_ledger import BASE_CAPITAL as _BC
-    BASE_CAPITAL = float(_BC)
-except Exception as e:
-    logger.warning(f"[LEDGER] trade_ledger import نشد → فرمول محلی: {e}")
-
-    def pnl_fn(direction, entry, initial_stop, exit_price, leverage):
-        try:
-            if not entry or not initial_stop or entry <= 0:
-                return None, None
-            stop_pct = abs(entry - initial_stop) / entry
-            if stop_pct <= 0:
-                return None, None
-            move_pct = (exit_price - entry) / entry if direction == "LONG" else (entry - exit_price) / entry
-            r_multiple = move_pct / stop_pct
-            return r_multiple, r_multiple
-        except Exception:
-            return None, None
-
-
-def _build_syminfo(symbol, timeframe):
-    tick = TICK_SIZES.get(symbol, GENERIC_FALLBACK_TICK)
-    return SymInfo(
-        prefix="", description=f"{symbol} {timeframe}m", ticker=symbol,
-        currency="USDT", basecurrency=symbol.replace("USDT", ""), period=str(timeframe),
-        type="crypto", volumetype="base", mintick=tick, pricescale=100,
-        minmove=1, pointvalue=1.0, mincontract=0.0,
-        opening_hours=[SymInfoInterval(day=0, start=datetime.min.time(), end=datetime.max.time())],
-        session_starts=[SymInfoSession(day=0, time=datetime.min.time())],
-        session_ends=[SymInfoSession(day=0, time=datetime.max.time())],
-        timezone="UTC",
-    )
-
-
-def buffer_ticks_for(symbol):
-    if symbol in ("BNBUSDT", "ETHUSDT"):
-        return 9
-    if symbol in ("LTCUSDT", "DOGEUSDT"):
-        return 3
-    return 5
-
-
-def compute_rf_pct(signal, entry, stop, structural_level):
-    entry, stop = _f(entry), _f(stop)
-    structural_level = _f(structural_level)
-    if structural_level is None or stop is None or entry is None or entry <= 0:
-        return None
-    risk_pct = abs(entry - stop) / entry
-    if signal == "LONG":
-        return max((structural_level - entry) / entry, risk_pct)
-    return -max((entry - structural_level) / entry, risk_pct)
-
-
-def signal_type_of(lv):
-    try:
-        if lv.get("final_classic_bearish"):
-            return "CD-"
-        if lv.get("final_classic_bullish"):
-            return "CD+"
-        if lv.get("final_hidden_bullish"):
-            return "HD+"
-        if lv.get("final_hidden_bearish"):
-            return "HD-"
-    except Exception:
-        pass
-    return None
-
-
-def _score_of(lv, st):
-    if not st:
-        return 0
-    v = _f(lv.get(SCORE_KEYS.get(st, "")))
-    if v is None:
-        return 0
-    return int(max(0, min(5, round(v))))
-
-
-# ============================================================
-# نگاشت دقیقه → interval رسمی بایننس
-# ============================================================
-_BINANCE_MINUTE_INTERVALS = {
-    1: "1m", 3: "3m", 5: "5m", 15: "15m", 30: "30m",
-    60: "1h", 120: "2h", 240: "4h", 360: "6h", 480: "8h", 720: "12h",
-    1440: "1d", 4320: "3d", 10080: "1w",
+# ============================================================================
+# ۲) نگاشتِ صریحِ تایم‌فریم → interval بایننس (رفع باگ #۳ در سند)
+# ============================================================================
+BINANCE_INTERVAL_MAP = {
+    "1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m",
+    "60": "1h", "120": "2h", "240": "4h", "360": "6h", "480": "8h",
+    "720": "12h", "1440": "1d", "4320": "3d", "10080": "1w",
 }
 
 
-def binance_interval_str(interval_min):
-    m = int(interval_min)
-    if m in _BINANCE_MINUTE_INTERVALS:
-        return _BINANCE_MINUTE_INTERVALS[m]
-    raise ValueError(
-        f"تایم‌فریم {m} دقیقه توسط Binance پشتیبانی نمی‌شود. "
-        f"مقادیر مجاز: {sorted(_BINANCE_MINUTE_INTERVALS.keys())}"
+def to_binance_interval(timeframe: str) -> str:
+    tf = str(timeframe)
+    if tf in BINANCE_INTERVAL_MAP:
+        return BINANCE_INTERVAL_MAP[tf]
+    # هیچ حدسِ بی‌صدا: اگر تایم‌فریم ناشناخته بود، صریحاً log و بهترین حدسِ
+    # معقول (n دقیقه) را برگردان — ولی در گزارش به‌عنوان "نگاشتِ حدسی" علامت زده می‌شود.
+    logger.warning(f"⚠️ تایم‌فریم {tf} در BINANCE_INTERVAL_MAP نیست؛ حدسِ '{tf}m' استفاده می‌شود.")
+    return f"{tf}m"
+
+
+UNMAPPED_TIMEFRAME_GUESSES: set[str] = set()
+
+
+def to_binance_interval_tracked(timeframe: str) -> str:
+    tf = str(timeframe)
+    if tf not in BINANCE_INTERVAL_MAP:
+        UNMAPPED_TIMEFRAME_GUESSES.add(tf)
+    return to_binance_interval(tf)
+
+
+# ============================================================================
+# ۳) بازهٔ «سیگنال‌های اخیر» متناسب با تایم‌فریم (سند، بخش ۷)
+#    ⚠️ این جدول فقط برای دو نقطه (1m, 5m) صریحاً از کاربر گرفته شده؛ بقیه
+#    برون‌یابی است و باید در گزارش صریحاً به‌عنوان "نیازمند تأیید" علامت بخورد.
+# ============================================================================
+RECENT_SIGNALS_CALENDAR_DAYS_CONFIRMED = {"1": 7, "5": 22}
+RECENT_SIGNALS_CALENDAR_DAYS_PROPOSED = {
+    "1": 7, "5": 22, "15": 45, "30": 75, "60": 120, "240": 240,
+}
+
+
+def recent_window_days(timeframe: str) -> tuple[int, bool]:
+    """برمی‌گرداند (تعداد روز, آیا این عدد تاییدشده توسط کاربر است یا برون‌یابی‌شده)."""
+    tf = str(timeframe)
+    if tf in RECENT_SIGNALS_CALENDAR_DAYS_CONFIRMED:
+        return RECENT_SIGNALS_CALENDAR_DAYS_CONFIRMED[tf], True
+    if tf in RECENT_SIGNALS_CALENDAR_DAYS_PROPOSED:
+        return RECENT_SIGNALS_CALENDAR_DAYS_PROPOSED[tf], False
+    # برون‌یابیِ خطیِ لگاریتمی بین دو نقطهٔ تاییدشده (1m→7d , 5m→22d) روی مقیاسِ
+    # log(minutes) تا برای هر تایم‌فریمِ جدید/ناشناخته هم عددی معقول (نه خطا) بدهد.
+    try:
+        tf_min = int(tf)
+        x1, y1 = 1.0, 7.0
+        x5, y5 = 5.0, 22.0
+        slope = (math.log(y5) - math.log(y1)) / (math.log(x5) - math.log(x1))
+        days = math.exp(math.log(y1) + slope * (math.log(tf_min) - math.log(x1)))
+        return max(1, round(days)), False
+    except Exception:
+        return 30, False
+
+
+def utc_ms(dt: datetime) -> int:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return int(dt.astimezone(UTC).timestamp() * 1000)
+
+
+def ms_to_dt(ms: int) -> datetime:
+    return datetime.fromtimestamp(ms / 1000.0, tz=UTC)
+
+
+# ============================================================================
+# ۴) دریافت دادهٔ کامل تاریخی از بایننس (chunked)، مقاوم در برابر خطای شبکه
+# ============================================================================
+KLINES_LIMIT = 1000  # حداکثر مجاز بایننس هر درخواست
+
+
+def fetch_klines_chunk(base: str, symbol: str, interval: str, start_ms: int, end_ms: int,
+                        limit: int = KLINES_LIMIT, timeout: float = 20.0) -> list:
+    url = (
+        f"{base}/api/v3/klines?symbol={symbol.upper()}&interval={interval}"
+        f"&startTime={start_ms}&endTime={end_ms}&limit={limit}"
     )
+    r = requests.get(url, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
 
-# ============================================================
-# دریافت دیتا از Binance Spot
-# ============================================================
-def fetch_klines(symbol, interval_min, start_ms, end_ms):
-    interval = binance_interval_str(interval_min)
-    tf_ms = int(interval_min) * 60_000
-    all_rows = {}
+def fetch_full_history(symbol: str, timeframe: str, start_dt: datetime, end_dt: datetime,
+                        max_retries: int = 4) -> pd.DataFrame:
+    """
+    کل تاریخچهٔ OHLCV بین start_dt/end_dt را در chunkهای ۱۰۰۰تایی از بایننس
+    می‌گیرد. مقاوم است: خطای شبکه/چانکِ خالی هرگز کل اجرا را متوقف نمی‌کند —
+    فقط آن بازه را در گزارشِ «شکاف‌های داده» ثبت می‌کند (بند ۳ سند: مقاومت در
+    برابر هر باگ، بدون توقف کامل یا سکوت).
+    """
+    interval = to_binance_interval_tracked(timeframe)
+    tf_minutes = int(timeframe)
+    step_ms = tf_minutes * 60 * 1000
+
+    start_ms = utc_ms(start_dt)
+    end_ms = utc_ms(end_dt)
+
+    all_rows = []
+    gaps: list[tuple[int, int, str]] = []
     cursor = start_ms
-    session = requests.Session()
-    iters = 0
-    while cursor <= end_ms:
-        iters += 1
-        if iters > MAX_FETCH_ITER:
-            raise RuntimeError(f"صفحه‌بندی Binance بیش از {MAX_FETCH_ITER} تکرار طول کشید")
-        chunk, last_err = None, None
-        for attempt in range(4):
-            base = BINANCE_BASES[attempt % len(BINANCE_BASES)]
-            try:
-                url = (f"{base}/api/v3/klines?symbol={symbol.upper()}&interval={interval}"
-                       f"&startTime={cursor}&endTime={end_ms}&limit={KLINE_LIMIT}")
-                r = session.get(url, timeout=20)
-                if r.status_code in (418, 429):
-                    time.sleep(2 ** attempt + 1)
-                    continue
-                r.raise_for_status()
-                data = r.json()
-                if not isinstance(data, list):
-                    raise ValueError(f"bad payload: {str(data)[:100]}")
-                chunk = data
+    bases = list(_BINANCE_BASES)
+
+    while cursor < end_ms:
+        chunk_end = min(cursor + KLINES_LIMIT * step_ms, end_ms)
+        rows = None
+        last_err = None
+        for base in bases:
+            for attempt in range(max_retries):
+                try:
+                    rows = fetch_klines_chunk(base, symbol, interval, cursor, chunk_end)
+                    break
+                except Exception as e:
+                    last_err = e
+                    _time_mod.sleep(min(2 ** attempt, 8) * 0.5)
+            if rows is not None:
                 break
-            except Exception as e:
-                last_err = e
-                time.sleep(0.8 * (attempt + 1))
-        if chunk is None:
-            raise RuntimeError(f"Binance unreachable {symbol} {interval} @ {cursor}: {last_err}")
-        if not chunk:
-            break
-        added = 0
-        for row in chunk:
-            try:
-                ot = int(row[0])
-            except Exception:
-                continue
-            if ot not in all_rows:
-                all_rows[ot] = row
-                added += 1
-        new_cursor = int(chunk[-1][0]) + tf_ms
-        if new_cursor <= cursor:
-            new_cursor = cursor + tf_ms
-        cursor = new_cursor
-        if added == 0 and len(chunk) < KLINE_LIMIT:
-            break
-        time.sleep(REQUEST_SLEEP)
+        if rows is None:
+            gaps.append((cursor, chunk_end, f"network_error: {last_err}"))
+            logger.error(f"[{symbol} {timeframe}m] شکافِ داده {ms_to_dt(cursor)}→{ms_to_dt(chunk_end)}: {last_err}")
+            cursor = chunk_end
+            continue
+        if not rows:
+            # چانکِ خالی طبیعی است (مثلاً نماد هنوز روی بایننس لیست نشده بود)
+            gaps.append((cursor, chunk_end, "no_data_returned"))
+            cursor = chunk_end
+            continue
+
+        all_rows.extend(rows)
+        last_open = rows[-1][0]
+        cursor = last_open + step_ms
+        if len(rows) < 2:
+            cursor = chunk_end  # جلوگیری از حلقهٔ بی‌نهایت روی چانکِ تک‌سطری
+
     if not all_rows:
-        return pd.DataFrame()
-    rows = sorted(all_rows.values(), key=lambda x: int(x[0]))
-    t = [r[0] / 1000.0 for r in rows]
-    df = pd.DataFrame({
-        "open": pd.to_numeric([r[1] for r in rows], errors="coerce"),
-        "high": pd.to_numeric([r[2] for r in rows], errors="coerce"),
-        "low": pd.to_numeric([r[3] for r in rows], errors="coerce"),
-        "close": pd.to_numeric([r[4] for r in rows], errors="coerce"),
-        "volume": pd.to_numeric([r[5] for r in rows], errors="coerce"),
-    }, index=pd.to_datetime(t, unit="s", utc=True))
+        logger.warning(f"[{symbol} {timeframe}m] هیچ کندلی دریافت نشد.")
+        df = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        df.attrs["gaps"] = gaps
+        df.attrs["source"] = "binance"
+        return df
+
+    t = [row[0] / 1000.0 for row in all_rows]
+    df = pd.DataFrame(
+        {
+            "open": pd.to_numeric([r[1] for r in all_rows], errors="coerce"),
+            "high": pd.to_numeric([r[2] for r in all_rows], errors="coerce"),
+            "low": pd.to_numeric([r[3] for r in all_rows], errors="coerce"),
+            "close": pd.to_numeric([r[4] for r in all_rows], errors="coerce"),
+            "volume": pd.to_numeric([r[5] for r in all_rows], errors="coerce"),
+        },
+        index=pd.to_datetime(t, unit="s", utc=True),
+    )
     df = df.sort_index()
     df = df[~df.index.duplicated(keep="last")]
+    n_before = len(df)
     df = df.dropna(subset=["open", "high", "low", "close"])
-    now_ms = int(time.time() * 1000)
-    if rows and int(rows[-1][0]) + tf_ms > now_ms and len(df) > 0:
-        df = df.iloc[:-1]
+    if len(df) < n_before:
+        logger.warning(f"[{symbol} {timeframe}m] {n_before - len(df)} کندلِ ناقص (NaN) حذف شد.")
+
+    df.attrs["gaps"] = gaps
+    df.attrs["source"] = "binance"
     return df
 
 
-def df_to_candles(df):
-    candles = []
-    for idx, row in df.iterrows():
-        candles.append(OHLCV(
-            timestamp=int(idx.timestamp() * 1000),
-            open=float(row["open"]), high=float(row["high"]),
-            low=float(row["low"]), close=float(row["close"]),
-            volume=float(row.get("volume", 0) or 0), is_closed=True,
-        ))
-    return candles
+# کش سراسریِ دادهٔ ۱-دقیقه‌ای برای حل ابهامِ استاپ/تارگتِ هم‌کندل (سند، بخش ۴)
+_ONE_MIN_CACHE: dict[str, pd.DataFrame] = {}
 
 
-def _candles_to_tuples(candles):
-    return [(c.timestamp, c.open, c.high, c.low, c.close, c.volume) for c in candles]
-
-
-def _tuples_to_candles(tuples):
-    return [OHLCV(timestamp=t[0], open=t[1], high=t[2], low=t[3], close=t[4], volume=t[5], is_closed=True)
-            for t in tuples]
-
-
-# ============================================================
-# 🔥 تابع اصلاح‌شده _extract_hit_from_last_values
-# ============================================================
-def _extract_hit_from_last_values(lv, i):
+def get_1m_slice(symbol: str, start_ms: int, end_ms: int) -> Optional[pd.DataFrame]:
     """
-    استخراج سیگنال از دیکشنری خروجی strategy.py
-    🔥 اصلاح: مستقیماً final_* را چک می‌کند، نه اینکه به کلید "signal" اعتماد کند.
-    این تضمین می‌کند که سیگنال‌های فیلترشده در پاین اسکریپت، در پایتون نیز فیلتر شوند.
+    دادهٔ ۱-دقیقه‌ایِ واقعی برای بازهٔ [start_ms, end_ms] را برمی‌گرداند (برای
+    تشخیص این‌که در یک کندلِ تایم‌فریمِ بالاتر، استاپ یا تارگت واقعاً کدام‌یک
+    زودتر لمس شده). کل روزِ حاویِ این بازه کش می‌شود تا معاملات هم‌پوشان
+    دوباره از بایننس گرفته نشوند.
     """
-    # 🔥 ابتدا چک کن که آیا سیگنال نهایی واقعاً فعال است یا نه
-    is_final_bullish = lv.get("final_classic_bullish", False) or lv.get("final_hidden_bullish", False)
-    is_final_bearish = lv.get("final_classic_bearish", False) or lv.get("final_hidden_bearish", False)
-    
-    if is_final_bullish:
-        sig = "LONG"
-    elif is_final_bearish:
-        sig = "SHORT"
-    else:
-        # هیچ سیگنال نهایی فعال نیست
+    day_key = f"{symbol}:{ms_to_dt(start_ms).strftime('%Y-%m-%d')}"
+    day_start = int(datetime(ms_to_dt(start_ms).year, ms_to_dt(start_ms).month, ms_to_dt(start_ms).day, tzinfo=UTC).timestamp() * 1000)
+    day_end = day_start + 24 * 3600 * 1000
+
+    if day_key not in _ONE_MIN_CACHE:
+        try:
+            df_day = fetch_full_history(symbol, "1", ms_to_dt(day_start), ms_to_dt(day_end))
+        except Exception as e:
+            logger.warning(f"[{symbol}] دریافت دادهٔ ۱m برای {day_key} شکست خورد: {e}")
+            df_day = pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
+        _ONE_MIN_CACHE[day_key] = df_day
+        # جلوگیری از رشدِ نامحدود حافظه در بک‌تست‌های خیلی طولانی
+        if len(_ONE_MIN_CACHE) > 400:
+            oldest = sorted(_ONE_MIN_CACHE.keys())[0]
+            _ONE_MIN_CACHE.pop(oldest, None)
+
+    df_day = _ONE_MIN_CACHE[day_key]
+    if df_day.empty:
         return None
-    
-    entry = _f(lv.get("entry"))
-    if entry is None or entry <= 0:
-        return None
-    
-    return (i, lv, sig, entry)
+    idx_ms = (df_day.index.values.astype("datetime64[ns]").view("int64") // 10 ** 6)
+    mask = (idx_ms >= start_ms) & (idx_ms < end_ms)
+    sub = df_day.loc[mask]
+    return sub if not sub.empty else None
 
 
-# ============================================================
-# موتور «fast» — یک پاس پیوسته روی کل تاریخچه
-# ============================================================
-def run_strategy_pass_fast(candles, symbol, timeframe):
-    syminfo = _build_syminfo(symbol, timeframe)
-    inputs = get_strategy_inputs(timeframe)
-    runner = ScriptRunner(
-        STRATEGY_PATH, iter(candles), syminfo,
-        last_bar_index=len(candles) - 1, inputs=inputs,
-    )
-    hits = []
-    stats = {"bars": 0, "dicts": 0, "raw": 0, "errors": 0}
-    logging.disable(logging.INFO)
+# ============================================================================
+# ۵) ضبطِ کاملِ لاگِ الگوریتمی هر سیگنال — بدون بازنویسیِ منطق (سند، بند ۹)
+#    strategy_wrapper خودش لاگ‌های بسیار مفصلی می‌فرستد (DIVCHECK, SIGNAL_TRACE,
+#    SL/TP, RISK-FREE, ...). به‌جای استخراجِ دستیِ last_values (که یعنی دوباره
+#    دست‌کاریِ داخلِ calculate_signals)، یک هندلرِ موقتِ لاگ را به لاگرِ
+#    STRATEGY_WRAPPER وصل می‌کنیم و همان خروجیِ واقعی را ذخیره می‌کنیم.
+# ============================================================================
+class _ListLogHandler(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.DEBUG)
+        self.records: list[str] = []
+
+    def emit(self, record):
+        try:
+            self.records.append(self.format(record))
+        except Exception:
+            pass
+
+
+@contextlib.contextmanager
+def capture_algo_log():
+    handler = _ListLogHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s | %(name)s | %(message)s"))
+    target_logger = logging.getLogger("STRATEGY_WRAPPER")
+    prev_level = target_logger.level
+    target_logger.addHandler(handler)
+    target_logger.setLevel(logging.DEBUG)
     try:
-        for i, result in enumerate(runner.run_iter()):
-            stats["bars"] += 1
-            try:
-                if result is None or len(result) < 2:
-                    continue
-                raw = result[1]
-                if not (isinstance(raw, dict) and len(raw) > 0):
-                    continue
-                lv = dict(raw)
-                stats["dicts"] += 1
-                # 🔥 استفاده از تابع اصلاح‌شده
-                hit = _extract_hit_from_last_values(lv, i)
-                if hit is not None:
-                    stats["raw"] += 1
-                    hits.append(hit)
-            except Exception:
-                stats["errors"] += 1
-                continue
+        yield handler
     finally:
-        logging.disable(logging.NOTSET)
-    return hits, stats
+        target_logger.removeHandler(handler)
+        target_logger.setLevel(prev_level)
 
 
-# ============================================================
-# موتور «exact»
-# ============================================================
-def _run_one_window(candle_tuples, symbol, timeframe, i, history_bars):
-    lo = max(0, i - history_bars + 1)
-    window = _tuples_to_candles(candle_tuples[lo:i + 1])
+# ============================================================================
+# ۶) موتورِ سیگنالِ exact / event-driven (سند، بخش ۳) — تنها موتورِ معتبر
+# ============================================================================
+@dataclass
+class SignalEvent:
+    symbol: str
+    timeframe: str
+    signal: str                 # "LONG" | "SHORT"
+    entry: float
+    stop: float
+    target: Optional[float]
+    signal_bar_ts_ms: int
+    risk_free_pct: Optional[float]
+    algo_log: str = ""          # لاگِ کاملِ محاسباتیِ همان لحظه (بند ۹ سند)
+    window_len: int = 0
+
+
+def _build_ohlcv_window(df_full: pd.DataFrame, end_idx: int, history_bars: int) -> pd.DataFrame:
+    """دقیقاً همان چیزی که bot.py هر چرخه از بایننس می‌گیرد: آخرین history_bars
+    کندلِ منتهی به کندلِ end_idx (شامل خودش)."""
+    start_idx = max(0, end_idx - history_bars + 1)
+    return df_full.iloc[start_idx:end_idx + 1]
+
+
+def _run_calculate_signals_capture(df_window: pd.DataFrame, symbol: str, timeframe: str):
+    """صدا زدنِ مستقیمِ calculate_signals لایو + ضبطِ کاملِ لاگِ همان اجرا."""
+    with capture_algo_log() as handler:
+        try:
+            result = _sw.calculate_signals(df_window, symbol=symbol, timeframe=timeframe)
+        except Exception:
+            # طبق بند ۳ سند: هیچ باگی نباید کل اجرا را متوقف کند.
+            tb = traceback.format_exc()
+            handler.records.append(f"EXCEPTION در calculate_signals:\n{tb}")
+            result = (None, None, None, None, None, None)
+        algo_log = "\n".join(handler.records)
+    return result, algo_log
+
+
+def _process_single_bar(df_full: pd.DataFrame, i: int, symbol: str, timeframe: str,
+                         history_bars: int, keep_log: bool = True):
+    window = _build_ohlcv_window(df_full, i, history_bars)
     if len(window) < 50:
+        return None  # همان آستانهٔ calculate_signals؛ صرفاً صرفه‌جویی در محاسبه
+    (signal, entry, stop, target, signal_bar_ts_ms, risk_free_pct), algo_log = \
+        _run_calculate_signals_capture(window, symbol, timeframe)
+    if signal not in ("LONG", "SHORT") or entry is None or stop is None:
         return None
-    syminfo = _build_syminfo(symbol, timeframe)
-    inputs = get_strategy_inputs(timeframe)
-    runner = ScriptRunner(
-        STRATEGY_PATH, iter(window), syminfo,
-        last_bar_index=len(window) - 1, inputs=inputs,
+    return SignalEvent(
+        symbol=symbol, timeframe=str(timeframe), signal=signal,
+        entry=float(entry), stop=float(stop),
+        target=float(target) if target is not None else None,
+        signal_bar_ts_ms=int(signal_bar_ts_ms) if signal_bar_ts_ms is not None else int(window.index[-1].timestamp() * 1000),
+        risk_free_pct=float(risk_free_pct) if risk_free_pct is not None else None,
+        algo_log=algo_log if keep_log else "",
+        window_len=len(window),
     )
-    last_values = None
-    for result in runner.run_iter():
-        if result is None or len(result) < 2:
-            continue
-        raw = result[1]
-        if isinstance(raw, dict) and len(raw) > 0:
-            last_values = dict(raw)
-    if last_values is None:
-        return None
-    # 🔥 استفاده از تابع اصلاح‌شده
-    return _extract_hit_from_last_values(last_values, i)
 
 
-def _exact_worker(args):
-    (candle_tuples, symbol, timeframe, idx_start, idx_end, history_bars) = args
+def _worker_process_range(pickled_args):
+    """تابعِ سطحِ ماژول برای ProcessPoolExecutor (باید pickle‌پذیر باشد).
+    هر پردازه بازهٔ [lo, hi) از ایندکسِ کندل‌ها را پردازش می‌کند."""
+    (df_full, lo, hi, symbol, timeframe, history_bars, keep_log) = pickled_args
     out = []
-    errors = 0
-    logging.disable(logging.CRITICAL)
-    try:
-        for i in range(idx_start, idx_end):
-            try:
-                hit = _run_one_window(candle_tuples, symbol, timeframe, i, history_bars)
-                if hit is not None:
-                    out.append(hit)
-            except Exception:
-                errors += 1
-                continue
-    finally:
-        logging.disable(logging.NOTSET)
-    return out, errors, (idx_end - idx_start)
+    for i in range(lo, hi):
+        ev = _process_single_bar(df_full, i, symbol, timeframe, history_bars, keep_log)
+        if ev is not None:
+            out.append(ev)
+    return out
 
 
-def run_strategy_pass_exact(candles, symbol, timeframe, idx_from, idx_to,
-                             history_bars=HISTORY_BARS, workers=1, progress_cb=None):
-    n_total = idx_to - idx_from
-    if n_total <= 0:
-        return [], {"bars": 0, "dicts": 0, "raw": 0, "errors": 0}
-    candle_tuples = _candles_to_tuples(candles)
-    hits = []
-    errors = 0
-    done = 0
+def generate_signals_exact(df_full: pd.DataFrame, symbol: str, timeframe: str,
+                            history_bars: int = HISTORY_BARS,
+                            workers: int = 1, keep_log: bool = True,
+                            progress_label: str = "") -> list[SignalEvent]:
+    """
+    موتورِ اصلیِ بک‌تست: برای هر کندلِ بسته‌شده، دقیقاً همان محاسبه‌ای که
+    bot.py در آن لحظه انجام می‌داد را دوباره اجرا می‌کند (نه شبیه‌سازیِ
+    مستقل). چون هر پنجره کاملاً مستقل است، «embarrassingly parallel» است.
+    """
+    n = len(df_full)
+    if n < 50:
+        return []
+
     if workers and workers > 1:
         try:
-            chunk_size = max(1, math.ceil(n_total / workers))
-            tasks = []
-            for start in range(idx_from, idx_to, chunk_size):
-                end = min(idx_to, start + chunk_size)
-                tasks.append((candle_tuples, symbol, timeframe, start, end, history_bars))
+            chunks = []
+            chunk_size = max(1, math.ceil(n / workers))
+            for lo in range(0, n, chunk_size):
+                hi = min(n, lo + chunk_size)
+                chunks.append((df_full, lo, hi, symbol, timeframe, history_bars, keep_log))
+            events: list[SignalEvent] = []
             with ProcessPoolExecutor(max_workers=workers) as ex:
-                futures = {ex.submit(_exact_worker, t): t for t in tasks}
+                futures = [ex.submit(_worker_process_range, c) for c in chunks]
                 for fut in as_completed(futures):
-                    out, errs, cnt = fut.result()
-                    hits.extend(out)
-                    errors += errs
-                    done += cnt
-                    if progress_cb:
-                        progress_cb(done, n_total)
-            hits.sort(key=lambda h: h[0])
+                    events.extend(fut.result())
+            events.sort(key=lambda e: e.signal_bar_ts_ms)
+            return events
         except Exception as e:
-            logger.warning(f"[EXACT] موازی‌سازی ناموفق ({e}) → اجرای تک‌پردازه‌ای")
-            hits, errors, done = [], 0, 0
-            for i in range(idx_from, idx_to):
-                try:
-                    hit = _run_one_window(candle_tuples, symbol, timeframe, i, history_bars)
-                    if hit is not None:
-                        hits.append(hit)
-                except Exception:
-                    errors += 1
-                done += 1
-                if progress_cb and done % 200 == 0:
-                    progress_cb(done, n_total)
-    else:
-        for i in range(idx_from, idx_to):
-            try:
-                hit = _run_one_window(candle_tuples, symbol, timeframe, i, history_bars)
-                if hit is not None:
-                    hits.append(hit)
-            except Exception:
-                errors += 1
-            done += 1
-            if progress_cb and done % 200 == 0:
-                progress_cb(done, n_total)
-    stats = {"bars": n_total, "dicts": None, "raw": len(hits), "errors": errors}
-    return hits, stats
+            # سقوط امنِ اجباری به تک‌پردازه‌ای (سند، بخش ۳) — کندتر ولی امن
+            logger.warning(f"[{symbol} {timeframe}m] موازی‌سازی شکست خورد ({e})؛ سقوط به تک‌پردازه‌ای.")
+
+    events = []
+    for i in range(n):
+        ev = _process_single_bar(df_full, i, symbol, timeframe, history_bars, keep_log)
+        if ev is not None:
+            events.append(ev)
+    return events
 
 
-# ============================================================
-# تابع ساخت فایل دامپ سیگنال‌ها (CSV)
-# ============================================================
-def build_signal_dump_file(trades, symbol, timeframe, last_n=5000):
-    try:
-        if not trades or last_n <= 0:
-            return None, 0
-
-        sorted_trades = sorted(trades, key=lambda t: t.get("entry_time_ms", 0))
-        subset = sorted_trades[-int(last_n):]
-
-        p = BASE_DIR / f"backtest_signals_{symbol}_{timeframe}m.csv"
-        lines = [
-            "ENTRY_TIME_UTC,ENTRY_TIME_IRAN,EXIT_TIME_UTC,EXIT_TIME_IRAN,DIRECTION,ENTRY,STOP,TARGET,SIGNAL_TYPE,SCORE,EXIT_REASON,PNL_R,PNL_USD,STATUS",
-        ]
-
-        for t in subset:
-            entry_dt = _ms_to_iran(t.get("entry_time_ms"))
-            entry_str = entry_dt.strftime("%Y-%m-%d %H:%M") if entry_dt else "?"
-
-            exit_dt = _ms_to_iran(t.get("exit_time_ms"))
-            exit_str = exit_dt.strftime("%Y-%m-%d %H:%M") if exit_dt else "?"
-
-            entry_price = t.get('entry', 0)
-            stop_price = t.get('stop', 0)
-            target_price = t.get('target', 0)
-
-            entry_str_p = f"{entry_price:.8f}" if symbol in ["DOGEUSDT", "TRXUSDT"] else f"{entry_price:.4f}"
-            stop_str_p = f"{stop_price:.8f}" if symbol in ["DOGEUSDT", "TRXUSDT"] else f"{stop_price:.4f}"
-            target_str_p = f"{target_price:.8f}" if symbol in ["DOGEUSDT", "TRXUSDT"] else f"{target_price:.4f}"
-
-            pnl_r = t.get('pnl_r', 0)
-            pnl_usd = t.get('pnl_usd', 0)
-
-            lines.append(
-                f"{t.get('entry_time_ms', 0)},{entry_str},"
-                f"{t.get('exit_time_ms', 0) or ''},{exit_str},"
-                f"{t.get('direction', '')},"
-                f"{entry_str_p},{stop_str_p},{target_str_p},"
-                f"{t.get('signal_type', '?')},"
-                f"{t.get('score', 0)},"
-                f"{t.get('exit_reason', '')},"
-                f"{pnl_r:.2f},{pnl_usd:.2f},"
-                f"{t.get('status', '')}"
-            )
-
-        p.write_text("\n".join(lines), encoding="utf-8")
-        logger.info(f"[SIGNAL-DUMP] {symbol} {timeframe}m: {len(subset)} سیگنال کامل → {p.name}")
-        return str(p), len(subset)
-    except Exception as e:
-        logger.warning(f"[SIGNAL-DUMP] {symbol} {timeframe}m ناموفق: {e}")
-        return None, 0
-
-
-# ============================================================
-# شبیه‌سازی هر معامله
-# ============================================================
-def simulate_trade(tr, candles, n, risk_free_fee_usd=0.0):
-    try:
-        entry, initial_stop = tr["entry"], tr["stop"]
-        target, direction = tr["target"], tr["direction"]
-        rf = tr.get("rf_pct")
-        stop, risk_free = initial_stop, False
-        fee_pct = (risk_free_fee_usd / (BASE_CAPITAL * (tr.get("leverage") or 50))) if risk_free_fee_usd else 0.0
-        for j in range(tr["entry_idx"] + 1, n):
-            c = candles[j]
-            high, low = float(c.high), float(c.low)
-            ts = int(c.timestamp)
-            if not risk_free and rf is not None:
-                if direction == "LONG":
-                    crossed = high >= entry * (1 + abs(rf))
-                else:
-                    crossed = low <= entry * (1 - abs(rf))
-                if crossed:
-                    risk_free = True
-                    stop = entry * (1 + fee_pct) if direction == "LONG" else entry * (1 - fee_pct)
-            if direction == "LONG":
-                hit_stop = low <= stop
-                hit_target = (target is not None) and high >= target
-            else:
-                hit_stop = high >= stop
-                hit_target = (target is not None) and low <= target
-            if hit_stop:
-                tr["status"] = "WIN" if risk_free else "LOSS"
-                tr["exit_reason"] = "RISK_FREE_STOP" if risk_free else "STOP_LOSS"
-                tr["exit_price"], tr["exit_time_ms"] = stop, ts
-                break
-            if hit_target:
-                tr["status"], tr["exit_reason"] = "WIN", "TARGET"
-                tr["exit_price"], tr["exit_time_ms"] = target, ts
-                break
-        tr["risk_free"] = risk_free
-        if tr["status"] != "OPEN":
-            r = None
-            pnl = None
-            try:
-                _, r = pnl_fn(direction, entry, initial_stop, tr["exit_price"], tr["leverage"])
-                # 🛡️ نرمال‌سازی ریسک: هر R دقیقاً ۲$ — فارغ از اهرم/پهنای استاپ
-                if r is not None:
-                    pnl = round(BASE_CAPITAL * r, 4)
-            except Exception:
-                pass
-            tr["pnl_usd"] = pnl
-            tr["pnl_r"] = r
-    except Exception as e:
-        logger.warning(f"[SIM] {tr.get('symbol')} error: {e}")
-        tr["status"] = "OPEN"
-
-
-# ============================================================
-# بک‌تست یک ترکیب ارز/تایم‌فریم
-# ============================================================
-def backtest_combo(symbol, timeframe, start_ms, end_ms, engine="fast",
-                    history_bars=HISTORY_BARS, workers=1, risk_free_fee_usd=0.0,
-                    progress_cb=None, window_clamp=HISTORY_BARS, verify_sample_n=0,
-                    signal_dump_n=5000, apply_signal_filter=True):
-    tf_minutes = int(timeframe)
-    warmup_ms = history_bars * tf_minutes * 60_000 + 3 * 86_400_000
-    fetch_start = start_ms - warmup_ms
-    df = fetch_klines(symbol, tf_minutes, fetch_start, end_ms)
-    if df is None or df.empty:
-        raise RuntimeError("دیتای خالی از Binance")
-    if len(df) < history_bars + 50:
-        raise RuntimeError(f"کندل کافی برای پنجره‌ی {history_bars}-تایی نیست: {len(df)}")
-
-    candles = df_to_candles(df)
-    n = len(candles)
-    mintick = TICK_SIZES.get(symbol, GENERIC_FALLBACK_TICK)
-
-    timestamps = [int(c.timestamp) for c in candles]
-    idx_from = next((k for k, ts in enumerate(timestamps) if ts >= start_ms), n)
-    idx_to = n
-
-    if engine == "fast":
-        raw_hits, diag = run_strategy_pass_fast(candles, symbol, timeframe)
-    else:
-        raw_hits, diag = run_strategy_pass_exact(
-            candles, symbol, timeframe, idx_from, idx_to,
-            history_bars=history_bars, workers=workers, progress_cb=progress_cb,
-        )
-        fixed = []
-        for (i, lv, sig, entry) in raw_hits:
-            lo = max(0, i - history_bars + 1)
-            lv2 = dict(lv)
-            for _k in ("pivot_high_index", "pivot_low_index",
-                       "previous_pivot_high_index", "previous_pivot_low_index"):
-                _v = _f(lv.get(_k))
-                if _v is not None:
-                    lv2[_k] = _v + lo
-            fixed.append((i, lv2, sig, entry))
-        raw_hits = fixed
-
-    seen, trades = set(), []
-    drop = {
-        "out_of_range": 0, "bad_sltp": 0, "dup": 0, "outside_window": 0,
-        "filtered_signal_rule": 0,  # 🆕 حذف‌شده توسط فیلتر بهینه‌سازی (HD+ یا ترکیب زیان‌ده)
-    }
-    raw_stats = {
-        "total": len(raw_hits),
-        "by_signal": {"LONG": 0, "SHORT": 0},
-        "by_score": {},
-        "by_type": {"CD+": 0, "CD-": 0, "HD+": 0, "HD-": 0},
+# ============================================================================
+# ۷) چکِ Determinism (سند، بخش ۳) — دوباره‌محاسبهٔ زیرمجموعه‌ای کوچک و
+#    مطمئن‌شدن از این‌که عدد یکسان می‌گیریم (کشفِ باگِ حالتِ مشترک/کش اشتباه)
+# ============================================================================
+def determinism_check(df_full: pd.DataFrame, symbol: str, timeframe: str,
+                       history_bars: int, sample_size: int = 20) -> dict:
+    n = len(df_full)
+    if n < 60:
+        return {"checked": 0, "mismatches": 0, "ok": True, "note": "دادهٔ کافی برای چک نبود."}
+    import random
+    random.seed(1234)  # نتیجهٔ چک باید خودش هم determinism داشته باشد
+    idxs = random.sample(range(50, n), min(sample_size, n - 50))
+    mismatches = []
+    for i in idxs:
+        first, _log1 = _run_calculate_signals_capture(_build_ohlcv_window(df_full, i, history_bars), symbol, timeframe)
+        second, _log2 = _run_calculate_signals_capture(_build_ohlcv_window(df_full, i, history_bars), symbol, timeframe)
+        # مقایسهٔ ۴ مقدارِ اولِ خروجی (signal, entry, stop, target)
+        if first[:4] != second[:4]:
+            mismatches.append({"bar_index": i, "run1": first[:4], "run2": second[:4]})
+    return {
+        "checked": len(idxs),
+        "mismatches": len(mismatches),
+        "ok": len(mismatches) == 0,
+        "details": mismatches[:10],
     }
 
-    for (i, lv, sig, entry) in raw_hits:
-        try:
-            ts = int(candles[i].timestamp)
-            if ts < start_ms or ts > end_ms:
-                drop["out_of_range"] += 1
-                continue
-            key = (symbol, str(timeframe), ts, sig)
-            if key in seen:
-                drop["dup"] += 1
-                continue
-            seen.add(key)
 
-            if window_clamp and window_clamp > 0:
-                wlo = max(0, i - int(window_clamp) + 1)
-                if sig == "LONG":
-                    p2i = _f(lv.get("pivot_low_index"))
-                    p1i = _f(lv.get("previous_pivot_low_index"))
-                else:
-                    p2i = _f(lv.get("pivot_high_index"))
-                    p1i = _f(lv.get("previous_pivot_high_index"))
-                if p1i is None or p2i is None or p1i < wlo or p2i < wlo:
-                    drop["outside_window"] += 1
-                    continue
+# ============================================================================
+# ۸) ابزارِ خودتشخیصیِ لوک‌اِهد (سند، بخش ۳؛ الهام از freqtrade lookahead-analysis)
+#    اختیاری (--lookahead-check) چون سنگین است: هر سیگنالِ یافته‌شده را با یک
+#    پنجرهٔ کوتاه‌ترشده (بریدنِ آخرین کندل) دوباره محاسبه می‌کند.
+# ============================================================================
+def lookahead_check(df_full: pd.DataFrame, events: list[SignalEvent], symbol: str,
+                     timeframe: str, history_bars: int, max_checks: int = 200,
+                     rel_tol: float = 0.02) -> dict:
+    """
+    ⚠️ محدودیتِ صادقانه: چون calculate_signals فقط وضعیتِ آخرینِ کندلِ هر پنجره
+    را برمی‌گرداند (نه سری‌ای از تمامِ کندل‌های میانی)، تست کلاسیکِ
+    freqtrade lookahead-analysis (که به وضعیتِ *هر* کندل در یک اجرایِ طولانی
+    نیاز دارد) از پشتِ این API قابل‌اجرا نیست، بدون این‌که به داخلِ
+    calculate_signals دست زده شود — که طبق سند (بخش ۲) ممنوع است.
 
-            st = signal_type_of(lv)
-
-            # 🆕 فیلتر بهینه‌سازی سیگنال — قبل از محاسبه‌ی stop/target (صرفه‌جویی
-            # در محاسبه) اعمال می‌شود، بدون دست‌زدن به منطق داخلی استراتژی.
-            if apply_signal_filter and not is_signal_allowed(symbol, st):
-                drop["filtered_signal_rule"] += 1
-                continue
-
-            stop, target, rr, struct = None, None, None, None
-            try:
-                stop, target, rr, struct = _compute_stop_target(
-                    candles, sig, lv, mintick, buffer_ticks=buffer_ticks_for(symbol)
-                )
-            except Exception as e:
-                logger.warning(f"[SL/TP] {symbol} {timeframe}m bar {i}: {e}")
-            if stop is None or target is None or abs(entry - stop) <= 0:
-                drop["bad_sltp"] += 1
-                continue
-
-            sc = _score_of(lv, st)
-
-            raw_stats["by_signal"][sig] = raw_stats["by_signal"].get(sig, 0) + 1
-            raw_stats["by_score"][sc] = raw_stats["by_score"].get(sc, 0) + 1
-            if st:
-                raw_stats["by_type"][st] = raw_stats["by_type"].get(st, 0) + 1
-
-            tr = {
-                "symbol": symbol, "timeframe": str(timeframe), "direction": sig,
-                "entry": float(entry), "stop": float(stop), "target": float(target),
-                "entry_time_ms": ts, "entry_idx": int(i),
-                "leverage": LEVERAGE_MAP.get(symbol, 50),
-                "signal_type": st or "?", "score": sc,
-                "rf_pct": compute_rf_pct(sig, entry, stop, struct),
-                "rr_planned": _f(rr),
-                "status": "OPEN", "exit_reason": None, "exit_price": None,
-                "exit_time_ms": None, "pnl_usd": None, "pnl_r": None, "risk_free": False,
-                "filter_rsi": lv.get("classic_bearish_rsi") or lv.get("classic_bullish_rsi") or False,
-                "filter_macd": lv.get("classic_bearish_macd") or lv.get("classic_bullish_macd") or False,
-                "filter_hist": lv.get("classic_bearish_hist") or lv.get("classic_bullish_hist") or False,
-                "filter_fib": lv.get("fib_bearish") or lv.get("fib_bullish") or False,
-                "filter_pa": lv.get("price_action_bearish") or lv.get("price_action_bullish") or False,
-                "trend_bullish_ok": lv.get("trend_bullish_ok", False),
-                "trend_bearish_ok": lv.get("trend_bearish_ok", False),
-            }
-            simulate_trade(tr, candles, n, risk_free_fee_usd=risk_free_fee_usd)
-            trades.append(tr)
-        except Exception as e:
-            logger.warning(f"[BT] {symbol} {timeframe}m bar {i}: {e}")
+    به‌جای آن، این تابع فقط یک چکِ ضعیف‌تر ولی صادقانه انجام می‌دهد:
+    «حساسیت به طولِ تاریخچه» — همان کندلِ سیگنال را با یک تاریخچهٔ کمی
+    کوتاه‌تر (ولی هنوز به همان کندل ختم می‌شود) دوباره محاسبه می‌کند. تغییرِ
+    جزئیِ اعداد به‌خاطرِ warm-upِ متفاوتِ اندیکاتورها طبیعی است و باگ نیست؛
+    آنچه واقعاً مشکوک است فقط **تغییرِ جهتِ سیگنال** (LONG↔SHORT↔هیچ) است.
+    بنابراین «مشکوک» در خروجیِ این تابع به‌معنیِ «اثباتِ لوک‌اِهد» نیست، فقط
+    نشانه‌ای برای بررسیِ بیشتر است.
+    """
+    ts_to_idx = {int(ts.timestamp() * 1000): i for i, ts in enumerate(df_full.index)}
+    suspicious = []
+    checked = 0
+    shorter_hist = max(60, int(history_bars * 0.8))
+    for ev in events[:max_checks]:
+        i = ts_to_idx.get(ev.signal_bar_ts_ms)
+        if i is None:
             continue
+        alt_window = _build_ohlcv_window(df_full, i, shorter_hist)
+        if len(alt_window) < 50:
+            continue
+        (sig_alt, entry_alt, stop_alt, target_alt, _, _), _ = _run_calculate_signals_capture(alt_window, symbol, timeframe)
+        checked += 1
+        direction_flipped = sig_alt != ev.signal  # این تنها معیارِ واقعاً معنادار است
+        if direction_flipped:
+            suspicious.append({
+                "bar_ts_ms": ev.signal_bar_ts_ms,
+                "original_signal": ev.signal,
+                "signal_with_shorter_history": sig_alt,
+                "note": f"جهتِ سیگنال با تاریخچهٔ {shorter_hist} کندلی به‌جای {history_bars} کندلی عوض شد.",
+            })
+    return {
+        "checked": checked, "suspicious": len(suspicious), "details": suspicious[:10],
+        "caveat": "این چک فقط تغییرِ جهتِ سیگنال را می‌سنجد، نه لوک‌اِهدِ واقعی را اثبات می‌کند (به محدودیتِ بالا نگاه کنید).",
+    }
 
-    # فایل کامل آخرین N سیگنال
-    if signal_dump_n and signal_dump_n > 0:
-        dump_path, dump_count = build_signal_dump_file(trades, symbol, timeframe, signal_dump_n)
-        diag["signal_dump_path"] = dump_path
-        diag["signal_dump_count"] = dump_count
 
-    # نمونه‌گیری کنترلی
-    if verify_sample_n and verify_sample_n > 0 and engine == "fast":
-        cand_bars = {h[0] for h in raw_hits}
-        tuples_all = _candles_to_tuples(candles)
-        checked = found = 0
-        for j in range(idx_from, n, max(1, int(verify_sample_n))):
-            if j in cand_bars:
-                continue
+# ============================================================================
+# ۹) حلِ قطعیِ ابهامِ «استاپ/تارگت در یک کندل» (سند، بخش ۴)
+# ============================================================================
+@dataclass
+class TradeResult:
+    event: SignalEvent
+    exit_price: Optional[float] = None
+    exit_time_ms: Optional[int] = None
+    status: str = "OPEN"           # OPEN | WIN | LOSS
+    exit_reason: Optional[str] = None   # TARGET | STOP_LOSS | RISK_FREE_STOP | NO_RESOLUTION
+    resolution_method: str = "no_ambiguity"  # intrabar_verified | conservative_assumption | no_ambiguity
+    risk_free_armed: bool = False
+    risk_free_armed_ms: Optional[int] = None
+    pnl_usd: Optional[float] = None
+    pnl_r: Optional[float] = None
+    mae_pct: Optional[float] = None   # Maximum Adverse Excursion (٪ از ریسکِ اولیه)
+    mfe_pct: Optional[float] = None   # Maximum Favorable Excursion (٪ از ریسکِ اولیه)
+    bars_held: int = 0
+
+
+def _resolve_ambiguous_candle(symbol: str, candle_ts_ms: int, tf_minutes: int,
+                               direction: str, stop: float, target: Optional[float]) -> tuple[Optional[str], str]:
+    """
+    وقتی در یک کندلِ تایم‌فریمِ اصلی هم استاپ هم تارگت لمس شده‌اند: دادهٔ
+    ۱-دقیقه‌ایِ همان بازه را می‌گیرد و می‌بیند واقعاً کدام سطح زودتر لمس شده.
+    برمی‌گرداند: ("STOP"|"TARGET"|None, resolution_method)
+    """
+    if tf_minutes <= 1:
+        return None, "conservative_assumption"  # خودِ تایم‌فریم همین حالا ۱ دقیقه است
+
+    start_ms = candle_ts_ms
+    end_ms = candle_ts_ms + tf_minutes * 60 * 1000
+    sub = get_1m_slice(symbol, start_ms, end_ms)
+    if sub is None or sub.empty:
+        return None, "conservative_assumption"  # دادهٔ ریزتر موجود نبود
+
+    for _, row in sub.iterrows():
+        hi, lo = float(row["high"]), float(row["low"])
+        stop_hit = (lo <= stop) if direction == "LONG" else (hi >= stop)
+        target_hit = (target is not None) and ((hi >= target) if direction == "LONG" else (lo <= target))
+        if stop_hit and target_hit:
+            # هر دو در همین کندلِ ۱ دقیقه‌ای هم لمس شدند (نادر) — استاپ محافظه‌کارانه
+            return "STOP", "intrabar_verified"
+        if stop_hit:
+            return "STOP", "intrabar_verified"
+        if target_hit:
+            return "TARGET", "intrabar_verified"
+    return None, "intrabar_verified"  # عجیب: نه استاپ نه تارگت در ریزکندل‌ها لمس نشد
+
+
+def resolve_trade(ev: SignalEvent, df_full: pd.DataFrame, ts_to_idx: dict,
+                   max_bars_forward: int = 100000) -> TradeResult:
+    """
+    دنبال‌کردنِ قیمت پس از سیگنال تا برخورد با استاپ/تارگت/ریسک‌فری — دقیقاً
+    با همان فرمولِ trade_ledger (قانونِ محافظه‌کارانه به‌عنوان fallback، ولی
+    وقتی داده‌ی ریزتر موجود است از آن برای حلِ قطعیِ ابهام استفاده می‌شود).
+    """
+    res = TradeResult(event=ev)
+    i0 = ts_to_idx.get(ev.signal_bar_ts_ms)
+    if i0 is None:
+        res.exit_reason = "NO_RESOLUTION"
+        return res
+
+    tf_minutes = int(ev.timeframe)
+    direction = ev.signal
+    entry = ev.entry
+    initial_stop = ev.stop
+    stop = ev.stop
+    target = ev.target
+    risk_free_armed = False
+    risk_free_pct = ev.risk_free_pct
+
+    mae = 0.0  # بدترین حرکتِ برخلافِ جهت (به٪ ریسک)
+    mfe = 0.0  # بهترین حرکتِ همجهت (به٪ ریسک)
+    initial_risk = abs(entry - initial_stop)
+    if initial_risk <= 0:
+        res.exit_reason = "NO_RESOLUTION"
+        return res
+
+    n = len(df_full)
+    end = min(n, i0 + 1 + max_bars_forward)
+    bars_held = 0
+
+    for i in range(i0 + 1, end):
+        bars_held += 1
+        row = df_full.iloc[i]
+        hi, lo = float(row["high"]), float(row["low"])
+        candle_ts_ms = int(df_full.index[i].timestamp() * 1000)
+
+        # --- MAE/MFE (نسبت به ریسکِ اولیه، مثبت = به سودِ معامله) ---
+        if direction == "LONG":
+            adverse = (entry - lo) / initial_risk
+            favorable = (hi - entry) / initial_risk
+        else:
+            adverse = (hi - entry) / initial_risk
+            favorable = (entry - lo) / initial_risk
+        mae = max(mae, adverse)
+        mfe = max(mfe, favorable)
+
+        # --- شبیه‌سازیِ ریسک‌فری، دقیقاً همان منطقِ trade_ledger.update_open_trades ---
+        if not risk_free_armed and risk_free_pct is not None:
+            if direction == "LONG":
+                rf_trigger = entry * (1 + risk_free_pct)
+                rf_crossed = hi >= rf_trigger
+            else:
+                rf_trigger = entry * (1 - abs(risk_free_pct))
+                rf_crossed = lo <= rf_trigger
+            if rf_crossed:
+                initial_stop_for_pnl = initial_stop  # ریسکِ اولیه برای PnL دست‌نخورده می‌ماند
+                stop = entry  # سربه‌سرِ بدونِ کارمزد — دقیقاً مطابق trade_ledger
+                risk_free_armed = True
+                res.risk_free_armed = True
+                res.risk_free_armed_ms = candle_ts_ms
+
+        hit_stop = (lo <= stop) if direction == "LONG" else (hi >= stop)
+        hit_target = (target is not None) and ((hi >= target) if direction == "LONG" else (lo <= target))
+
+        if hit_stop and hit_target:
+            outcome, method = _resolve_ambiguous_candle(
+                ev.symbol, candle_ts_ms, tf_minutes, direction, stop, target
+            )
+            res.resolution_method = method
+            if outcome == "TARGET":
+                hit_stop, hit_target = False, True
+            else:
+                hit_stop, hit_target = True, False  # پیش‌فرض/تاییدشده: استاپ
+
+        if hit_stop:
+            res.status = "WIN" if risk_free_armed else "LOSS"
+            res.exit_reason = "RISK_FREE_STOP" if risk_free_armed else "STOP_LOSS"
+            res.exit_price = stop
+            res.exit_time_ms = candle_ts_ms
+            break
+        if hit_target:
+            res.status = "WIN"
+            res.exit_reason = "TARGET"
+            res.exit_price = target
+            res.exit_time_ms = candle_ts_ms
+            break
+
+    res.bars_held = bars_held
+    res.mae_pct = round(mae * 100, 3)
+    res.mfe_pct = round(mfe * 100, 3)
+
+    if res.status != "OPEN":
+        pnl_usd, pnl_r = ledger_pnl_usd(
+            direction, entry, initial_stop, res.exit_price,
+            LEVERAGE_MAP.get(ev.symbol)
+        )
+        res.pnl_usd = pnl_usd
+        res.pnl_r = pnl_r
+    else:
+        res.exit_reason = res.exit_reason or "STILL_OPEN_AT_END_OF_DATA"
+
+    return res
+
+
+# ============================================================================
+# ۱۰) متریک‌های سطح پرتفوی (سند، بخش ۵)
+# ============================================================================
+def _closed(trades: list[TradeResult]) -> list[TradeResult]:
+    return [t for t in trades if t.status in ("WIN", "LOSS") and t.pnl_usd is not None]
+
+
+def compute_equity_curve(trades: list[TradeResult]) -> pd.Series:
+    closed = sorted(_closed(trades), key=lambda t: t.exit_time_ms or 0)
+    if not closed:
+        return pd.Series(dtype=float)
+    times = [ms_to_dt(t.exit_time_ms) for t in closed]
+    pnl = [t.pnl_usd for t in closed]
+    equity = BASE_CAPITAL + pd.Series(pnl, index=pd.DatetimeIndex(times)).cumsum()
+    return equity
+
+
+def max_drawdown(equity: pd.Series) -> dict:
+    if equity.empty:
+        return {"max_dd_pct": 0.0, "max_dd_usd": 0.0, "peak_time": None, "valley_time": None}
+    running_max = equity.cummax()
+    dd_usd = equity - running_max
+    dd_pct = dd_usd / running_max.replace(0, np.nan) * 100
+    valley_idx = dd_usd.idxmin() if not dd_usd.empty else None
+    peak_idx = running_max.loc[:valley_idx].idxmax() if valley_idx is not None else None
+    return {
+        "max_dd_pct": float(dd_pct.min()) if not dd_pct.empty else 0.0,
+        "max_dd_usd": float(dd_usd.min()) if not dd_usd.empty else 0.0,
+        "peak_time": peak_idx,
+        "valley_time": valley_idx,
+    }
+
+
+def sharpe_sortino_calmar(trades: list[TradeResult], equity: pd.Series) -> dict:
+    closed = _closed(trades)
+    if len(closed) < 2:
+        return {"sharpe": None, "sortino": None, "calmar": None}
+    pnl = np.array([t.pnl_usd for t in closed], dtype=float)
+    mean, std = pnl.mean(), pnl.std(ddof=1)
+    sharpe = (mean / std) * math.sqrt(len(pnl)) if std > 0 else None
+
+    downside = pnl[pnl < 0]
+    dstd = downside.std(ddof=1) if len(downside) > 1 else None
+    sortino = (mean / dstd) * math.sqrt(len(pnl)) if dstd else None
+
+    dd = max_drawdown(equity)
+    total_return_pct = ((equity.iloc[-1] - BASE_CAPITAL) / BASE_CAPITAL * 100) if not equity.empty else 0.0
+    calmar = (total_return_pct / abs(dd["max_dd_pct"])) if dd["max_dd_pct"] not in (0, None) else None
+
+    return {"sharpe": sharpe, "sortino": sortino, "calmar": calmar}
+
+
+def sqn(trades: list[TradeResult]) -> Optional[float]:
+    closed = _closed(trades)
+    r_values = [t.pnl_r for t in closed if t.pnl_r is not None]
+    if len(r_values) < 2:
+        return None
+    arr = np.array(r_values, dtype=float)
+    if arr.std(ddof=1) == 0:
+        return None
+    return float((arr.mean() / arr.std(ddof=1)) * math.sqrt(len(arr)))
+
+
+def expectancy(trades: list[TradeResult]) -> dict:
+    closed = _closed(trades)
+    if not closed:
+        return {"expectancy_usd": None, "expectancy_r": None, "win_rate": None, "avg_win": None, "avg_loss": None}
+    wins = [t for t in closed if t.status == "WIN"]
+    losses = [t for t in closed if t.status == "LOSS"]
+    win_rate = len(wins) / len(closed) * 100
+    avg_win = statistics.mean([t.pnl_usd for t in wins]) if wins else 0.0
+    avg_loss = statistics.mean([t.pnl_usd for t in losses]) if losses else 0.0
+    exp_usd = (win_rate / 100 * avg_win) + ((1 - win_rate / 100) * avg_loss)
+    r_vals = [t.pnl_r for t in closed if t.pnl_r is not None]
+    exp_r = statistics.mean(r_vals) if r_vals else None
+    return {
+        "expectancy_usd": exp_usd, "expectancy_r": exp_r, "win_rate": win_rate,
+        "avg_win": avg_win, "avg_loss": avg_loss,
+    }
+
+
+def cagr(equity: pd.Series) -> Optional[float]:
+    if equity.empty or len(equity) < 2:
+        return None
+    days = (equity.index[-1] - equity.index[0]).total_seconds() / 86400.0
+    if days <= 0:
+        return None
+    total_return = equity.iloc[-1] / BASE_CAPITAL
+    if total_return <= 0:
+        return None  # سرمایه منفی شده — CAGR بی‌معنی؛ به‌جایش MaxDD/PF را نگاه کنید
+    years = days / 365.25
+    return (total_return ** (1 / years) - 1) * 100 if years > 0 else None
+
+
+def exposure_time(trades: list[TradeResult], total_start_ms: int, total_end_ms: int) -> float:
+    closed = _closed(trades)
+    if not closed or total_end_ms <= total_start_ms:
+        return 0.0
+    covered = 0
+    for t in sorted(closed, key=lambda t: t.event.signal_bar_ts_ms):
+        covered += max(0, (t.exit_time_ms or t.event.signal_bar_ts_ms) - t.event.signal_bar_ts_ms)
+    return min(100.0, covered / (total_end_ms - total_start_ms) * 100)
+
+
+def benchmark_buy_hold(df_full: pd.DataFrame) -> Optional[float]:
+    if df_full.empty or len(df_full) < 2:
+        return None
+    first, last = float(df_full["close"].iloc[0]), float(df_full["close"].iloc[-1])
+    if first <= 0:
+        return None
+    return (last - first) / first * 100
+
+
+def profit_factor(trades: list[TradeResult]) -> Optional[float]:
+    closed = _closed(trades)
+    gross_win = sum(t.pnl_usd for t in closed if t.pnl_usd and t.pnl_usd > 0)
+    gross_loss = abs(sum(t.pnl_usd for t in closed if t.pnl_usd and t.pnl_usd < 0))
+    if gross_loss == 0:
+        return None if gross_win == 0 else float("inf")
+    return gross_win / gross_loss
+
+
+def validity_label(metrics: dict) -> tuple[str, list[str]]:
+    """برچسبِ خودکار GOOD/SUSPICIOUS/UNRELIABLE (سند، بخش ۵)."""
+    reasons = []
+    sharpe = metrics.get("sharpe")
+    pf = metrics.get("profit_factor")
+    win_rate = metrics.get("win_rate")
+    n_closed = metrics.get("n_closed", 0)
+
+    label = "GOOD"
+    if n_closed < 30:
+        label = "UNRELIABLE"
+        reasons.append(f"تعداد معاملات بسته‌شده خیلی کم است ({n_closed} < 30) — هر متریکی غیرقابل‌اتکاست.")
+    if sharpe is not None and sharpe > 10:
+        label = "SUSPICIOUS" if label == "GOOD" else label
+        reasons.append(f"Sharpe غیرعادی بالاست ({sharpe:.2f} > 10) — احتمال باگ یا نمونهٔ خیلی کوچک.")
+    if pf is not None and pf != float("inf") and pf > 100:
+        label = "SUSPICIOUS" if label == "GOOD" else label
+        reasons.append(f"Profit Factor غیرعادی بالاست ({pf:.1f} > 100) — احتمال لوک‌اِهد بایاس.")
+    if pf == float("inf"):
+        label = "SUSPICIOUS" if label == "GOOD" else label
+        reasons.append("Profit Factor = ∞ (هیچ معاملهٔ بازنده‌ای ثبت نشده) — بسیار مشکوک.")
+    if win_rate is not None and win_rate > 95:
+        label = "SUSPICIOUS" if label == "GOOD" else label
+        reasons.append(f"Win Rate غیرعادی بالاست ({win_rate:.1f}% > 95%) — احتمال survivorship bias.")
+    if not reasons:
+        reasons.append("هیچ الگوی مشکوکِ شناخته‌شده‌ای یافت نشد.")
+    return label, reasons
+
+
+def compute_portfolio_metrics(trades: list[TradeResult], df_full: pd.DataFrame,
+                               total_start_ms: int, total_end_ms: int) -> dict:
+    closed = _closed(trades)
+    equity = compute_equity_curve(trades)
+    dd = max_drawdown(equity)
+    ssc = sharpe_sortino_calmar(trades, equity)
+    exp = expectancy(trades)
+    pf = profit_factor(trades)
+
+    win_durations = [t.bars_held for t in closed if t.status == "WIN"]
+    loss_durations = [t.bars_held for t in closed if t.status == "LOSS"]
+
+    metrics = {
+        "n_signals_total": len(trades),
+        "n_closed": len(closed),
+        "n_open_at_end": len([t for t in trades if t.status == "OPEN"]),
+        "n_wins": len([t for t in closed if t.status == "WIN"]),
+        "n_losses": len([t for t in closed if t.status == "LOSS"]),
+        "n_target_wins": len([t for t in closed if t.exit_reason == "TARGET"]),
+        "n_risk_free_wins": len([t for t in closed if t.exit_reason == "RISK_FREE_STOP"]),
+        "win_rate": exp["win_rate"],
+        "total_pnl_usd": sum(t.pnl_usd for t in closed if t.pnl_usd is not None),
+        "expectancy_usd": exp["expectancy_usd"],
+        "expectancy_r": exp["expectancy_r"],
+        "avg_win_usd": exp["avg_win"],
+        "avg_loss_usd": exp["avg_loss"],
+        "profit_factor": pf,
+        "sharpe": ssc["sharpe"],
+        "sortino": ssc["sortino"],
+        "calmar": ssc["calmar"],
+        "sqn": sqn(trades),
+        "cagr_pct": cagr(equity),
+        "max_dd_pct": dd["max_dd_pct"],
+        "max_dd_usd": dd["max_dd_usd"],
+        "max_dd_peak_time": dd["peak_time"],
+        "max_dd_valley_time": dd["valley_time"],
+        "exposure_pct": exposure_time(trades, total_start_ms, total_end_ms),
+        "benchmark_buy_hold_pct": benchmark_buy_hold(df_full),
+        "avg_win_duration_bars": statistics.mean(win_durations) if win_durations else None,
+        "avg_loss_duration_bars": statistics.mean(loss_durations) if loss_durations else None,
+        "avg_mae_pct": statistics.mean([t.mae_pct for t in closed if t.mae_pct is not None]) if closed else None,
+        "avg_mfe_pct": statistics.mean([t.mfe_pct for t in closed if t.mfe_pct is not None]) if closed else None,
+        "intrabar_verified_count": len([t for t in trades if t.resolution_method == "intrabar_verified"]),
+        "conservative_assumption_count": len([t for t in trades if t.resolution_method == "conservative_assumption"]),
+        "no_ambiguity_count": len([t for t in trades if t.resolution_method == "no_ambiguity"]),
+    }
+    metrics["edge_ratio"] = (
+        metrics["avg_mfe_pct"] / metrics["avg_mae_pct"]
+        if metrics["avg_mae_pct"] not in (None, 0) and metrics["avg_mfe_pct"] is not None
+        else None
+    )
+    label, reasons = validity_label(metrics)
+    metrics["validity_label"] = label
+    metrics["validity_reasons"] = reasons
+    metrics["equity_curve"] = equity
+    return metrics
+
+
+# ============================================================================
+# ۱۱) اعتبارسنجی در برابر Overfitting (سند، بخش ۶) — اجباری
+# ============================================================================
+MIN_SAMPLE_SIZE_DEFAULT = 30
+
+
+def _signal_type_of(ev: SignalEvent, algo_log: str = "") -> str:
+    """نوعِ سیگنال (CD-/CD+/HD+/HD-) از روی لاگِ ضبط‌شده استخراج می‌شود —
+    این مقدار توسط strategy_wrapper در خطِ [SIGNAL_TRACE] چاپ می‌شود؛ اینجا
+    فقط parse می‌کنیم، دوباره محاسبه نمی‌کنیم."""
+    log = algo_log or ev.algo_log
+    for line in log.splitlines():
+        if "[SIGNAL_TRACE]" in line and "signal=" in line:
             try:
-                hit = _run_one_window(tuples_all, symbol, timeframe, j, history_bars)
+                part = line.split("signal=", 1)[1]
+                return part.split("|", 1)[0].strip()
             except Exception:
                 continue
-            checked += 1
-            if hit is not None:
-                ts_j = int(candles[j].timestamp)
-                if start_ms <= ts_j <= end_ms:
-                    found += 1
-        diag["control_checked"] = checked
-        diag["control_found"] = found
-        if found:
-            logger.warning(f"[CONTROL] {symbol} {timeframe}m: {found} سیگنال جاافتاده در نمونه‌ی کنترلی")
-
-    # 🆕 آمار دقیق خروج‌ها و R:R بالای 2 برای «خلاصه اجرا»
-    rr_above2 = [_f(t.get("rr_planned")) for t in trades
-                 if _f(t.get("rr_planned")) is not None and _f(t.get("rr_planned")) > 2.0]
-    diag["target_hits"] = sum(1 for t in trades if t.get("exit_reason") == "TARGET")
-    diag["stop_hits"] = sum(1 for t in trades if t.get("exit_reason") == "STOP_LOSS")
-    diag["rf_hits"] = sum(1 for t in trades if t.get("exit_reason") == "RISK_FREE_STOP")
-    diag["rr_above2_count"] = len(rr_above2)
-    diag["rr_above2_sum"] = round(sum(rr_above2), 4)
-    diag["rr_above2_avg"] = round(sum(rr_above2) / len(rr_above2), 3) if rr_above2 else 0.0
-
-    diag.update(drop)
-    diag["trades"] = len(trades)
-    diag["engine"] = engine
-    diag["signal_filter_enabled"] = apply_signal_filter
-    return trades, n, raw_stats, diag
+    return "UNKNOWN"
 
 
-# ============================================================
-# آمار و گزارش
-# ============================================================
-def stats_of(trades):
-    s = {"total": len(trades)}
-    wins = [t for t in trades if t.get("status") == "WIN"]
-    losses = [t for t in trades if t.get("status") == "LOSS"]
-    opens = [t for t in trades if t.get("status") == "OPEN"]
-    closed = wins + losses
-    s.update(wins=len(wins), losses=len(losses), opens=len(opens), closed=len(closed))
-    s["rf_wins"] = sum(1 for t in wins if t.get("exit_reason") == "RISK_FREE_STOP")
-    s["tp_wins"] = sum(1 for t in wins if t.get("exit_reason") == "TARGET")
-    s["winrate"] = (len(wins) / len(closed) * 100) if closed else 0.0
-    pnls = [t["pnl_usd"] for t in closed if t.get("pnl_usd") is not None]
-    s["pnl_total"] = sum(pnls)
-    gw = sum(p for p in pnls if p > 0)
-    gl = sum(p for p in pnls if p < 0)
-    s["pf"] = (gw / abs(gl)) if gl < 0 else (float("inf") if gw > 0 else 0.0)
-    s["avg_win"] = gw / len(wins) if wins else 0.0
-    s["avg_loss"] = gl / len(losses) if losses else 0.0
-    rs = [t["pnl_r"] for t in closed if t.get("pnl_r") is not None]
-    s["avg_r"] = sum(rs) / len(rs) if rs else 0.0
-    rrs = [t["rr_planned"] for t in trades if t.get("rr_planned")]
-    s["avg_rr"] = sum(rrs) / len(rrs) if rrs else 0.0
-    seq = sorted([t for t in closed if t.get("pnl_usd") is not None],
-                 key=lambda t: t.get("exit_time_ms") or t["entry_time_ms"])
-    streak = best_streak = 0
-    cum = peak = 0.0
-    dd = 0.0
-    for t in seq:
-        if t["status"] == "LOSS":
-            streak += 1
-            best_streak = max(best_streak, streak)
+def three_dim_breakdown(all_trades: list[TradeResult], min_samples: int = MIN_SAMPLE_SIZE_DEFAULT) -> list[dict]:
+    """
+    تحلیل سه‌بعدیِ خودکار: ارز × تایم‌فریم × نوعِ سیگنال (سند، بخش ۶ و ۹).
+    معیارِ اصلیِ فیلتر = سود/Expectancy، نه صرفاً winrate (طبق درسِ گرفته‌شده
+    از گزارشِ واقعیِ کاربر — بخش ۹ سند).
+    """
+    buckets: dict[tuple, list[TradeResult]] = {}
+    for t in _closed(all_trades):
+        stype = _signal_type_of(t.event)
+        key = (t.event.symbol, t.event.timeframe, stype)
+        buckets.setdefault(key, []).append(t)
+
+    rows = []
+    for (symbol, tf, stype), trs in buckets.items():
+        n = len(trs)
+        wins = [t for t in trs if t.status == "WIN"]
+        win_rate = len(wins) / n * 100 if n else 0.0
+        total_pnl = sum(t.pnl_usd for t in trs if t.pnl_usd is not None)
+        exp_r_vals = [t.pnl_r for t in trs if t.pnl_r is not None]
+        exp_r = statistics.mean(exp_r_vals) if exp_r_vals else None
+        gross_win = sum(t.pnl_usd for t in trs if t.pnl_usd and t.pnl_usd > 0)
+        gross_loss = abs(sum(t.pnl_usd for t in trs if t.pnl_usd and t.pnl_usd < 0))
+        pf = (gross_win / gross_loss) if gross_loss > 0 else (float("inf") if gross_win > 0 else None)
+        rows.append({
+            "symbol": symbol, "timeframe": tf, "signal_type": stype,
+            "n": n, "win_rate": win_rate, "total_pnl_usd": total_pnl,
+            "expectancy_r": exp_r, "profit_factor": pf,
+            "reliable_sample": n >= min_samples,
+            "recommendation": (
+                "نگه‌داشتن" if (n >= min_samples and total_pnl > 0) else
+                "حذف/بررسیِ بیشتر" if (n >= min_samples and total_pnl <= 0) else
+                "نمونهٔ کم — محافظه‌کارانه نگه‌داشته شود (بدون تصمیمِ قطعی)"
+            ),
+        })
+    rows.sort(key=lambda r: (r["total_pnl_usd"] if r["total_pnl_usd"] is not None else 0))
+    return rows
+
+
+def half_split_validation(all_trades: list[TradeResult], breakdown: list[dict]) -> list[dict]:
+    """اعتبارسنجیِ نیم‌اول/نیم‌دومِ هر سلولِ فیلترشده — آیا جهتِ سودآوری در
+    هر دو نیمهٔ بازه یکسان است یا فقط در یک نیمه بوده (نشانهٔ overfitting)."""
+    by_key: dict[tuple, list[TradeResult]] = {}
+    for t in _closed(all_trades):
+        stype = _signal_type_of(t.event)
+        key = (t.event.symbol, t.event.timeframe, stype)
+        by_key.setdefault(key, []).append(t)
+
+    out = []
+    for row in breakdown:
+        key = (row["symbol"], row["timeframe"], row["signal_type"])
+        trs = sorted(by_key.get(key, []), key=lambda t: t.event.signal_bar_ts_ms)
+        if len(trs) < min(10, MIN_SAMPLE_SIZE_DEFAULT):
+            out.append({**row, "half1_pnl": None, "half2_pnl": None, "consistent": None})
+            continue
+        mid = len(trs) // 2
+        h1, h2 = trs[:mid], trs[mid:]
+        pnl1 = sum(t.pnl_usd for t in h1 if t.pnl_usd is not None)
+        pnl2 = sum(t.pnl_usd for t in h2 if t.pnl_usd is not None)
+        consistent = (pnl1 > 0) == (pnl2 > 0)
+        out.append({**row, "half1_pnl": pnl1, "half2_pnl": pnl2, "consistent": consistent})
+    return out
+
+
+def monte_carlo_permutation_test(trades: list[TradeResult], n_permutations: int = 1000, seed: int = 42) -> dict:
+    """
+    تستِ مونت‌کارلوی permutation (اختیاری، --robust؛ سند بخش ۶): ترتیبِ
+    برد/باختِ معاملات را می‌شفلد و می‌بیند PnLِ واقعی چند درصدِ توزیعِ تصادفی
+    را رد می‌کند (p-value تقریبی). این *ترتیب* را می‌شفلد نه بازارِ زیرین —
+    نسخه‌ای سبک‌تر از نسخهٔ کاملِ مبتنی‌بر بازآفرینیِ مسیرِ قیمت.
+    """
+    closed = _closed(trades)
+    pnls = np.array([t.pnl_usd for t in closed], dtype=float)
+    if len(pnls) < 10:
+        return {"p_value": None, "note": "نمونهٔ خیلی کم برای Monte Carlo."}
+    rng = np.random.default_rng(seed)
+    real_total = pnls.sum()
+    count_ge = 0
+    for _ in range(n_permutations):
+        shuffled = rng.permutation(pnls)
+        # جهتِ تصادفی به هر معامله می‌دهیم (سناریوی null: مهارتی در انتخابِ جهت نبوده)
+        signs = rng.choice([-1, 1], size=len(shuffled))
+        sim_total = (np.abs(shuffled) * signs).sum()
+        if sim_total >= real_total:
+            count_ge += 1
+    p_value = count_ge / n_permutations
+    return {"p_value": p_value, "n_permutations": n_permutations, "real_total_pnl": real_total}
+
+
+def walk_forward_validation(df_full: pd.DataFrame, symbol: str, timeframe: str,
+                             history_bars: int, workers: int, n_folds: int = 3) -> dict:
+    """Walk-forward سادهٔ اختیاری (--robust): بازه به n_folds قسمت تقسیم می‌شود؛
+    هر فولد به‌طورِ مستقل سیگنال‌دهی/PnL می‌شود تا ثباتِ نتیجه در طولِ زمان
+    دیده شود (نه صرفاً یک بازهٔ کلی)."""
+    n = len(df_full)
+    if n < 200:
+        return {"folds": [], "note": "داده برای walk-forward کافی نیست."}
+    fold_size = n // n_folds
+    folds_out = []
+    ts_to_idx_full = {int(ts.timestamp() * 1000): i for i, ts in enumerate(df_full.index)}
+    for f in range(n_folds):
+        lo = f * fold_size
+        hi = n if f == n_folds - 1 else (f + 1) * fold_size
+        df_fold = df_full.iloc[lo:hi]
+        if len(df_fold) < 60:
+            continue
+        events = generate_signals_exact(df_fold, symbol, timeframe, history_bars, workers=workers, keep_log=False)
+        ts_to_idx_fold = {int(ts.timestamp() * 1000): i for i, ts in enumerate(df_fold.index)}
+        trades = [resolve_trade(ev, df_fold, ts_to_idx_fold) for ev in events]
+        closed = _closed(trades)
+        total_pnl = sum(t.pnl_usd for t in closed if t.pnl_usd is not None)
+        folds_out.append({
+            "fold": f + 1,
+            "start": str(df_fold.index[0]), "end": str(df_fold.index[-1]),
+            "n_signals": len(events), "n_closed": len(closed), "total_pnl_usd": total_pnl,
+        })
+    profitable_folds = sum(1 for r in folds_out if r["total_pnl_usd"] > 0)
+    return {"folds": folds_out, "profitable_folds": profitable_folds, "total_folds": len(folds_out)}
+
+
+# ============================================================================
+# ۱۲) گزارشِ «سیگنال‌های اخیر» متناسب با تایم‌فریم + لاگِ کاملِ الگوریتمی
+#     (سند، بخش ۷ و ۱۰-۷)
+# ============================================================================
+def build_recent_signals_section(events: list[SignalEvent], trades: dict[int, TradeResult],
+                                  timeframe: str, now_ms: int) -> str:
+    days, confirmed = recent_window_days(timeframe)
+    cutoff_ms = now_ms - days * 86400 * 1000
+    recent = [e for e in events if e.signal_bar_ts_ms >= cutoff_ms]
+    recent.sort(key=lambda e: e.signal_bar_ts_ms, reverse=True)
+
+    lines = []
+    conf_note = "✅ تاییدشده توسط کاربر" if confirmed else "⚠️ برون‌یابی‌شده — نیازمند تایید نهایی (سند، بخش ۷/۱۱)"
+    lines.append(f"### سیگنال‌های اخیر — تایم‌فریم {timeframe} دقیقه (بازهٔ {days} روز منتهی به پایانِ بازهٔ بک‌تست, {conf_note})")
+    lines.append(f"تعداد سیگنال در این بازه: {len(recent)}")
+    lines.append("")
+
+    for ev in recent:
+        key = ev.signal_bar_ts_ms
+        tr = trades.get(key)
+        ts_str = ms_to_dt(ev.signal_bar_ts_ms).astimezone(IRAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        lines.append(f"--- {ev.symbol} | {ev.signal} | {ts_str} (تهران) ---")
+        lines.append(f"  ورود={ev.entry} | استاپ={ev.stop} | تارگت={ev.target} | ریسک‌فری٪={ev.risk_free_pct}")
+        if tr:
+            lines.append(
+                f"  نتیجه: {tr.status} ({tr.exit_reason}) | خروج={tr.exit_price} | "
+                f"PnL=${tr.pnl_usd} ({tr.pnl_r}R) | روشِ حلِ ابهام={tr.resolution_method} | "
+                f"MAE={tr.mae_pct}% MFE={tr.mfe_pct}%"
+            )
         else:
-            streak = 0
-        cum += t["pnl_usd"]
-        peak = max(peak, cum)
-        dd = min(dd, cum - peak)
-    s["max_consec_loss"] = best_streak
-    s["max_dd"] = dd
-    durs = [(t["exit_time_ms"] - t["entry_time_ms"]) / 60000.0
-            for t in closed if t.get("exit_time_ms")]
-    s["avg_hold_min"] = sum(durs) / len(durs) if durs else 0.0
-    return s
+            lines.append("  نتیجه: (هنوز محاسبه نشده)")
+        lines.append("  لاگِ کاملِ الگوریتمی:")
+        for logline in (ev.algo_log or "").splitlines():
+            lines.append(f"    {logline}")
+        lines.append("")
+    return "\n".join(lines)
 
 
-def fmt_money(x):
-    return f"{x:+.2f}$" if x is not None else "—"
-
-
-def fmt_pf(pf):
-    return "∞" if pf == float("inf") else f"{pf:.2f}"
-
-
-def group_dict(items, keyfn):
-    d = {}
-    for it in items:
-        d.setdefault(keyfn(it), []).append(it)
-    return d
-
-
-def fmt_trade_line(t):
-    dt = _ms_to_iran(t["entry_time_ms"])
-    ts = dt.strftime("%m-%d %H:%M") if dt else "?"
-    emoji = {"WIN": "✅", "LOSS": "❌", "OPEN": "⏳"}.get(t.get("status"), "•")
-    if t.get("exit_reason") == "RISK_FREE_STOP":
-        emoji = "🛡️"
-    r = t.get("pnl_r")
-    r_str = f"{r:+.2f}R" if r is not None else "—"
-    pnl = t.get("pnl_usd")
-    pnl_str = f"{pnl:+.2f}$" if pnl is not None else "—"
-    return f"  {emoji} {ts} | {t['timeframe']}m | {t.get('signal_type','?')} S{t.get('score',0)} | {r_str} {pnl_str}"
-
-
-def _section(lines, title, trades, keyfn):
-    g = group_dict(trades, keyfn)
-    if not g:
-        return
-    lines.append(W)
-    lines.append(title)
-    for k in sorted(g.keys(), key=str):
-        stg = stats_of(g[k])
-        lines.append(f"  • {k}: {stg['total']} سیگنال | ✅{stg['wins']} ❌{stg['losses']} ⏳{stg['opens']} "
-                     f"| نرخ {stg['winrate']:.0f}٪ | {fmt_money(stg['pnl_total'])}")
-
-
-def hour_bucket(t):
-    dt = _ms_to_iran(t["entry_time_ms"])
-    return f"{(dt.hour // 4) * 4:02d}-{(dt.hour // 4) * 4 + 3:02d}" if dt else "?"
-
-
-def weekday_fa(t):
-    dt = _ms_to_iran(t["entry_time_ms"])
-    return WD_FA[dt.weekday()] if dt else "?"
-
-
-def season_of(t):
-    dt = _ms_to_iran(t["entry_time_ms"])
-    if not dt:
-        return "?"
-    m = dt.month
-    if m in (3, 4, 5):
-        return "بهار"
-    if m in (6, 7, 8):
-        return "تابستان"
-    if m in (9, 10, 11):
-        return "پاییز"
-    return "زمستان"
-
-
-def build_seasonal_analysis(trades):
-    seasons = {}
-    for t in trades:
-        s = season_of(t)
-        seasons.setdefault(s, []).append(t)
-    lines = ["🌍 تحلیل فصلی:"]
-    for season, items in seasons.items():
-        st = stats_of(items)
-        if st["closed"] >= 5:
-            lines.append(f"  • {season}: {st['closed']} معامله | نرخ {st['winrate']:.0f}٪ | {fmt_money(st['pnl_total'])}")
-    if len(lines) == 1:
-        lines.append("  • داده‌های کافی برای تحلیل فصلی وجود ندارد.")
-    return lines
-
-
-def build_filter_analysis(trades):
-    filters = {
-        "RSI": "filter_rsi", "MACD": "filter_macd", "Histogram": "filter_hist",
-        "Fibonacci": "filter_fib", "Price Action": "filter_pa",
-    }
-    lines = ["🔬 تحلیل فیلترها:"]
-    closed = [t for t in trades if t.get("status") in ("WIN", "LOSS")]
-    for fname, fkey in filters.items():
-        with_filter = [t for t in closed if t.get(fkey, False)]
-        without_filter = [t for t in closed if not t.get(fkey, False)]
-        if len(with_filter) >= 10:
-            st_w = stats_of(with_filter)
-            st_wo = stats_of(without_filter) if without_filter else None
-            diff = st_w["winrate"] - (st_wo["winrate"] if st_wo else 0)
-            emoji = "✅" if diff > 0 else "❌" if diff < 0 else "➖"
-            lines.append(f"  • {fname}: {st_w['winrate']:.0f}٪ ({len(with_filter)} معامله) | "
-                        f"{emoji} تفاوت: {diff:+.1f}٪ | {fmt_money(st_w['pnl_total'])}")
-    if len(lines) == 1:
-        lines.append("  • داده‌های کافی برای تحلیل فیلترها وجود ندارد.")
-    return lines
-
-
-def build_market_analysis(trades):
-    closed = [t for t in trades if t.get("status") in ("WIN", "LOSS")]
-    trending_up = [t for t in closed if t.get("trend_bullish_ok", False)]
-    trending_down = [t for t in closed if t.get("trend_bearish_ok", False)]
-    neutral = [t for t in closed if not t.get("trend_bullish_ok", False) and not t.get("trend_bearish_ok", False)]
-    lines = ["📈 تحلیل بازار:"]
-    for name, items in [("📈 روند صعودی", trending_up), ("📉 روند نزولی", trending_down), ("➖ خنثی", neutral)]:
-        if len(items) >= 5:
-            st = stats_of(items)
-            lines.append(f"  {name}: {st['closed']} معامله | نرخ {st['winrate']:.0f}٪ | {fmt_money(st['pnl_total'])}")
-    if len(lines) == 1:
-        lines.append("  • داده‌های کافی برای تحلیل بازار وجود ندارد.")
-    return lines
-
-
-def build_advanced_insights(trades):
-    lines = ["🎯 پیشنهادات بهینه‌سازی:"]
-    closed = [t for t in trades if t.get("status") in ("WIN", "LOSS")]
-    if len(closed) < 20:
-        lines.append("  • داده‌های کافی برای پیشنهاد دقیق وجود ندارد.")
-        return lines
-    combos = group_dict(trades, lambda t: f"{t['symbol']} {t['timeframe']}m")
-    valid_combos = [(k, stats_of(v)) for k, v in combos.items() if stats_of(v)["closed"] >= 10]
-    if valid_combos:
-        best = max(valid_combos, key=lambda kv: kv[1]["winrate"])
-        worst = min(valid_combos, key=lambda kv: kv[1]["winrate"])
-        lines.append(f"  • ✅ بهترین ترکیب: {best[0]} (نرخ {best[1]['winrate']:.0f}٪، {fmt_money(best[1]['pnl_total'])})")
-        lines.append(f"  • ❌ ضعیف‌ترین ترکیب: {worst[0]} (نرخ {worst[1]['winrate']:.0f}٪، {fmt_money(worst[1]['pnl_total'])})")
-    types = group_dict(trades, lambda t: t.get("signal_type", "?"))
-    valid_types = [(k, stats_of(v)) for k, v in types.items() if stats_of(v)["closed"] >= 10]
-    if valid_types:
-        best_type = max(valid_types, key=lambda kv: kv[1]["winrate"])
-        lines.append(f"  • ✅ بهترین نوع سیگنال: {best_type[0]} (نرخ {best_type[1]['winrate']:.0f}٪)")
-    hours = group_dict(trades, lambda t: f"{_ms_to_iran(t['entry_time_ms']).hour:02d}:00" if _ms_to_iran(t['entry_time_ms']) else "?")
-    valid_hours = [(k, stats_of(v)) for k, v in hours.items() if stats_of(v)["closed"] >= 8]
-    if len(valid_hours) >= 3:
-        best_hour = max(valid_hours, key=lambda kv: kv[1]["winrate"])
-        worst_hour = min(valid_hours, key=lambda kv: kv[1]["winrate"])
-        lines.append(f"  • 🕐 بهترین ساعت: {best_hour[0]} (نرخ {best_hour[1]['winrate']:.0f}٪)")
-        lines.append(f"  • 🕐 ضعیف‌ترین ساعت: {worst_hour[0]} (نرخ {worst_hour[1]['winrate']:.0f}٪)")
-    for score_threshold in [4, 5]:
-        filtered = [t for t in closed if (t.get("score") or 0) >= score_threshold]
-        if len(filtered) >= 10:
-            st = stats_of(filtered)
-            base = stats_of(closed)
-            improvement = st["winrate"] - base["winrate"]
-            tag = f"({improvement:+.1f}٪ بهتر از پایه)" if improvement > 2 else f"({improvement:+.1f}٪ تغییر)"
-            lines.append(f"  • ⭐ فیلتر امتیاز ≥ {score_threshold}: نرخ {st['winrate']:.0f}٪ {tag} | {fmt_money(st['pnl_total'])}")
-    rf_trades = [t for t in closed if t.get("risk_free", False)]
-    non_rf_trades = [t for t in closed if not t.get("risk_free", False)]
-    if len(rf_trades) >= 10 and len(non_rf_trades) >= 10:
-        rf_st = stats_of(rf_trades)
-        non_rf_st = stats_of(non_rf_trades)
-        rf_impact = rf_st["winrate"] - non_rf_st["winrate"]
-        lines.append(f"  • 🛡️ ریسک‌فری: {rf_st['winrate']:.0f}٪ vs بدون ریسک‌فری {non_rf_st['winrate']:.0f}٪ "
-                    f"({rf_impact:+.1f}٪ تفاوت) | {fmt_money(rf_st['pnl_total'])}")
-    rr_groups = group_dict(trades, lambda t: f"1:{round(t.get('rr_planned', 0), 1)}")
-    valid_rr = [(k, stats_of(v)) for k, v in rr_groups.items() if stats_of(v)["closed"] >= 10 and k != "1:nan"]
-    if valid_rr:
-        best_rr = max(valid_rr, key=lambda kv: kv[1]["pnl_total"])
-        lines.append(f"  • 📊 بهترین R:R: {best_rr[0]} (نرخ {best_rr[1]['winrate']:.0f}٪، {fmt_money(best_rr[1]['pnl_total'])})")
-    total_pnl = stats_of(closed)["pnl_total"]
-    if total_pnl > 0:
-        lines.append(f"  • ✅ استراتژی در مجموع سودآور است: {fmt_money(total_pnl)}")
-    else:
-        lines.append(f"  • ❌ استراتژی در مجموع زیان‌ده است: {fmt_money(total_pnl)}")
-        lines.append("  • 💡 پیشنهاد: حذف ضعیف‌ترین ترکیب‌ها یا تنظیم پارامترهای ورودی")
-    return lines
-
-
-def build_methodology_note(meta):
-    engine = meta.get("engine_mode", "fast")
-    clamp = meta.get("window_clamp", 0) or 0
-    lines = [W, "🧭 روش‌شناسی این گزارش (برای تفسیر درست نتایج):"]
-    if engine == "exact":
-        lines.append(
-            f"  • موتور سیگنال: «exact» — هر کندل با پنجره‌ی سردِ "
-            f"{meta.get('history_bars', HISTORY_BARS)}کندلی (عیناً لایو؛ ایندکس‌های پیوت به فضای کلی تبدیل شده‌اند)."
-        )
-    elif clamp > 0:
-        lines.append(
-            f"  • موتور سیگنال: «پیوسته + فیلتر پنجره‌ی لایو» — یک پاس کامل روی تاریخچه، و حذف سیگنال‌هایی که "
-            f"پیوت‌های استاپ/تارگتشان قدیمی‌تر از {clamp} کندل‌اند؛ چون لایو فقط ~۵۰۰ کندل آخر را می‌بیند و "
-            f"سیگنال با پیوت قدیمی‌تر در لایو هرگز تولید نمی‌شد."
-        )
-    else:
-        lines.append(
-            "  • ⚠️ موتور «پیوسته» بدون فیلتر پنجره — ممکن است سیگنال‌هایی با پیوت خیلی قدیمی بشمارد که لایو نمی‌دید. "
-            "فعال‌سازی: --window-clamp 500"
-        )
-    # 🆕 وضعیت فیلتر بهینه‌سازی سیگنال
-    if meta.get("signal_filter_enabled", True):
-        total_filtered = sum(c.get("filtered_signal_rule", 0) for c in meta.get("combos", []))
-        lines.append(
-            f"  • 🆕 فیلتر بهینه‌سازی سیگنال: **فعال** — {total_filtered:,} سیگنال حذف شد "
-            f"(کل HD+، به‌علاوه‌ی DOTUSDT/CD+، XRPUSDT/CD+، ADAUSDT/CD-، TRXUSDT/CD-، "
-            f"DOGEUSDT/HD-، BTCUSDT/HD-)."
-        )
-        lines.append(
-            "  • ⚠️ این فیلتر **درون‌نمونه‌ای** (in-sample) است — از همین بازه‌ی زمانی استخراج شده که با آن "
-            "سنجیده شده، پس ریسک overfitting واقعی است. قبل از استفاده‌ی زنده حتماً با forward-test یا "
-            "تقسیم داده به دو نیمه (نیمه‌ی اول = کشف فیلتر، نیمه‌ی دوم = تایید) validate شود. "
-            "برای مقایسه با نسخه‌ی خام: --no-signal-filter"
-        )
-    else:
-        lines.append("  • 🆕 فیلتر بهینه‌سازی سیگنال: **غیرفعال** (--no-signal-filter) — همه‌ی انواع سیگنال محاسبه شده‌اند.")
-    lines.append(
-        f"  • PnL بر مبنای «سرمایه‌ی پایه‌ی ثابت {BASE_CAPITAL:.0f}$» به‌ازای هر معامله (دقیقاً مثل trade_ledger)، "
-        f"نه موجودی واقعی حساب — یعنی «کیفیت خالص استراتژی» را می‌سنجد."
-    )
-    lines.append("  • بدون احتساب اسلیپیج و کارمزد واقعی صرافی روی ورود/خروج.")
-    if meta.get("control_checked_total"):
-        lines.append(
-            f"  • 🎯 نمونه‌گیری کنترلی: {meta['control_checked_total']} کندلِ غیرکاندید با پنجره‌ی سرد چک شد؛ "
-            f"{meta['control_found_total']} سیگنالِ جاافتاده تخمین زده شد."
-        )
-    if meta.get("account_sim"):
-        acc = meta["account_sim"]
-        lines.append(
-            f"  • 💼 شبیه‌سازی تکمیلی با موجودی واقعی: شروع از {acc['start_balance']:.2f}$ → "
-            f"پایان {acc['end_balance']:.2f}$ ({acc['executed_trades']} اجرا شد، "
-            f"{acc['skipped_low_capital']} ردشده به‌دلیل سرمایه‌ی کم)."
-        )
-    return lines
-
-
-def build_overall_report(trades, meta):
-    st = stats_of(trades)
-    L = ["📊 گزارش کامل بک‌تست استراتژی DTM", W]
-    L.append(f"🗓 بازه: {meta['start_date']} تا {meta['end_date']} ({meta['days']} روز — تهران)")
-    L.append(f"📡 دیتا: Binance Spot | تایم‌فریم: {', '.join(tf + 'm' for tf in meta['tfs'])}")
-    L.append(f"💱 نمادها: {', '.join(meta['symbols'])}")
-    L.append(f"🕐 تولید گزارش: {meta['generated_at']} (تهران)")
-    L.append(f"⚙️ موتور سیگنال: {meta['engine']} | حالت: {meta.get('engine_mode', 'exact')}")
-    L.append(f"🆕 فیلتر بهینه‌سازی سیگنال: {'فعال ✅' if meta.get('signal_filter_enabled', True) else 'غیرفعال ⭕'}")
-    L.append(W)
-    L.append(f"📈 کل سیگنال‌ها: {st['total']}")
-    L.append(f"✅ برنده: {st['wins']}  (🎯 تارگت: {st['tp_wins']} | 🛡️ ریسک‌فری: {st['rf_wins']})")
-    L.append(f"❌ بازنده: {st['losses']}")
-    L.append(f"⏳ هنوز باز: {st['opens']}")
-    L.append(f"🏆 نرخ برد: {st['winrate']:.1f}٪ (از {st['closed']} معامله بسته‌شده)")
-    L.append(f"💰 سود/زیان فرضی کل: {fmt_money(st['pnl_total'])} (سرمایه پایه {BASE_CAPITAL:.0f}$)")
-    L.append(f"⚖️ پروفیت فکتور: {fmt_pf(st['pf'])}")
-    L.append(f"📊 میانگین R: {st['avg_r']:.2f} | میانگین برد: {fmt_money(st['avg_win'])} | میانگین باخت: {fmt_money(st['avg_loss'])}")
-    L.append(f"🎯 میانگین R:R برنامه‌ریزی‌شده: 1:{st['avg_rr']:.2f}")
-    L.append(f"⏱ میانگین طول معامله: {st['avg_hold_min']:.0f} دقیقه")
-    L.append(f"🔥 حداکثر باخت متوالی: {st['max_consec_loss']}")
-    L.append(f"📉 حداکثر افت سرمایه: {fmt_money(st['max_dd'])}")
-
-    _section(L, "💼 به تفکیک ارز:", trades, lambda t: t["symbol"])
-    _section(L, "🕐 به تفکیک تایم‌فریم:", trades, lambda t: f"{t['timeframe']}m")
-    _section(L, "🔀 به تفکیک نوع سیگنال:", trades, lambda t: t.get("signal_type", "?"))
-    _section(L, "⭐ به تفکیک امتیاز:", trades, lambda t: f"امتیاز {t.get('score', 0)}")
-
-    L.append(W)
-    L.extend(build_seasonal_analysis(trades))
-    L.append(W)
-    L.extend(build_filter_analysis(trades))
-    L.append(W)
-    L.extend(build_market_analysis(trades))
-    L.append(W)
-    L.extend(build_advanced_insights(trades))
-    L.extend(build_methodology_note(meta))
-
-    # معاملات برتر/ضعیف
-    cs = sorted([t for t in trades if t.get("pnl_usd") is not None], key=lambda t: t["pnl_usd"])
-    if cs:
-        L.append(W)
-        L.append("🏅 ۵ معامله برتر:")
-        for t in cs[-5:][::-1]:
-            L.append(fmt_trade_line(t))
-        L.append("💥 ۵ معامله ضعیف:")
-        for t in cs[:5]:
-            L.append(fmt_trade_line(t))
-
-    # خلاصه اجرا با آمار کامل
-    if meta.get("combos"):
-        L.append(W)
-        L.append("🧮 خلاصه اجرا:")
-        for c in meta["combos"]:
-            raw_info = c.get("raw_hits", {})
-            raw_total = raw_info.get("total", 0)
-            raw_by_signal = raw_info.get("by_signal", {})
-            line = (f"  • {c['symbol']} {c['tf']}m | کندل: {c['bars']:,} | سیگنال خام: {raw_total}"
-                    f" | خارج‌ازپنجره: {c.get('outside_window', 0)}"
-                    f" | فیلترشده: {c.get('filtered_signal_rule', 0)}")
-            if raw_by_signal:
-                line += f" (LONG: {raw_by_signal.get('LONG', 0)} | SHORT: {raw_by_signal.get('SHORT', 0)})"
-            line += f" | معاملات: {c['signals']}"
-            if c.get("elapsed_sec") is not None:
-                line += f" | {c['elapsed_sec']:.0f}s"
-            line += (f" | 🎯{c.get('target_hits', 0)} ❌{c.get('stop_hits', 0)} 🛡️{c.get('rf_hits', 0)}"
-                     f" | R:R>2: {c.get('rr_above2_count', 0)} (میانگین {c.get('rr_above2_avg', 0):.2f})")
-            L.append(line)
-
-        # جمع کل
-        _t = sum(c.get("target_hits", 0) for c in meta["combos"])
-        _s = sum(c.get("stop_hits", 0) for c in meta["combos"])
-        _rf = sum(c.get("rf_hits", 0) for c in meta["combos"])
-        _rn = sum(c.get("rr_above2_count", 0) for c in meta["combos"])
-        _rs = sum(c.get("rr_above2_sum", 0.0) for c in meta["combos"])
-        _flt = sum(c.get("filtered_signal_rule", 0) for c in meta["combos"])
-        L.append(f"  ➕ مجموع کل: 🎯 تارگت: {_t:,} | ❌ استاپ: {_s:,} | 🛡️ ریسک‌فری: {_rf:,} "
-                 f"| R:R بالای 2: {_rn:,} (میانگین {(_rs / _rn if _rn else 0):.2f}) | 🆕 فیلترشده: {_flt:,}")
-
-    if meta.get("errors"):
-        L.append(W)
-        L.append("⚠️ خطاهای بک‌تست:")
-        for e in meta["errors"][:10]:
-            L.append(f"  • {e[:150]}...")
-
-    L.append(W)
-    L.append("⚠️ نتایج فرضی است (بدون اسلیپیج/کارمزد واقعی) — صرفاً برای ارزیابی استراتژی.")
-    return "\n".join(L)
-
-
-def build_combo_report(sym, tf, trades):
-    st = stats_of(trades)
-    L = [f"📋 گزارش تفکیکی {sym} — {tf} دقیقه", W]
-    if st["total"] == 0:
-        L.append("در این بازه هیچ سیگنالی ثبت نشد.")
-        return "\n".join(L)
-    L.append(f"📈 سیگنال‌ها: {st['total']} | ✅{st['wins']} (🎯{st['tp_wins']} 🛡️{st['rf_wins']}) | ❌{st['losses']} | ⏳{st['opens']}")
-    L.append(f"🏆 نرخ برد: {st['winrate']:.1f}٪ | 💰 {fmt_money(st['pnl_total'])} | PF: {fmt_pf(st['pf'])}")
-    L.append(f"📊 میانگین R: {st['avg_r']:.2f} | 🔥 باخت متوالی: {st['max_consec_loss']} | 📉 افت: {fmt_money(st['max_dd'])}")
-    L.append(W)
-
-    # ✅ نمایش همه معاملات بدون محدودیت
-    items = sorted(trades, key=lambda t: t["entry_time_ms"])
-    L.append("🧾 همه معاملات:")
-    for t in items:
-        L.append(fmt_trade_line(t))
-
-    return "\n".join(L)
-
-
-# ============================================================
-# ذخیره/بارگذاری نتایج و قفل روزانه
-# ============================================================
-def save_results(trades, meta):
+# ============================================================================
+# ۱۳) رندرِ نهاییِ گزارش (چک‌لیستِ محتوایی — سند، بخش ۱۰)
+# ============================================================================
+def _fmt(x, nd=2, suffix=""):
+    if x is None:
+        return "N/A"
+    if x == float("inf"):
+        return "∞"
     try:
-        with open(RESULTS_PATH, "w", encoding="utf-8") as f:
-            json.dump({"meta": meta, "trades": trades}, f, ensure_ascii=False)
-        return True
-    except Exception as e:
-        logger.error(f"[SAVE] {e}")
-        return False
-
-
-def load_results():
-    try:
-        with open(RESULTS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("trades", []), data.get("meta", {})
-    except Exception as e:
-        logger.error(f"[LOAD] {e}")
-        return [], {}
-
-
-def marker_already_sent(mode):
-    try:
-        data = json.loads(MARKER_PATH.read_text(encoding="utf-8"))
-        return data.get(mode) == today_str()
+        return f"{x:.{nd}f}{suffix}"
     except Exception:
-        return False
+        return str(x)
 
 
-def marker_set(mode):
-    try:
-        data = {}
-        if MARKER_PATH.exists():
-            data = json.loads(MARKER_PATH.read_text(encoding="utf-8"))
-        data[mode] = today_str()
-        MARKER_PATH.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    except Exception as e:
-        logger.error(f"[MARKER] {e}")
+def render_report(args, run_meta: dict, per_symbol_tf: dict, portfolio_metrics: dict,
+                   breakdown: list[dict], half_split: list[dict],
+                   recent_sections: list[str], robust_extra: dict) -> str:
+    out = []
+    out.append("=" * 78)
+    out.append("گزارشِ بک‌تستِ استراتژیِ DTM — موتورِ exact/event-driven")
+    out.append("=" * 78)
+    out.append(f"بازه: {args.date_from} → {args.date_to}")
+    out.append(f"نمادها: {', '.join(run_meta['symbols'])}")
+    out.append(f"تایم‌فریم‌ها: {', '.join(run_meta['timeframes'])}")
+    out.append(f"منبعِ ثابت‌ها (SYMBOLS/TIMEFRAMES/LEVERAGE_MAP/TICK_SIZES/HISTORY_BARS): {CONST_SOURCE}")
+    out.append(f"موتورِ سیگنال: {'⚠️ FAST (تقریبی)' if args.engine == 'fast' else 'EXACT/event-driven (تنها موتورِ معتبر)'}")
+    if UNMAPPED_TIMEFRAME_GUESSES:
+        out.append(f"⚠️ تایم‌فریم‌های بدون نگاشتِ صریح در BINANCE_INTERVAL_MAP (حدس زده شد): {sorted(UNMAPPED_TIMEFRAME_GUESSES)}")
+    label = portfolio_metrics.get("validity_label", "N/A")
+    out.append(f"برچسبِ اعتبارِ کلی: {label}")
+    for r in portfolio_metrics.get("validity_reasons", []):
+        out.append(f"  - {r}")
+    out.append("")
+
+    out.append("── ۱) آمارِ کلیِ سبد ──────────────────────────────────────")
+    m = portfolio_metrics
+    out.append(f"تعداد کل سیگنال: {m['n_signals_total']}  |  بسته‌شده: {m['n_closed']}  |  هنوز باز: {m['n_open_at_end']}")
+    out.append(f"برد: {m['n_wins']} (تارگت={m['n_target_wins']}, ریسک‌فری={m['n_risk_free_wins']})  |  باخت: {m['n_losses']}  |  Win Rate: {_fmt(m['win_rate'], 2, '%')}")
+    out.append(f"مجموع PnL: ${_fmt(m['total_pnl_usd'], 4)}  (بر اساس سرمایهٔ پایهٔ ${BASE_CAPITAL:.0f}, مستقل از موجودی واقعیِ صرافی)")
+    out.append(f"Expectancy: ${_fmt(m['expectancy_usd'], 4)}  |  Expectancy (R): {_fmt(m['expectancy_r'], 3)}R  |  Profit Factor: {_fmt(m['profit_factor'], 3)}")
+    out.append(f"میانگین برد: ${_fmt(m['avg_win_usd'], 4)}  |  میانگین باخت: ${_fmt(m['avg_loss_usd'], 4)}")
+    out.append(f"Sharpe: {_fmt(m['sharpe'], 3)}  |  Sortino: {_fmt(m['sortino'], 3)}  |  Calmar: {_fmt(m['calmar'], 3)}  |  SQN: {_fmt(m['sqn'], 3)}")
+    out.append(f"CAGR: {_fmt(m['cagr_pct'], 2, '%')}  |  Max Drawdown: {_fmt(m['max_dd_pct'], 2, '%')} (${_fmt(m['max_dd_usd'], 4)})")
+    out.append(f"  اوجِ افت: {m['max_dd_peak_time']}  →  کفِ افت: {m['max_dd_valley_time']}")
+    out.append(f"Exposure Time: {_fmt(m['exposure_pct'], 2, '%')}  |  Benchmark Buy&Hold (اولین نماد): {_fmt(m['benchmark_buy_hold_pct'], 2, '%')}")
+    out.append(f"میانگین طولِ معاملهٔ برنده: {_fmt(m['avg_win_duration_bars'], 1)} کندل  |  بازنده: {_fmt(m['avg_loss_duration_bars'], 1)} کندل")
+    out.append(f"میانگین MAE: {_fmt(m['avg_mae_pct'], 2, '%')}  |  میانگین MFE: {_fmt(m['avg_mfe_pct'], 2, '%')}  |  Edge Ratio (MFE/MAE): {_fmt(m['edge_ratio'], 3)}")
+    out.append(
+        f"روشِ حلِ ابهامِ استاپ/تارگتِ هم‌کندل: intrabar_verified={m['intrabar_verified_count']} | "
+        f"conservative_assumption={m['conservative_assumption_count']} | no_ambiguity={m['no_ambiguity_count']}"
+    )
+    out.append("")
+
+    out.append("── ۲) تفکیک بر اساس نماد/تایم‌فریم ─────────────────────────")
+    for (symbol, tf), sub_m in per_symbol_tf.items():
+        out.append(
+            f"{symbol} {tf}m: سیگنال={sub_m['n_signals_total']} | بسته={sub_m['n_closed']} | "
+            f"WinRate={_fmt(sub_m['win_rate'],1,'%')} | PnL=${_fmt(sub_m['total_pnl_usd'],4)} | "
+            f"PF={_fmt(sub_m['profit_factor'],2)} | Expectancy(R)={_fmt(sub_m['expectancy_r'],3)}"
+        )
+    out.append("")
+
+    out.append("── ۳) تحلیل سه‌بعدیِ خودکار (ارز × تایم‌فریم × نوعِ سیگنال) ──")
+    out.append("معیارِ فیلتر = سود/Expectancy، نه صرفاً Win Rate (سند، بخش ۹/۱۱).")
+    out.append(f"{'symbol':<10}{'tf':<6}{'type':<8}{'n':<6}{'winRate':<10}{'PnL($)':<12}{'Exp(R)':<10}{'PF':<8}{'reliable':<10}{'recommendation'}")
+    for row in breakdown:
+        out.append(
+            f"{row['symbol']:<10}{row['timeframe']:<6}{row['signal_type']:<8}{row['n']:<6}"
+            f"{_fmt(row['win_rate'],1):<10}{_fmt(row['total_pnl_usd'],2):<12}"
+            f"{_fmt(row['expectancy_r'],3):<10}{_fmt(row['profit_factor'],2):<8}"
+            f"{'بله' if row['reliable_sample'] else 'خیر':<10}{row['recommendation']}"
+        )
+    out.append("")
+
+    out.append("── ۴) اعتبارسنجیِ نیم‌اول/نیم‌دوم (هر سلولِ فیلترشده) ──────")
+    for row in half_split:
+        cons = "سازگار ✅" if row["consistent"] else ("ناسازگار ⚠️ (نشانهٔ overfitting)" if row["consistent"] is False else "نمونه کم")
+        out.append(
+            f"{row['symbol']} {row['timeframe']}m {row['signal_type']}: "
+            f"نیمهٔ اول=${_fmt(row['half1_pnl'],2)} | نیمهٔ دوم=${_fmt(row['half2_pnl'],2)} | {cons}"
+        )
+    out.append("")
+
+    if robust_extra:
+        out.append("── ۵) اعتبارسنجیِ سنگین (--robust) ─────────────────────")
+        if "monte_carlo" in robust_extra:
+            mc = robust_extra["monte_carlo"]
+            out.append(f"Monte Carlo Permutation Test: p-value ≈ {_fmt(mc.get('p_value'), 4)} (کمتر = نتیجه بعیدتر بود که تصادفی باشد)")
+        if "walk_forward" in robust_extra:
+            for (symbol, tf), wf in robust_extra["walk_forward"].items():
+                out.append(f"Walk-Forward {symbol} {tf}m: {wf['profitable_folds']}/{wf['total_folds']} فولد سودآور بودند.")
+                for f in wf["folds"]:
+                    out.append(f"   فولد {f['fold']}: {f['start']}→{f['end']} | سیگنال={f['n_signals']} | PnL=${_fmt(f['total_pnl_usd'],2)}")
+        out.append("")
+
+    if run_meta.get("determinism"):
+        out.append("── ۶) چکِ Determinism ───────────────────────────────────")
+        for (symbol, tf), d in run_meta["determinism"].items():
+            status = "✅ سازگار" if d["ok"] else f"❌ {d['mismatches']} ناسازگاری یافت شد!"
+            out.append(f"{symbol} {tf}m: {d['checked']} نمونه بررسی شد — {status}")
+        out.append("")
+
+    if run_meta.get("lookahead"):
+        out.append("── ۷) چکِ خودتشخیصیِ لوک‌اِهد ─────────────────────────────")
+        for (symbol, tf), la in run_meta["lookahead"].items():
+            out.append(f"{symbol} {tf}m: {la['checked']} سیگنال بررسی شد — {la['suspicious']} مورد مشکوک.")
+        out.append("")
+
+    out.append("── ۸) شکاف‌های داده (network/no-data) ────────────────────")
+    any_gap = False
+    for (symbol, tf), gaps in run_meta.get("gaps", {}).items():
+        if gaps:
+            any_gap = True
+            out.append(f"{symbol} {tf}m: {len(gaps)} شکاف —")
+            for g in gaps[:10]:
+                out.append(f"    {ms_to_dt(g[0])} → {ms_to_dt(g[1])} ({g[2]})")
+    if not any_gap:
+        out.append("هیچ شکافِ داده‌ای گزارش نشد.")
+    out.append("")
+
+    out.append("── ۹) سیگنال‌های اخیر (متناسب با تایم‌فریم) + لاگِ کاملِ الگوریتمی ──")
+    for sec in recent_sections:
+        out.append(sec)
+        out.append("")
+
+    out.append("── ۱۰) روش‌شناسی و محدودیت‌ها ────────────────────────────")
+    out.append(
+        "- سیگنال، استاپ/تارگت، و PnL مستقیماً از strategy_wrapper.calculate_signals و "
+        "trade_ledger._hypothetical_pnl_usd (import شده، نه بازنویسی) محاسبه شده‌اند."
+    )
+    out.append(
+        f"- هر کندلِ بسته‌شده با یک اجرایِ کاملاً تازهٔ ScriptRunner روی آخرین "
+        f"{HISTORY_BARS} کندل پردازش شده — دقیقاً همان چیزی که bot.py هر چرخه انجام می‌دهد."
+    )
+    out.append(
+        "- ابهامِ «استاپ و تارگت در یک کندل»: در صورت وجودِ دادهٔ ۱-دقیقه‌ایِ واقعی حل شده "
+        "(intrabar_verified)؛ در غیر این صورت با قاعدهٔ محافظه‌کارانهٔ «استاپ برنده» "
+        "(conservative_assumption) — تعدادِ هرکدام در بخش (۱) آمده."
+    )
+    out.append(
+        "- ریسک‌فری با همان منطقِ trade_ledger.update_open_trades شبیه‌سازی شده (سربه‌سرِ بدونِ کارمزد، "
+        "چون کارمزدِ واقعیِ صرافی فقط از یک پوزیشنِ زندهٔ صرافی قابل خواندن است، نه از دادهٔ تاریخی)."
+    )
+    out.append(
+        f"- جدولِ بازهٔ «سیگنال‌های اخیر» برای تایم‌فریم‌های ≥۱۵ دقیقه برون‌یابی‌شده و باید تایید شود "
+        "(سند، بخش ۷/۱۱)؛ فقط ۱m→۷روز و ۵m→۲۲روز مستقیماً از کاربر گرفته شده‌اند."
+    )
+    if not args.robust:
+        out.append("- Monte Carlo Permutation Test و Walk-Forward اجرا نشدند (پیش‌فرض خاموش؛ با --robust فعال می‌شوند).")
+    if args.engine == "fast":
+        out.append("⚠️ این اجرا با --engine fast بوده — نتیجه صرفاً تقریبی است و نباید برای تصمیم‌گیریِ نهایی استفاده شود.")
+    if not LOGIC_SOURCE_OK:
+        out.append(f"⚠️ import از strategy_wrapper.py/trade_ledger.py شکست خورد: {_logic_import_error}")
+
+    out.append("=" * 78)
+    return "\n".join(out)
 
 
-def save_report_backup(text):
-    try:
-        p = BASE_DIR / f"backtest_report_{datetime.now(UTC_TZ).strftime('%Y%m%d_%H%M')}.txt"
-        p.write_text(text, encoding="utf-8")
-        logger.info(f"[BACKUP] گزارش در {p.name} ذخیره شد")
-    except Exception as e:
-        logger.error(f"[BACKUP] {e}")
-
-
-# ============================================================
-# 🆕 ارسال همه گزارش‌ها در یک فایل (به‌جای پیام‌های متعدد)
-# ============================================================
-def send_reports(trades, meta, mode, do_send):
-    texts = []
-    if mode in ("full", "both"):
-        texts.append(("📊 گزارش کامل", build_overall_report(trades, meta)))
-    if mode in ("breakdown", "both"):
-        groups = group_dict(trades, lambda t: (t["symbol"], t["timeframe"]))
-        order = {(s, tf) for s in meta.get("symbols", SYMBOLS) for tf in meta.get("tfs", TIMEFRAMES)}
-        keys = sorted(set(groups.keys()) | order, key=lambda k: (k[0], int(k[1])))
-        for (sym, tf) in keys:
-            texts.append((f"📋 {sym} {tf}m", build_combo_report(sym, tf, groups.get((sym, tf), []))))
-
-    # همه را در یک فایل جمع‌آوری کن
-    full_text = "\n\n" + ("═" * 40) + "\n\n".join(f"{h}\n{b}" for h, b in texts)
-
-    # ذخیره فایل
-    report_path = BASE_DIR / f"backtest_full_report_{datetime.now(UTC_TZ).strftime('%Y%m%d_%H%M')}.txt"
-    report_path.write_text(full_text, encoding="utf-8")
-    logger.info(f"[REPORT] فایل گزارش کامل در {report_path.name} ذخیره شد")
-
-    save_report_backup(full_text)
-
-    if not do_send:
-        print(full_text)
-        return True
-
-    # ارسال یک فایل به تلگرام
-    try:
-        return tg_send_document(report_path, caption=f"📊 گزارش کامل بک‌تست ({meta['days']} روز)")
-    except Exception as e:
-        logger.error(f"[SEND] ارسال فایل گزارش ناموفق: {e}")
-        return False
-
-
-# ============================================================
-# main
-# ============================================================
+# ============================================================================
+# ۱۴) CLI / orchestration
+# ============================================================================
 def parse_args():
-    p = argparse.ArgumentParser(description="بک‌تست و گزارش استراتژی DTM")
-    p.add_argument("--days", type=int, default=DAYS_DEFAULT,
-                   help="تعداد روزهای بک‌تست (پیش‌فرض ۳۶۵ = ۱ سال)")
-    p.add_argument("--symbols", nargs="*", default=SYMBOLS,
-                   help="نمادها — می‌تواند شامل نمادهایی باشد که فعلاً در bot.py لایو نیستند")
-    p.add_argument("--tfs", nargs="*", default=TIMEFRAMES,
-                   help="تایم‌فریم‌ها به‌دقیقه — هر مقدار پشتیبانی‌شده توسط Binance")
-    p.add_argument("--mode", choices=["full", "breakdown", "both"], default="both")
-    p.add_argument("--engine", choices=["exact", "fast"], default="fast",
-                   help="fast = پاس پیوسته + فیلتر پنجره‌ی لایو (پیش‌فرض) | exact = پنجره سرد هر کندل (خیلی کند)")
-    p.add_argument("--window-clamp", type=int, default=HISTORY_BARS,
-                   help="حداکثر عمر مجاز پیوت‌ها به کندل (پیش‌فرض ۵۰۰ مثل پنجره لایو | 0 = خاموش)")
-    p.add_argument("--verify-sample", type=int, default=0,
-                   help="نمونه‌گیری کنترلی: هر N-مین کندلِ غیرکاندید با پنجره سرد چک می‌شود (0 = خاموش)")
-    p.add_argument("--signal-dump", type=int, default=5000,
-                   help="آخرین N سیگنالِ هر ترکیب به‌صورت فایل CSV به تلگرام ارسال شود (0 = خاموش)")
-    p.add_argument("--history-bars", type=int, default=HISTORY_BARS,
-                   help=f"طول پنجره‌ی غلتان برای موتور exact (پیش‌فرض = HISTORY_BARS لایو = {HISTORY_BARS})")
-    p.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) - 1)),
-                   help="تعداد پردازه‌های موازی برای موتور exact")
-    p.add_argument("--leverage", nargs="*", default=[],
-                   help="بازنویسی اهرم برای نماد: SYMBOL=VALUE (مثلاً SOLUSDT=50)")
-    p.add_argument("--tick", nargs="*", default=[],
-                   help="بازنویسی tick size قیمت برای نماد: SYMBOL=VALUE (مثلاً SOLUSDT=0.001)")
-    p.add_argument("--risk-free-fee-usd", type=float, default=0.0,
-                   help="کارمزد تقریبی (دلار) برای نزدیک‌ترکردن ریسک‌فری به رفتار واقعی صرافی؛ پیش‌فرض ۰")
-    p.add_argument("--account-sim", type=float, default=None,
-                   help="اگر ست شود، یک شبیه‌سازی تکمیلی با موجودی شروع داده‌شده و فرمول واقعی position-sizing لایو اجرا می‌شود")
-    p.add_argument("--no-signal-filter", action="store_true",
-                   help="🆕 خاموش‌کردن فیلتر بهینه‌سازی سیگنال (پیش‌فرض: فیلتر روشن است — حذف HD+ و "
-                        "۶ ترکیب نماد×سیگنال زیان‌ده). با این فلگ نسخه‌ی خامِ بدون فیلتر اجرا می‌شود.")
-    p.add_argument("--force", action="store_true", help="نادیده‌گرفتن قفل روزانه")
-    p.add_argument("--resend", action="store_true", help="ارسال مجدد از نتایج ذخیره‌شده")
-    p.add_argument("--no-send", action="store_true", help="فقط چاپ/ذخیره، بدون تلگرام")
+    p = argparse.ArgumentParser(description="بک‌تستِ exact/event-driven استراتژیِ DTM.")
+    p.add_argument("--from", dest="date_from", default=DEFAULT_DATE_FROM, help="تاریخ شروع، مثل 2024-01-01")
+    p.add_argument("--to", dest="date_to", default=DEFAULT_DATE_TO, help="تاریخ پایان، مثل 2025-01-01")
+    p.add_argument("--symbols", default=",".join(SYMBOLS), help="لیست نمادها با کاما جدا شده")
+    p.add_argument("--timeframes", default=",".join(TIMEFRAMES), help="لیست تایم‌فریم‌ها با کاما جدا شده")
+    p.add_argument("--engine", choices=["exact", "fast"], default="exact",
+                    help="⚠️ 'fast' فقط برای مقایسهٔ سریع؛ هرگز پیش‌فرض/معتبر نیست.")
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1),
+                    help="تعداد پردازه برای موازی‌سازیِ موتورِ exact")
+    p.add_argument("--min-samples", type=int, default=MIN_SAMPLE_SIZE_DEFAULT,
+                    help="حداقل نمونهٔ آماریِ اجباری برای هر سلولِ فیلترشونده")
+    p.add_argument("--robust", action="store_true",
+                    help="فعال‌سازیِ Monte Carlo Permutation Test و Walk-Forward (سنگین)")
+    p.add_argument("--determinism-check", action="store_true", default=True,
+                    help="چکِ determinism روی یک نمونهٔ کوچک (پیش‌فرض روشن)")
+    p.add_argument("--no-determinism-check", dest="determinism_check", action="store_false")
+    p.add_argument("--lookahead-check", action="store_true",
+                    help="اجرایِ ابزارِ خودتشخیصیِ لوک‌اِهد (سنگین)")
+    p.add_argument("--no-log", dest="keep_log", action="store_false", default=True,
+                    help="خاموش‌کردنِ ضبطِ لاگِ کاملِ الگوریتمی برای هر سیگنال (خروجی سبک‌تر)")
+    p.add_argument("--output", default=None, help="مسیر فایلِ گزارشِ متنیِ خروجی")
+    p.add_argument("--json-output", default=None, help="مسیرِ دلخواه برای dumpِ کاملِ JSON هر معامله")
     return p.parse_args()
+
+
+def _fast_engine_placeholder(*a, **kw):
+    """حالتِ fast صرفاً برای مقایسهٔ سریع — نگاشتِ صریح به همان موتورِ exact
+    ولی با یک ScriptRunner پیوسته روی کلِ تاریخچه (سریع‌تر، ولی دقیقاً همان
+    باگِ رده‌شدهٔ #۱ در سند: با رفتارِ لایو یکی نیست). عمداً هرگز پیش‌فرض
+    نیست و همیشه با برچسبِ ⚠️ در گزارش علامت می‌خورد."""
+    raise NotImplementedError(
+        "حالت --engine fast در این نسخه پیاده‌سازی نشده (عمداً، چون سند صراحتاً می‌گوید "
+        "هرگز نباید پیش‌فرض یا جایگزینِ موتورِ exact باشد). برای مقایسهٔ سریع، بازهٔ زمانیِ "
+        "کوچک‌تری با --engine exact اجرا کنید."
+    )
 
 
 def main():
     args = parse_args()
-    symbols = [s.upper() for s in args.symbols]
-    tfs = [str(t) for t in args.tfs]
-    leverage_overrides = _parse_kv_overrides(args.leverage)
-    tick_overrides = _parse_kv_overrides(args.tick)
-    history_bars = int(args.history_bars)
-    apply_signal_filter = not args.no_signal_filter  # 🆕 پیش‌فرض: روشن
+    start_dt = datetime.strptime(args.date_from, "%Y-%m-%d").replace(tzinfo=UTC)
+    end_dt = datetime.strptime(args.date_to, "%Y-%m-%d").replace(tzinfo=UTC)
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+    timeframes = [t.strip() for t in args.timeframes.split(",") if t.strip()]
 
-    try:
-        if args.resend:
-            trades, meta = load_results()
-            if not trades:
-                logger.error("نتایج ذخیره‌شده‌ای پیدا نشد")
-                return 1
-            logger.info(f"Resend از فایل ذخیره‌شده ({len(trades)} معامله)...")
-            send_reports(trades, meta, args.mode, do_send=not args.no_send)
-            return 0
+    run_meta = {
+        "symbols": symbols, "timeframes": timeframes,
+        "gaps": {}, "determinism": {}, "lookahead": {},
+    }
 
-        if (not args.force) and (not args.no_send) and marker_already_sent(args.mode):
-            logger.info(f"گزارش '{args.mode}' امروز ({today_str()}) قبلاً ارسال شده. برای اجرای مجدد: --force")
-            return 0
+    all_trades: list[TradeResult] = []
+    per_symbol_tf: dict = {}
+    recent_sections: list[str] = []
+    robust_extra: dict = {}
+    global_start_ms = utc_ms(start_dt)
+    global_end_ms = utc_ms(end_dt)
+    # لنگرِ «سیگنال‌های اخیر» = انتهایِ بازهٔ بک‌تست، نه لحظهٔ واقعیِ اجرا؛
+    # وگرنه برای بازه‌های تاریخیِ گذشته همیشه صفر سیگنال «اخیر» پیدا می‌شد.
+    recent_anchor_ms = global_end_ms
+    first_df_for_benchmark: Optional[pd.DataFrame] = None
 
-        # اطمینان از حضور صحیح اطلاعات هر نماد
-        for sym in symbols:
-            if sym not in LEVERAGE_MAP:
-                LEVERAGE_MAP[sym] = 50
-            if sym not in TICK_SIZES:
-                TICK_SIZES[sym] = 0.0001
+    if args.engine == "fast":
+        logger.warning("⚠️ در حالِ اجرا با --engine fast — نتیجه تقریبی است.")
 
-        # اعتبارسنجی زودهنگام تایم‌فریم‌ها
-        for tf in tfs:
-            try:
-                binance_interval_str(tf)
-            except ValueError as e:
-                logger.error(str(e))
-                tg_send(f"❌ {e}")
-                return 1
+    for symbol in symbols:
+        for tf in timeframes:
+            logger.warning(f"[{symbol} {tf}m] دریافتِ دادهٔ تاریخی از بایننس...")
+            # کمی حاشیه به عقب برای این‌که اولین کندلِ واقعیِ بازه هم history_bars کاملِ خودش را داشته باشد
+            fetch_start = start_dt - timedelta(minutes=int(tf) * HISTORY_BARS * 1.2 + 60)
+            df_full = fetch_full_history(symbol, tf, fetch_start, end_dt)
+            run_meta["gaps"][(symbol, tf)] = df_full.attrs.get("gaps", [])
+            if df_full.empty:
+                logger.error(f"[{symbol} {tf}m] هیچ داده‌ای دریافت نشد — این ترکیب رد می‌شود.")
+                continue
+            if first_df_for_benchmark is None:
+                # برشِ دقیقِ بازهٔ درخواستی برای بنچمارکِ Buy&Hold
+                mask = (df_full.index >= start_dt) & (df_full.index <= end_dt)
+                first_df_for_benchmark = df_full.loc[mask]
 
-        now_ir = datetime.now(UTC_TZ).astimezone(IRAN_TZ)
-        today_mid = now_ir.replace(hour=0, minute=0, second=0, microsecond=0)
-        start_ir = today_mid - timedelta(days=max(1, args.days) - 1)
-        start_ms = int(start_ir.timestamp() * 1000)
-        end_ms = int(time.time() * 1000)
-        meta = {
-            "days": args.days, "symbols": symbols, "tfs": tfs,
-            "start_date": start_ir.strftime("%Y-%m-%d"), "end_date": now_ir.strftime("%Y-%m-%d"),
-            "generated_at": now_iran_str(), "engine": ENGINE_NAME, "engine_mode": args.engine,
-            "window_clamp": args.window_clamp,
-            "history_bars": history_bars,
-            "signal_filter_enabled": apply_signal_filter,  # 🆕
-            "combos": [], "errors": [],
-        }
+            logger.warning(f"[{symbol} {tf}m] {len(df_full)} کندل دریافت شد؛ اجرایِ موتورِ سیگنال...")
 
-        est_bars = sum(int(args.days) * 1440 // int(tf) for tf in tfs) * len(symbols)
-        intro = (f"🚀 شروع بک‌تست استراتژی DTM\n"
-                 f"🗓 {meta['start_date']} تا {meta['end_date']} ({meta['days']} روز — تهران)\n"
-                 f"📡 {len(symbols)} ارز × {len(tfs)} تایم‌فریم\n"
-                 f"📈 تخمین کندل‌ها: ~{est_bars:,}\n"
-                 f"⚙️ موتور: {args.engine}"
-                 + (f" (پنجره {history_bars} کندلی)" if args.engine == "exact"
-                    else (f" (پیوسته + فیلتر پنجره {args.window_clamp} کندلی)" if args.window_clamp else " (پیوسته)"))
-                 + f"\n🆕 فیلتر بهینه‌سازی سیگنال: {'فعال (حذف HD+ + ۶ ترکیب زیان‌ده)' if apply_signal_filter else 'غیرفعال (نسخه‌ی خام)'}"
-                 + "\n⏳ ممکن است زمان‌بر باشد...")
-        logger.info(intro.replace("\n", " | "))
-        if not args.no_send:
-            tg_send(intro)
+            if args.engine == "fast":
+                _fast_engine_placeholder()
 
-        all_trades = []
-        total = len(tfs) * len(symbols)
-        done = 0
-        for tf in tfs:
-            for sym in symbols:
-                done += 1
-                t0 = time.time()
-                try:
-                    def _progress(d, n_total, _sym=sym, _tf=tf, _done=done, _total=total, _t0=t0):
-                        if n_total <= 0 or d == 0:
-                            return
-                        pct = d / n_total * 100
-                        elapsed = time.time() - _t0
-                        eta = elapsed / d * (n_total - d)
-                        logger.info(
-                            f"[{_done}/{_total}] {_sym} {_tf}m — {pct:.1f}٪ "
-                            f"({d:,}/{n_total:,}) | ETA ~{eta/60:.1f} دقیقه"
-                        )
+            events = generate_signals_exact(
+                df_full, symbol, tf, HISTORY_BARS,
+                workers=args.workers, keep_log=args.keep_log,
+            )
+            # فقط سیگنال‌های داخلِ بازهٔ درخواستی (نه حاشیهٔ warm-up) را نگه دار
+            events = [e for e in events if global_start_ms <= e.signal_bar_ts_ms <= global_end_ms]
+            logger.warning(f"[{symbol} {tf}m] {len(events)} سیگنال یافت شد؛ در حالِ حلِ نتیجهٔ هر معامله...")
 
-                    trades, n_bars, raw_stats, diag = backtest_combo(
-                        sym, tf, start_ms, end_ms, engine=args.engine,
-                        history_bars=history_bars, workers=args.workers,
-                        risk_free_fee_usd=args.risk_free_fee_usd,
-                        progress_cb=_progress if args.engine == "exact" else None,
-                        window_clamp=args.window_clamp,
-                        verify_sample_n=args.verify_sample,
-                        signal_dump_n=args.signal_dump,
-                        apply_signal_filter=apply_signal_filter,  # 🆕
-                    )
-                    elapsed = time.time() - t0
-                    all_trades.extend(trades)
-                    meta["control_checked_total"] = meta.get("control_checked_total", 0) + diag.get("control_checked", 0)
-                    meta["control_found_total"] = meta.get("control_found_total", 0) + diag.get("control_found", 0)
-                    meta["combos"].append({
-                        "symbol": sym, "tf": tf, "bars": n_bars,
-                        "raw_hits": raw_stats, "signals": len(trades),
-                        "out_of_range": diag.get("out_of_range", 0),
-                        "outside_window": diag.get("outside_window", 0),
-                        "bad_sltp": diag.get("bad_sltp", 0),
-                        "filtered_signal_rule": diag.get("filtered_signal_rule", 0),  # 🆕
-                        "control_checked": diag.get("control_checked", 0),
-                        "control_found": diag.get("control_found", 0),
-                        "elapsed_sec": elapsed,
-                        "signal_dump_path": diag.get("signal_dump_path"),
-                        "signal_dump_count": diag.get("signal_dump_count", 0),
-                        "target_hits": diag.get("target_hits", 0),
-                        "stop_hits": diag.get("stop_hits", 0),
-                        "rf_hits": diag.get("rf_hits", 0),
-                        "rr_above2_count": diag.get("rr_above2_count", 0),
-                        "rr_above2_sum": diag.get("rr_above2_sum", 0.0),
-                        "rr_above2_avg": diag.get("rr_above2_avg", 0.0),
-                    })
-                    msg = (f"⏳ [{done}/{total}] {sym} {tf}m ✓ | "
-                           f"کندل: {n_bars:,} | خام: {raw_stats.get('total', 0)} | "
-                           f"خارج‌ازپنجره: {diag.get('outside_window', 0)} | "
-                           f"فیلترشده: {diag.get('filtered_signal_rule', 0)} | "
-                           f"معاملات: {len(trades)} | {elapsed:.0f}s"
-                           + (f" | کنترلی: {diag.get('control_found', 0)}/{diag.get('control_checked', 0)}"
-                              if diag.get("control_checked") else ""))
-                except Exception as e:
-                    meta["errors"].append(f"{sym} {tf}m: {e}")
-                    logger.error(f"[COMBO] {sym} {tf}m failed: {e}\n{traceback.format_exc()}")
-                    msg = f"⚠️ [{done}/{total}] {sym} {tf}m ✗ | {e}"
-                logger.info(msg)
-                if not args.no_send:
-                    tg_send(msg)
+            ts_to_idx = {int(ts.timestamp() * 1000): i for i, ts in enumerate(df_full.index)}
+            trades = [resolve_trade(ev, df_full, ts_to_idx) for ev in events]
+            all_trades.extend(trades)
 
-        # ارسال فایل کامل سیگنال‌های اخیر هر ترکیب (CSV)
-        if args.signal_dump and not args.no_send:
-            for c in meta["combos"]:
-                p = c.get("signal_dump_path")
-                if p and Path(p).exists():
-                    tg_send_document(
-                        p,
-                        caption=f"📊 {c['symbol']} {c['tf']}m — {c.get('signal_dump_count', 0)} سیگنال اخیر (CSV)",
-                    )
-                    time.sleep(1)
+            sub_metrics = compute_portfolio_metrics(trades, df_full, global_start_ms, global_end_ms)
+            per_symbol_tf[(symbol, tf)] = sub_metrics
 
-        if args.account_sim is not None:
-            meta["account_sim"] = simulate_with_account_balance(all_trades, args.account_sim)
+            trades_by_bar = {t.event.signal_bar_ts_ms: t for t in trades}
+            recent_sections.append(build_recent_signals_section(events, trades_by_bar, tf, recent_anchor_ms))
 
-        save_results(all_trades, meta)
-        sent_ok = send_reports(all_trades, meta, args.mode, do_send=not args.no_send)
-        if sent_ok and not args.no_send:
-            marker_set(args.mode)
-            tg_send(f"✅ بک‌تست تمام شد — {len(all_trades)} سیگنال پردازش شد.")
-        return 0
+            if args.determinism_check:
+                run_meta["determinism"][(symbol, tf)] = determinism_check(df_full, symbol, tf, HISTORY_BARS)
 
-    except KeyboardInterrupt:
-        tg_send("⏹ بک‌تست توسط کاربر متوقف شد.")
-        return 130
-    except Exception as e:
-        err = f"❌ خطای کلی بک‌تست: {type(e).__name__}: {e}\n{traceback.format_exc()[:1500]}"
-        logger.error(err)
-        tg_send(err)
-        return 1
+            if args.lookahead_check:
+                run_meta["lookahead"][(symbol, tf)] = lookahead_check(df_full, events, symbol, tf, HISTORY_BARS)
+
+            if args.robust:
+                robust_extra.setdefault("walk_forward", {})[(symbol, tf)] = walk_forward_validation(
+                    df_full, symbol, tf, HISTORY_BARS, args.workers
+                )
+
+    if args.robust:
+        robust_extra["monte_carlo"] = monte_carlo_permutation_test(all_trades)
+
+    portfolio_metrics = compute_portfolio_metrics(
+        all_trades,
+        first_df_for_benchmark if first_df_for_benchmark is not None else pd.DataFrame(),
+        global_start_ms, global_end_ms,
+    )
+    breakdown = three_dim_breakdown(all_trades, min_samples=args.min_samples)
+    half_split = half_split_validation(all_trades, breakdown)
+
+    report_text = render_report(
+        args, run_meta, per_symbol_tf, portfolio_metrics, breakdown, half_split,
+        recent_sections, robust_extra,
+    )
+
+    out_path = args.output or f"backtest_report_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.txt"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(report_text)
+    print(report_text)
+    print(f"\n[گزارش در فایل ذخیره شد: {out_path}]")
+
+    if args.json_output:
+        def _trade_to_dict(t: TradeResult) -> dict:
+            d = asdict(t)
+            d["event"]["algo_log"] = t.event.algo_log if args.keep_log else ""
+            return d
+        with open(args.json_output, "w", encoding="utf-8") as f:
+            json.dump([_trade_to_dict(t) for t in all_trades], f, ensure_ascii=False, indent=2, default=str)
+        print(f"[dumpِ کاملِ JSON معاملات: {args.json_output}]")
 
 
 if __name__ == "__main__":
-    try:
-        if mp.get_start_method(allow_none=True) is None:
-            mp.set_start_method("fork" if sys.platform != "win32" else "spawn")
-    except Exception:
-        pass
-    sys.exit(main())
+    main()
+
