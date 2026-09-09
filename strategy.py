@@ -61,22 +61,25 @@ def main(
     leftBars: int = 5
     rightBars = 3
 
-    # PyneCore 6.8.7 — native RSI API
-    rsiVal: Series = ta.rsi(source=close, length=rsiLen)
-    macdLine: Series
-    histLine: Series
+    # PyneCore 6.9.2 — native RSI API
+    rsiVal: Series[float] = ta.rsi(source=close, length=rsiLen)
+    macdLine: Series[float]
+    signalLine: Series[float]
+    histLine: Series[float]
     macdLine, signalLine, histLine = ta.macd(source=close, fastlen=macdFast, slowlen=macdSlow, siglen=macdSig)
-    atr14 = ta.atr(length=14)
+    atr14: Series[float] = ta.atr(length=14)
 
-    pivotHighPrice = ta.pivothigh(high, leftBars, rightBars)
-    pivotLowPrice = ta.pivotlow(low, leftBars, rightBars)
+    # PyneCore 6.9.2 — Pivot Functions
+    pivotHighPrice: Series[float] = ta.pivothigh(source=high, leftbars=leftBars, rightbars=rightBars)
+    pivotLowPrice: Series[float] = ta.pivotlow(source=low, leftbars=leftBars, rightbars=rightBars)
 
-    rsiAtPivotHigh = ta.valuewhen(not na(pivotHighPrice), rsiVal[rightBars], 0)
-    rsiAtPivotLow = ta.valuewhen(not na(pivotLowPrice), rsiVal[rightBars], 0)
-    macdLineAtPivotHigh = ta.valuewhen(not na(pivotHighPrice), macdLine[rightBars], 0)
-    macdLineAtPivotLow = ta.valuewhen(not na(pivotLowPrice), macdLine[rightBars], 0)
-    histAtPivotHigh = ta.valuewhen(not na(pivotHighPrice), histLine[rightBars], 0)
-    histAtPivotLow = ta.valuewhen(not na(pivotLowPrice), histLine[rightBars], 0)
+    rsiAtPivotHigh: Series[float] = ta.valuewhen(not na(pivotHighPrice), rsiVal[rightBars], 0)
+    rsiAtPivotLow: Series[float] = ta.valuewhen(not na(pivotLowPrice), rsiVal[rightBars], 0)
+    macdLineAtPivotHigh: Series[float] = ta.valuewhen(not na(pivotHighPrice), macdLine[rightBars], 0)
+    macdLineAtPivotLow: Series[float] = ta.valuewhen(not na(pivotLowPrice), macdLine[rightBars], 0)
+    histAtPivotHigh: Series[float] = ta.valuewhen(not na(pivotHighPrice), histLine[rightBars], 0)
+    histAtPivotLow: Series[float] = ta.valuewhen(not na(pivotLowPrice), histLine[rightBars], 0)
+
      
     ph_price_2: Persistent[float] = na(float)
     ph_price_1: Persistent[float] = na(float)
