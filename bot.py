@@ -34,7 +34,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 # ============================================================
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
-SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT", "PUMPUSDT"]
+SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
 TIMEFRAMES = ["1" , "5"]
 HISTORY_BARS = 500
 
