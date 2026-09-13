@@ -36,7 +36,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 # ============================================================
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
 TIMEFRAMES = ["1" , "5"]
-HISTORY_BARS = 500
+HISTORY_BARS = 500  # fallback
+PINE_START_BARS = 8700  # Pine-Exact parity
+PINE_HIST_TOLERANCE = 0.03  # mirror HIST_TOLERANCE
 
 CHECK_INTERVAL = {
     "1": 60,

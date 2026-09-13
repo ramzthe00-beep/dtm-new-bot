@@ -153,6 +153,46 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
     return None, None, None, None
 
 
+
+# ═══════════════════════════════════════════════════════════
+# 🎯 Pine-Exact Parity (100% match with Pine Script)
+# ═══════════════════════════════════════════════════════════
+HIST_TOLERANCE = 0.03  # tolerance for near-zero hist
+
+def _py_check_color_change(hist_series, bar_index_current, bar_start, bar_end, need_red):
+    """
+    Shobeh-sazi-e daghigh-e checkColorChange-e Pine ba tolerance.
+    hist nazdik-e sefr (|h| <= 0.03) = sefr dar nazar gerefte mishe.
+    """
+    if bar_start is None or bar_end is None:
+        return False
+    try:
+        bar_start = int(bar_start)
+        bar_end = int(bar_end)
+    except (ValueError, TypeError):
+        return False
+    if bar_end <= bar_start:
+        return False
+    start_offset = bar_index_current - (bar_end - 1)
+    end_offset = bar_index_current - (bar_start + 1)
+    if start_offset < 0 or end_offset > 5000 or end_offset < start_offset:
+        return False
+    for j in range(start_offset, end_offset + 1):
+        idx = bar_index_current - j
+        if idx < 0 or idx >= len(hist_series):
+            continue
+        h = hist_series[idx]
+        if h is None:
+            continue
+        if abs(h) <= HIST_TOLERANCE:
+            continue
+        if need_red and h < 0:
+            return True
+        if not need_red and h > 0:
+            return True
+    return False
+
+
 def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
     import logging
     from pathlib import Path
@@ -352,6 +392,9 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         empty_indices = []
         debug_info = []
 
+        # 🎯 Pine-Exact: hist history for checkColorChange
+        hist_history = []
+
         for result in runner.run_iter():
             result_count += 1
 
@@ -364,6 +407,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             if is_valid_dict:
                 last_values = dict(result[1])
                 found_valid = True
+                hist_history.append(result[1].get("macd_histogram"))
             elif len(result) >= 2 and isinstance(result[1], dict):
                 empty_count += 1
                 if len(empty_indices) < 20:
@@ -438,6 +482,28 @@ Value: {str(last_values)[:500]}
 
         if signal not in ("LONG", "SHORT"):
             signal = None
+
+        # ═══════════════════════════════════════════════════════════
+        # 🎯 Pine-Exact Parity: checkColorChange filter (tolerance=0.03)
+        # ═══════════════════════════════════════════════════════════
+        if signal in ("LONG", "SHORT") and found_valid and hist_history:
+            try:
+                if signal == "SHORT":
+                    b1 = last_values.get("previous_pivot_high_index")
+                    b2 = last_values.get("pivot_high_index")
+                    need_red = True
+                else:
+                    b1 = last_values.get("previous_pivot_low_index")
+                    b2 = last_values.get("pivot_low_index")
+                    need_red = False
+                bar_idx = len(hist_history) - 1
+                ok = _py_check_color_change(hist_history, bar_idx, b1, b2, need_red)
+                if not ok:
+                    logger.info(f"[PARITY] checkColorChange filtered: {signal} (b1={b1} b2={b2})")
+                    signal = None
+                    entry = None
+            except Exception as e:
+                logger.warning(f"[PARITY] checkColorChange error: {e}")
 
         # ============================================================
         # لاگ تشخیصی DIVCHECK
