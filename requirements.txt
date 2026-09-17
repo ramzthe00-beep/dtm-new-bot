@@ -2,4 +2,4 @@ requests
 pandas
 numpy
 flask
-pynesys-pynecore==6.9.4
+pynesys-pynecore==6.10.0
