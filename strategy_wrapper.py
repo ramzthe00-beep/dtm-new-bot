@@ -33,6 +33,14 @@ SYMBOL_TICK_INFO = {
     "PUMPUSDT": {"mintick": 0.00001, "pricescale": 100000, "basecurrency": "PUMP"},
 }
 
+# حداقل نسبت ریسک به ریوارد قابل قبول
+MIN_RR = 3.0
+
+# پارامترهای جستجوی پیوت گسترده برای استاپ
+STOP_SEARCH_WINDOW = 350   # حداکثر تعداد کندل به عقب که بررسی می‌شود
+STOP_PIVOT_LEFT = 5        # تعداد کندل سمت چپ برای تایید پیوت (مطابق "سریع ۵/۳")
+STOP_PIVOT_RIGHT = 3       # تعداد کندل سمت راست برای تایید پیوت
+
 
 # ============================================================
 # تابع ارسال پیام به تلگرام (برای گزارش خطاهای حیاتی)
@@ -69,17 +77,106 @@ def _fmt_time(candles, idx):
     return "OUT_OF_RANGE"
 
 
+# ═══════════════════════════════════════════════════════════
+# 🆕 جستجوی پیوت گسترده برای تعیین استاپ نهایی
+# ═══════════════════════════════════════════════════════════
+def _is_confirmed_pivot_low(candles, i, leftbars, rightbars):
+    """
+    بررسی می‌کند آیا کندل با ایندکس i یک دره‌ی (Pivot Low) تایید شده است؛
+    یعنی low آن کندل، پایین‌ترین low در بازه‌ی [i-leftbars, i+rightbars] باشد.
+    """
+    lo = i - leftbars
+    hi = i + rightbars
+    if lo < 0 or hi >= len(candles):
+        return False
+    pivot_low = candles[i].low
+    for j in range(lo, i):
+        if candles[j].low < pivot_low:
+            return False
+    for j in range(i + 1, hi + 1):
+        if candles[j].low < pivot_low:
+            return False
+    return True
+
+
+def _is_confirmed_pivot_high(candles, i, leftbars, rightbars):
+    """
+    بررسی می‌کند آیا کندل با ایندکس i یک قله‌ی (Pivot High) تایید شده است؛
+    یعنی high آن کندل، بالاترین high در بازه‌ی [i-leftbars, i+rightbars] باشد.
+    """
+    lo = i - leftbars
+    hi = i + rightbars
+    if lo < 0 or hi >= len(candles):
+        return False
+    pivot_high = candles[i].high
+    for j in range(lo, i):
+        if candles[j].high > pivot_high:
+            return False
+    for j in range(i + 1, hi + 1):
+        if candles[j].high > pivot_high:
+            return False
+    return True
+
+
+def _find_extended_stop_pivot(candles, signal, older_pivot_bar, extreme_price,
+                               buffer_abs, search_window=STOP_SEARCH_WINDOW,
+                               leftbars=STOP_PIVOT_LEFT, rightbars=STOP_PIVOT_RIGHT):
+    """
+    از کندلِ قدیمی‌تر بین دو پیوت واگرایی (older_pivot_bar) به عقب حرکت می‌کند و
+    نزدیک‌ترین پیوت تاییدشده (دره برای LONG، قله برای SHORT) را پیدا می‌کند که
+    از extreme_price (پایین‌ترین/بالاترین قیمت بین دو پیوت واگرایی) هم فراتر رفته
+    باشد (پایین‌تر برای LONG، بالاتر برای SHORT).
+
+    حداکثر تا search_window کندل به عقب جستجو می‌کند و نزدیک‌ترین مورد را
+    برمی‌گرداند (اولین موردی که در حرکت رو به عقب پیدا شود).
+
+    خروجی: (stop_price, pivot_index) یا (None, None) اگر چیزی پیدا نشد.
+    """
+    if older_pivot_bar is None or extreme_price is None:
+        return None, None
+
+    older_pivot_bar = int(older_pivot_bar)
+    search_start = max(0, older_pivot_bar - search_window)
+
+    # حرکت رو به عقب از نزدیک‌ترین کندل قبل از older_pivot_bar
+    for i in range(older_pivot_bar - 1, search_start - 1, -1):
+        if signal == "LONG":
+            if not _is_confirmed_pivot_low(candles, i, leftbars, rightbars):
+                continue
+            candidate_low = candles[i].low
+            if candidate_low < extreme_price:
+                return candidate_low - buffer_abs, i
+        else:  # SHORT
+            if not _is_confirmed_pivot_high(candles, i, leftbars, rightbars):
+                continue
+            candidate_high = candles[i].high
+            if candidate_high > extreme_price:
+                return candidate_high + buffer_abs, i
+
+    return None, None
+
+
 def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
     """
     استاپ/تارگت سفارشی — کاملاً مستقل از منطق واگرایی strategy.py.
-    
-    LONG:  استاپ = پایین‌ترین دره از ۲ دره واگرایی - بافر
-           تارگت خام = بالاترین قله بین آن دو دره
-           اگر R:R < 2 → تارگت بالا برده می‌شود تا R:R = 2
-    
-    SHORT: استاپ = بالاترین قله از ۲ قله واگرایی + بافر
-           تارگت خام = پایین‌ترین دره بین آن دو قله
-           اگر R:R < 2 → تارگت پایین برده می‌شود تا R:R = 2
+
+    ── تعیین استاپ (نسخه جدید) ──────────────────────────────
+    به‌جای استفاده‌ی مستقیم از پایین‌ترین (LONG) / بالاترین (SHORT) دو پیوت
+    واگرایی، ابتدا به عقب‌تر از پیوت قدیمی‌تر (older) دو پیوت واگرایی حرکت
+    می‌کنیم (حداکثر تا ۳۵۰ کندل قبل) و نزدیک‌ترین دره/قلهٔ کاملاً تایید شده
+    (پیوت واقعی کندل‌به‌کندل، نه صرفاً یک کندل ساده) را پیدا می‌کنیم که از
+    هر دو پیوت واگرایی «فراتر» رفته باشد:
+        LONG  → دره‌ای با low پایین‌تر از پایین‌ترین دو دره‌ی واگرایی
+        SHORT → قله‌ای با high بالاتر از بالاترین دو قله‌ی واگرایی
+    اگر چنین پیوتی پیدا شد، استاپ = آن سطح ± بافر.
+    اگر پیدا نشد (در بازهٔ جستجو موجود نبود)، دقیقاً طبق منطق قبلی عمل
+    می‌شود: استاپ = min/max دو پیوت واگرایی ± بافر (fallback ایمن).
+
+    ── تعیین تارگت ───────────────────────────────────────────
+    LONG:  تارگت خام = بالاترین قله بین دو دره واگرایی.
+           اگر R:R < 3 → تارگت بالا برده می‌شود تا R:R = 3.
+    SHORT: تارگت خام = پایین‌ترین دره بین دو قله واگرایی.
+           اگر R:R < 3 → تارگت پایین برده می‌شود تا R:R = 3.
 
     خروجی چهارم (structural_level):
         LONG → بالاترین قلهٔ بین دو دره | SHORT → پایین‌ترین درهٔ بین دو قله
@@ -99,18 +196,39 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
         low2 = last_values.get("pivot_low_price")
         bar1 = last_values.get("previous_pivot_low_index")
         bar2 = last_values.get("pivot_low_index")
-        
+
         if not (_valid(low1) and _valid(low2) and _valid(bar1) and _valid(bar2)):
             logger.warning(f"[SL/TP] LONG: missing pivot data low1={low1} low2={low2} bar1={bar1} bar2={bar2}")
             return None, None, None, None
 
-        stop = min(low1, low2) - buffer_abs
+        # ── استاپ: fallback (منطق قدیم) ──
+        fallback_low = min(low1, low2)
+        fallback_stop = fallback_low - buffer_abs
+
+        # ── استاپ: جستجوی پیوت گسترده (منطق جدید) ──
+        older_bar = min(int(bar1), int(bar2))
+        extended_stop, pivot_idx = _find_extended_stop_pivot(
+            candles, "LONG", older_bar, fallback_low, buffer_abs
+        )
+
+        if extended_stop is not None:
+            stop = extended_stop
+            logger.info(
+                f"[SL/TP] LONG extended stop used | pivot_idx={pivot_idx} "
+                f"({_fmt_time(candles, pivot_idx)}) | stop={stop} | fallback_would_be={fallback_stop}"
+            )
+        else:
+            stop = fallback_stop
+            logger.info(
+                f"[SL/TP] LONG no extended pivot found within {STOP_SEARCH_WINDOW} bars "
+                f"before bar={older_bar} → using fallback stop={stop}"
+            )
 
         lo, hi = sorted((int(bar1), int(bar2)))
         lo, hi = max(lo, 0), min(hi, len(candles) - 1)
         if hi < lo:
             return None, None, None, None
-        
+
         # پیدا کردن بالاترین قله بین دو دره
         mid_peak = max(c.high for c in candles[lo:hi + 1])
 
@@ -119,26 +237,47 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
             return None, None, None, None
 
         rr = (mid_peak - entry) / risk
-        target = mid_peak if rr >= 2 else entry + 2 * risk
-        return stop, target, max(rr, 2.0), mid_peak
+        target = mid_peak if rr >= MIN_RR else entry + MIN_RR * risk
+        return stop, target, max(rr, MIN_RR), mid_peak
 
     elif signal == "SHORT":
         high1 = last_values.get("previous_pivot_high_price")
         high2 = last_values.get("pivot_high_price")
         bar1 = last_values.get("previous_pivot_high_index")
         bar2 = last_values.get("pivot_high_index")
-        
+
         if not (_valid(high1) and _valid(high2) and _valid(bar1) and _valid(bar2)):
             logger.warning(f"[SL/TP] SHORT: missing pivot data high1={high1} high2={high2} bar1={bar1} bar2={bar2}")
             return None, None, None, None
 
-        stop = max(high1, high2) + buffer_abs
+        # ── استاپ: fallback (منطق قدیم) ──
+        fallback_high = max(high1, high2)
+        fallback_stop = fallback_high + buffer_abs
+
+        # ── استاپ: جستجوی پیوت گسترده (منطق جدید) ──
+        older_bar = min(int(bar1), int(bar2))
+        extended_stop, pivot_idx = _find_extended_stop_pivot(
+            candles, "SHORT", older_bar, fallback_high, buffer_abs
+        )
+
+        if extended_stop is not None:
+            stop = extended_stop
+            logger.info(
+                f"[SL/TP] SHORT extended stop used | pivot_idx={pivot_idx} "
+                f"({_fmt_time(candles, pivot_idx)}) | stop={stop} | fallback_would_be={fallback_stop}"
+            )
+        else:
+            stop = fallback_stop
+            logger.info(
+                f"[SL/TP] SHORT no extended pivot found within {STOP_SEARCH_WINDOW} bars "
+                f"before bar={older_bar} → using fallback stop={stop}"
+            )
 
         lo, hi = sorted((int(bar1), int(bar2)))
         lo, hi = max(lo, 0), min(hi, len(candles) - 1)
         if hi < lo:
             return None, None, None, None
-        
+
         # پیدا کردن پایین‌ترین دره بین دو قله
         mid_trough = min(c.low for c in candles[lo:hi + 1])
 
@@ -147,8 +286,8 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
             return None, None, None, None
 
         rr = (entry - mid_trough) / risk
-        target = mid_trough if rr >= 2 else entry - 2 * risk
-        return stop, target, max(rr, 2.0), mid_trough
+        target = mid_trough if rr >= MIN_RR else entry - MIN_RR * risk
+        return stop, target, max(rr, MIN_RR), mid_trough
 
     return None, None, None, None
 
@@ -359,7 +498,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         if runtime_version and installed_version and runtime_version != installed_version:
             logger.warning(f"⚠️ VERSION MISMATCH! Runtime={runtime_version}, Installed={installed_version}")
 
-    
+
         # ============================================================
         # 🔍 تست pine_range — فقط برای دیباگ
         # ============================================================
@@ -466,7 +605,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         # ============================================================
         signal = None
         entry = None
-        
+
         if isinstance(last_values, dict):
             signal = last_values.get("signal")
             entry = last_values.get("entry")
@@ -725,7 +864,7 @@ Value: {str(last_values)[:500]}
         # ============================================================
         stop_price, target_price, rr_value, structural_level = None, None, None, None
         risk_free_pct = None
-        
+
 
         if signal in ("LONG", "SHORT"):
             if symbol == "BNBUSDT" or symbol == "ETHUSDT":
@@ -773,21 +912,21 @@ Value: {str(last_values)[:500]}
         if signal in ("LONG", "SHORT"):
             emoji = "🟢" if signal == "LONG" else "🔴"
             direction = "خرید" if signal == "LONG" else "فروش"
-            
+
             stop_distance = abs(stop_price - entry) if stop_price else 0
             target_distance = abs(target_price - entry) if target_price else 0
             stop_pct = (stop_distance / entry * 100) if entry else 0
             target_pct = (target_distance / entry * 100) if entry else 0
-            
-            if rr_value and rr_value >= 3:
+
+            if rr_value and rr_value >= 4:
                 rr_status = "عالی 🚀"
-            elif rr_value and rr_value >= 2:
+            elif rr_value and rr_value >= 3:
                 rr_status = "خوب ✅"
-            elif rr_value and rr_value >= 1:
+            elif rr_value and rr_value >= 2:
                 rr_status = "متوسط ⚠️"
             else:
                 rr_status = "ضعیف ❌"
-            
+
             signal_type_map = {
                 "CD-": "CD- (واگرایی کلاسیک نزولی)",
                 "CD+": "CD+ (واگرایی کلاسیک صعودی)",
@@ -795,16 +934,16 @@ Value: {str(last_values)[:500]}
                 "HD-": "HD- (واگرایی مخفی نزولی)",
             }
             signal_type_fa = signal_type_map.get(signal_type, signal_type)
-            
+
             if not hasattr(calculate_signals, "_counter"):
                 calculate_signals._counter = 0
             calculate_signals._counter += 1
             trade_id = f"#{calculate_signals._counter:04d}"
-            
+
             from datetime import datetime, timedelta
             now_utc = datetime.utcnow()
             now_tehran = now_utc + timedelta(hours=3, minutes=30)
-            
+
             score = 0
             if signal_type == "CD-":
                 score = last_values.get("score_classic_bearish", 0)
@@ -814,9 +953,9 @@ Value: {str(last_values)[:500]}
                 score = last_values.get("score_hidden_bullish", 0)
             elif signal_type == "HD-":
                 score = last_values.get("score_hidden_bearish", 0)
-            
+
             stars = "⭐" * score + "☆" * (5 - score)
-            
+
             result_msg = f"""
 {emoji} سیگنال {direction} ({signal}) - {symbol} - {timeframe} دقیقه
 ─────────────────────────────────────────
@@ -830,11 +969,11 @@ Value: {str(last_values)[:500]}
 📌 نوع: {signal_type_fa}
 🏆 امتیاز: {score}/5 {stars}
 ─────────────────────────────────────────
-🔒 وضعیت: {'✅ معتبر' if rr_value and rr_value >= 2 else '⚠️ ریسک بالا'}
+🔒 وضعیت: {'✅ معتبر' if rr_value and rr_value >= MIN_RR else '⚠️ ریسک بالا'}
 """
             logger.info(result_msg)
             _send_telegram(result_msg)
-            
+
         else:
             if result_count % 10 == 0:
                 status_msg = f"🔄 {symbol} {timeframe}دقیقه | {result_count} کندل پردازش شد | وضعیت: {'✅ سالم' if found_valid else '❌ خطا'}"
