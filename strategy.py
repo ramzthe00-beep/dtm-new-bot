@@ -421,9 +421,9 @@ def main(
                 result = fibOk and paOk
         return result
 
-    finalClassicBearish = False  #passesMinRequirement(classicBearishBase3, fibScoreBearish, priceActionBearishAtPivot)
+    finalClassicBearish = passesMinRequirement(classicBearishBase3, fibScoreBearish, priceActionBearishAtPivot)
     finalClassicBullish = passesMinRequirement(classicBullishBase3, fibScoreBullish, priceActionBullishAtPivot)
-    finalHiddenBullish = False #passesMinRequirement(hiddenBullishBase3, fibScoreBullish, priceActionBullishAtPivot)
+    finalHiddenBullish = passesMinRequirement(hiddenBullishBase3, fibScoreBullish, priceActionBullishAtPivot)
     finalHiddenBearish = passesMinRequirement(hiddenBearishBase3, fibScoreBearish, priceActionBearishAtPivot)
 
     # ============================================================
