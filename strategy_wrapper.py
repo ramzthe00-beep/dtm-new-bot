@@ -43,6 +43,24 @@ STOP_PIVOT_LEFT = 1        # تعداد کندل سمت چپ برای تایید
 STOP_PIVOT_RIGHT = 1       # تعداد کندل سمت راست برای تایید پیوت
 
 
+# ═══════════════════════════════════════════════════════════
+# 🎯 فیلتر روش E: per-symbol blacklist بر اساس type
+# =============================================================
+# بک‌تست ۷ روزه (۱۲-۱۸ سپتامبر، با ریسک فری):
+#   LTC  → CD+ و HD+  → Expectancy +0.250
+#   DOGE → HD- فقط     → Expectancy +0.273
+#   ETH  → همه ۴ نوع    → Expectancy +0.340
+#   BNB  → همه ۴ نوع    → Expectancy +0.613
+# نتیجه: Expectancy +0.571R، +61.72R در ۷ روز
+# ═══════════════════════════════════════════════════════════
+PER_SYMBOL_BLACKLIST = {
+    "LTCUSDT":  ["CD-", "HD-"],
+    "DOGEUSDT": ["CD-", "CD+", "HD+"],
+    "ETHUSDT":  [],
+    "BNBUSDT":  [],
+}
+
+
 # ============================================================
 # تابع ارسال پیام به تلگرام (برای گزارش خطاهای حیاتی)
 # ============================================================
@@ -293,7 +311,6 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
     return None, None, None, None
 
 
-
 # ═══════════════════════════════════════════════════════════
 # 🎯 Pine-Exact Parity (100% match with Pine Script)
 # ═══════════════════════════════════════════════════════════
@@ -459,19 +476,15 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         def candle_iterator():
             yield from candles
 
-
-
         # ============================================================
         # 📌 نمایش نسخه نصب شده و اجرایی PyneCore
         # ============================================================
         try:
-            # نسخه اجرایی (اولویت اول)
             from importlib.metadata import version
             runtime_version = version("pynesys-pynecore")
             logger.info(f"📌 PyneCore Runtime Version: {runtime_version}")
         except Exception:
             try:
-                # نسخه اجرایی (روش دوم)
                 import pkg_resources
                 runtime_version = pkg_resources.get_distribution("pynesys-pynecore").version
                 logger.info(f"📌 PyneCore Runtime Version: {runtime_version}")
@@ -480,7 +493,6 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
                 logger.warning("⚠️ Could not detect PyneCore runtime version")
 
         try:
-            # نسخه نصب شده (از pip)
             import subprocess
             result = subprocess.run(
                 ["pip", "show", "pynesys-pynecore"],
@@ -495,10 +507,8 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             installed_version = None
             logger.warning("⚠️ Could not detect PyneCore installed version")
 
-        # مقایسه و هشدار در صورت مغایرت
         if runtime_version and installed_version and runtime_version != installed_version:
             logger.warning(f"⚠️ VERSION MISMATCH! Runtime={runtime_version}, Installed={installed_version}")
-
 
         # ============================================================
         # 🔍 تست pine_range — فقط برای دیباگ
@@ -521,15 +531,9 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             _offset = int(os.getenv("PINE_HL_OFFSET", "0"))
             if _log_path:
                 _n = _phl.load(_log_path, offset=_offset)
-
-                # Load trend lookup (extra file اگه ست، وگرنه از همون log)
-
                 _trend_log = os.getenv("PINE_HL_TREND_LOG", _log_path).strip()
-
                 if _trend_log:
-
                     _tn = _phl.load_trend(_trend_log)
-
                     logger.info(f"[PINE-HL] trend loaded {_tn} entries")
                 logger.info(f"[PINE-HL] loaded {_n} entries (offset={_offset})")
             else:
@@ -753,6 +757,7 @@ Value: {str(last_values)[:500]}
         # ============================================================
         # 🔬 لاگ تشخیصی فوق‌تخصصی
         # ============================================================
+        signal_type = None  # 🆕 برای استفاده در ادامه (فیلتر E)
         try:
             signal_type = None
             if last_values.get("final_classic_bearish"):
@@ -889,14 +894,13 @@ Value: {str(last_values)[:500]}
         stop_price, target_price, rr_value, structural_level = None, None, None, None
         risk_free_pct = None
 
-
         if signal in ("LONG", "SHORT"):
             if symbol == "BNBUSDT" or symbol == "ETHUSDT":
                 buffer_ticks = 9
             elif symbol == "LTCUSDT" or symbol == "DOGEUSDT":
                 buffer_ticks = 3
             elif symbol == "PUMPUSDT":
-                buffer_ticks = 1   # ← فقط برای PUMPUSDT
+                buffer_ticks = 1
             else:
                 buffer_ticks = 5
 
@@ -908,13 +912,7 @@ Value: {str(last_values)[:500]}
                 f"target={target_price} | R:R={rr_value} | buffer={buffer_ticks}"
             )
 
-            # ============================================================
-            # 🛡️ نقطهٔ ریسک فری (درصد از ورود — مستقل از مقیاس قیمت)
-            # اگر فاصلهٔ ورود تا سطح ساختاری > ۱R باشد → فعال‌سازی روی همان سطح
-            # اگر < ۱R باشد → فعال‌سازی روی ۱R (یعنی دورترین نقطه از این دو)
-            # LONG : trigger_pct = max(فاصله تا قله میانی، ۱R)
-            # SHORT: trigger_pct = منفیِ max(فاصله تا دره میانی، ۱R)
-            # ============================================================
+            # 🛡️ نقطهٔ ریسک فری
             if (structural_level is not None and stop_price is not None
                     and _valid_num(entry) and entry > 0):
                 risk_abs = abs(entry - stop_price)
@@ -929,6 +927,25 @@ Value: {str(last_values)[:500]}
                     f"[RISK-FREE] {symbol} {signal} | structural={structural_level} | "
                     f"rf_pct={risk_free_pct:.6f}"
                 )
+
+        # ═══════════════════════════════════════════════════════════════
+        # 🎯 فیلتر روش E: per-symbol blacklist (قبل از ارسال تلگرام)
+        # ═══════════════════════════════════════════════════════════════
+        if signal in ("LONG", "SHORT"):
+            signal_type_pre = None
+            if last_values.get("final_classic_bearish"):
+                signal_type_pre = "CD-"
+            elif last_values.get("final_classic_bullish"):
+                signal_type_pre = "CD+"
+            elif last_values.get("final_hidden_bullish"):
+                signal_type_pre = "HD+"
+            elif last_values.get("final_hidden_bearish"):
+                signal_type_pre = "HD-"
+
+            _bl = PER_SYMBOL_BLACKLIST.get(symbol.upper(), [])
+            if signal_type_pre in _bl:
+                logger.info(f"[FILTER-E] {symbol.upper()} {signal_type_pre} rejected (per-symbol blacklist)")
+                return None, None, None, None, None, None
 
         # ============================================================
         # 📊 گزارش نهایی — قالب حرفه‌ای و خوانا
@@ -1006,36 +1023,6 @@ Value: {str(last_values)[:500]}
         # ============================================================
         # 📤 برگرداندن ۶ مقدار
         # ============================================================
-        # ═══════════════════════════════════════════════════════════════
-        # 🎯 فیلتر روش E: فیلتر per-symbol بر اساس type
-        
-        # ═══════════════════════════════════════════════════════════════
-        PER_SYMBOL_BLACKLIST = {
-            "LTCUSDT":  ["CD-", "HD-"],           # CD- و HD- حذف
-            "DOGEUSDT": ["CD-", "CD+", "HD+"],    # فقط HD- باقی
-            "ETHUSDT":  [],                        # بدون فیلتر
-            "BNBUSDT":  [],                        # بدون فیلتر
-        }
-
-        if signal in ("LONG", "SHORT"):
-            # استخراج نوع سیگنال از last_values
-            signal_type = None
-            if last_values.get("final_classic_bearish"):
-                signal_type = "CD-"
-            elif last_values.get("final_classic_bullish"):
-                signal_type = "CD+"
-            elif last_values.get("final_hidden_bullish"):
-                signal_type = "HD+"
-            elif last_values.get("final_hidden_bearish"):
-                signal_type = "HD-"
-
-            # چک blacklist
-            sym_upper = symbol.upper()
-            blacklist = PER_SYMBOL_BLACKLIST.get(sym_upper, [])
-            if signal_type in blacklist:
-                logger.info(f"[FILTER-E] {sym_upper} {signal_type} rejected (per-symbol blacklist)")
-                return None, None, None, None, None, None
-
         return signal, entry, stop_price, target_price, signal_bar_ts_ms, risk_free_pct
 
     except Exception as e:
