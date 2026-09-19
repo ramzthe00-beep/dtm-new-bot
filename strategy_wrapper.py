@@ -1006,6 +1006,36 @@ Value: {str(last_values)[:500]}
         # ============================================================
         # 📤 برگرداندن ۶ مقدار
         # ============================================================
+        # ═══════════════════════════════════════════════════════════════
+        # 🎯 فیلتر روش E: فیلتر per-symbol بر اساس type
+        
+        # ═══════════════════════════════════════════════════════════════
+        PER_SYMBOL_BLACKLIST = {
+            "LTCUSDT":  ["CD-", "HD-"],           # CD- و HD- حذف
+            "DOGEUSDT": ["CD-", "CD+", "HD+"],    # فقط HD- باقی
+            "ETHUSDT":  [],                        # بدون فیلتر
+            "BNBUSDT":  [],                        # بدون فیلتر
+        }
+
+        if signal in ("LONG", "SHORT"):
+            # استخراج نوع سیگنال از last_values
+            signal_type = None
+            if last_values.get("final_classic_bearish"):
+                signal_type = "CD-"
+            elif last_values.get("final_classic_bullish"):
+                signal_type = "CD+"
+            elif last_values.get("final_hidden_bullish"):
+                signal_type = "HD+"
+            elif last_values.get("final_hidden_bearish"):
+                signal_type = "HD-"
+
+            # چک blacklist
+            sym_upper = symbol.upper()
+            blacklist = PER_SYMBOL_BLACKLIST.get(sym_upper, [])
+            if signal_type in blacklist:
+                logger.info(f"[FILTER-E] {sym_upper} {signal_type} rejected (per-symbol blacklist)")
+                return None, None, None, None, None, None
+
         return signal, entry, stop_price, target_price, signal_bar_ts_ms, risk_free_pct
 
     except Exception as e:
