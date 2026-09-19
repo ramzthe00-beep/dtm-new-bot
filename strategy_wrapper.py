@@ -1,3 +1,4 @@
+import os
 """
 DTM Strategy Wrapper
 
@@ -512,6 +513,19 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
                 logger.warning(f"⚠️ pine_range is NOT inclusive! Expected [2,3,4,5], got {test_result}")
         except Exception as e:
             logger.warning(f"⚠️ Could not test pine_range: {e}")
+
+        # ─── Load Pine HL lookup ───
+        try:
+            import pine_hl_lookup as _phl
+            _log_path = os.getenv("PINE_HL_LOG", "").strip()
+            _offset = int(os.getenv("PINE_HL_OFFSET", "0"))
+            if _log_path:
+                _n = _phl.load(_log_path, offset=_offset)
+                logger.info(f"[PINE-HL] loaded {_n} entries (offset={_offset})")
+            else:
+                logger.info("[PINE-HL] PINE_HL_LOG not set — fallback to reference")
+        except Exception as _e:
+            logger.warning(f"[PINE-HL] load failed: {_e}")
 
         runner = ScriptRunner(
             STRATEGY_PATH,

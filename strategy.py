@@ -14,6 +14,8 @@ from pynecore.types import Persistent, Series
 import logging
 logger = logging.getLogger(__name__)
 
+import pine_hl_lookup
+
 grp_pivot: str = "Pivot"
 grp_ind: str = "Indicators"
 grp_trend: str = "Trend"
@@ -148,7 +150,7 @@ def main(
             endOffset = bar_index - (barStart + 1)
             if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
                 for j in range(startOffset, endOffset + 1):
-                    h = histLine[j]
+                    h = pine_hl_lookup.get(bar_index, needRedPhase, j, histLine[j])
                     if needRedPhase and h < 0:
                         found = True
                         break
