@@ -521,6 +521,16 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             _offset = int(os.getenv("PINE_HL_OFFSET", "0"))
             if _log_path:
                 _n = _phl.load(_log_path, offset=_offset)
+
+                # Load trend lookup (extra file اگه ست، وگرنه از همون log)
+
+                _trend_log = os.getenv("PINE_HL_TREND_LOG", _log_path).strip()
+
+                if _trend_log:
+
+                    _tn = _phl.load_trend(_trend_log)
+
+                    logger.info(f"[PINE-HL] trend loaded {_tn} entries")
                 logger.info(f"[PINE-HL] loaded {_n} entries (offset={_offset})")
             else:
                 logger.info("[PINE-HL] PINE_HL_LOG not set — fallback to reference")

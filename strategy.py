@@ -187,6 +187,9 @@ def main(
         if not na(refBar):
             offset = bar_index - refBar
             if offset >= 0 and offset + trendLookback < 5000:
+                _lk = pine_hl_lookup.get_trend(bar_index, "trendOkBear")
+                if _lk is not None:
+                    return _lk
                 off_int = int(offset)
                 L = int(trendLookback)
                 c_now = close[off_int]
@@ -202,6 +205,9 @@ def main(
         if not na(refBar):
             offset = bar_index - refBar
             if offset >= 0 and offset + trendLookback < 5000:
+                _lk = pine_hl_lookup.get_trend(bar_index, "trendOkBull")
+                if _lk is not None:
+                    return _lk
                 off_int = int(offset)
                 L = int(trendLookback)
                 c_now = close[off_int]
