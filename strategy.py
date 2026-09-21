@@ -236,28 +236,23 @@ def main(
             if offset >= 0 and offset + fibTrendSearchBars < 5000:
                 result = ta.highest(high[offset], fibTrendSearchBars)
         return result
-
     def checkFibLevel(fibStart, fibEnd, targetPrice, isBullish):
         ok: bool = False
         if not na(fibStart) and not na(fibEnd) and fibEnd != fibStart:
             range_ = math.abs(fibEnd - fibStart)
-            tol = range_ * (fibTolerancePct / 100.0)
-        
-            # موج صعودی: کف به سقف → اصلاح به سمت پایین
-            # موج نزولی: سقف به کف → اصلاح به سمت بالا
-            if isBullish:  # Bullish: از کف به سقف
+            tol = range_ * (fibTolerancePct / 100.0)    
+            # ✅ اصلاح: تشخیص جهت از خود مقادیر
+            if fibEnd > fibStart:  # up-move → retracement نزولی
                 level618 = fibEnd - range_ * 0.618
                 level786 = fibEnd - range_ * 0.786
-            else:          # Bearish: از سقف به کف
+            else:                  # down-move → retracement صعودی
                 level618 = fibEnd + range_ * 0.618
                 level786 = fibEnd + range_ * 0.786
-        
             if fibUse618 and math.abs(targetPrice - level618) <= tol:
                 ok = True
             if fibUse786 and math.abs(targetPrice - level786) <= tol:
                 ok = True
         return ok
-
 
     # Bearish Divergence - Fibonacci
     fibScoreBearish: bool = False
