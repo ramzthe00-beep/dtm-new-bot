@@ -528,7 +528,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
         try:
             import pine_hl_lookup as _phl
             _log_path = os.getenv("PINE_HL_LOG", "").strip()
-            _offset = int(os.getenv("PINE_HL_OFFSET", "0"))
+            _offset = int(os.getenv("PINE_HL_OFFSET", "400"))
             if _log_path:
                 _n = _phl.load(_log_path, offset=_offset)
                 _trend_log = os.getenv("PINE_HL_TREND_LOG", _log_path).strip()
