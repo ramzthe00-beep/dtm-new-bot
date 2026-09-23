@@ -1,531 +1,434 @@
 """
-CT-DTM (Ichimoku) strategy — Python port of the Pine Script v6 strategy
-=========================================================================
-
-این فایل تلاش می‌کند تا حد امکان منطق پاین‌اسکریپت اصلی را عیناً بازتولید کند:
-ابر ایچیموکو (دونچیان-بیس)، تشخیص «لگ خروج از ابر»، مدل‌های ورود «آنی» و
-«آتی»، ریسک‌فری، فیلتر هلال (HMA20/50)، و محاسبه حد ضرر/تارگت دقیقاً طبق
-همان فرمول‌های پاین.
-
-⚠️ یک نکته‌ی مهم و غیرقابل‌حذف:
-موتور strategy.* در TradingView سفارش‌های Limit را به‌صورت intrabar (با مدل
-bar-magnifier/تیک داخلی) پر می‌کند. پایتون به چنین موتوری دسترسی ندارد، مگر
-اینکه دیتای تیک/تایم‌فریم پایین‌تر در اختیار داشته باشیم. بنابراین همان‌طور
-که تقریباً همه‌ی پورت‌های پایتون این کار را انجام می‌دهند، اینجا سفارش Limit
-که در کندل i تعیین/به‌روزرسانی می‌شود، در کندل i+1 در صورتی که High/Low آن
-کندل به قیمت Limit برسد، پر می‌شود (فرض محافظه‌کارانه و رایج). به همین دلیل
-نتایج ۱۰۰٪ بیت‌به‌بیت با بک‌تست TradingView یکسان نخواهد بود، اما تمام منطق
-تصمیم‌گیری (ورود/خروج/حد ضرر/تارگت/ریسک‌فری/فیلترها) عیناً همان پاین است.
-
-نیازمندی‌ها: pandas, numpy
-ورودی: DataFrame با ستون‌های ['open','high','low','close'] و ایندکس زمانی/عددی
-        مرتب صعودی (قدیمی‌ترین کندل اول).
+@pyne
 """
 
-from __future__ import annotations
-import math
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+# ============================================================================
+# CT-DTM (Ichimoku) — PyneCore port با آخرین نسخهٔ 6.10.2
+# ============================================================================
+# تغییرات نسبت به نسخهٔ اول:
+#   ✅ اصلاح import: `str as pine_str` → `string as pine_str`
+#      (در PyneCore 6.10.2 ماژول رشته‌ها `string` نام دارد، نه `str`)
+#   ✅ تمام توابع پاین مطابق نسخهٔ v6 پیاده‌سازی شده‌اند
+#   ✅ عناصر بصری (label/box/table/plot) عمداً حذف شده‌اند — برای بات هدلس
+#      لازم نیستند و روی سرعت اجرا اثر منفی دارند.
+# ============================================================================
 
-import numpy as np
-import pandas as pd
-
-
-# ============================================================
-# 🔵 بخش ۱: ورودی‌ها (مطابق input.* در پاین)
-# ============================================================
-@dataclass
-class Inputs:
-    # --- ایچیموکو ---
-    conversion_periods: int = 9
-    base_periods: int = 26
-    lagging_span2_periods: int = 52
-    displacement: int = 26
-
-    # --- منطق CT ---
-    use_wicks_for_exit: bool = True
-    exit_consecutive_bars: int = 1
-    max_anni_candles: int = 5
-    aati_min_bars: int = 3
-    distance_atr_mult: float = 1.5
-    atr_len: int = 14
-    enable_crescent_filter: bool = True
-
-    # --- حد ضرر و تارگت ---
-    anni_stop_mode: str = "Mid-Cloud"     # "Mid-Cloud" | "Far Edge"
-    aati_stop_mode: str = "Safe"          # "Safe" | "Risky"
-    safe_buffer_atr_mult: float = 0.25
-    rr_anni: float = 7.0
-    rr_aati_risky: float = 10.0
-    rr_aati_safe: float = 5.0
-
-    # --- ریسک‌فری ---
-    enable_rf_on_second_touch: bool = True
-    enable_rf_on_reversal_candle: bool = True
-    enable_catalyst_filter: bool = True
-
-    # --- فیلترها ---
-    enable_anni: bool = True
-    enable_aati: bool = True
-    trade_direction: str = "both"          # "both" | "long_only" | "short_only"
-
-    # --- نمایش/سایز (این پورت اندازه‌گیری دلاری را شبیه‌سازی نمی‌کند) ---
-    pyramiding: int = 2
-    initial_capital: float = 10_000.0
-    qty_percent_of_equity: float = 10.0
+from pynecore import Series, Persistent
+from pynecore.lib import (
+    script, strategy, ta, math, na, nz,
+    close, open, high, low, bar_index, time,
+    input, barstate, currency, log,
+)
+from pynecore.lib import string as pine_str
 
 
-# ============================================================
-# 🔵 بخش ۲: اندیکاتورهای کمکی
-# ============================================================
-def donchian(high: pd.Series, low: pd.Series, length: int) -> pd.Series:
-    hh = high.rolling(length, min_periods=length).max()
-    ll = low.rolling(length, min_periods=length).min()
-    return (hh + ll) / 2.0
+@script.strategy(
+    "CT-DTM (Ichimoku)",
+    shorttitle="CT-Strategy-v3",
+    overlay=True,
+    default_qty_type=strategy.percent_of_equity,
+    default_qty_value=10,
+    calc_on_every_tick=True,
+    pyramiding=2,
+    initial_capital=10000,
+    currency=currency.USD,
+)
+def main(
+    # ---------------- ایچیموکو ----------------
+    conversion_periods: int = input.int(9, "Conversion Periods (Tenkan)", group="ایچیموکو"),
+    base_periods: int = input.int(26, "Base Periods (Kijun)", group="ایچیموکو"),
+    lagging_span2_periods: int = input.int(52, "Leading Span B Periods", group="ایچیموکو"),
+    displacement: int = input.int(26, "Displacement (Cloud Shift)", group="ایچیموکو"),
 
+    # ---------------- منطق استراتژی CT ----------------
+    use_wicks_for_exit: bool = input.bool(True, "خروج کامل با احتساب سایه (Wick)؟", group="منطق استراتژی CT"),
+    exit_consecutive_bars: int = input.int(
+        1, "تعداد کندل کامل بسته‌شده برای تایید خروج", minval=1, maxval=10, group="منطق استراتژی CT"
+    ),
+    max_anni_candles: int = input.int(5, "حداکثر تعداد کندل برای مدل آنی", minval=1, group="منطق استراتژی CT"),
+    aati_min_bars: int = input.int(3, "حداقل تعداد کندل قبل از تست آتی (پروکسی هلال)", minval=1, group="منطق استراتژی CT"),
+    distance_atr_mult: float = input.float(
+        1.5, "حداقل فاصله از عبر (ضریب ATR) برای اعتبار آتی", minval=0.1, step=0.1, group="منطق استراتژی CT"
+    ),
+    atr_len: int = input.int(14, "دوره ATR", group="منطق استراتژی CT"),
+    enable_crescent_filter: bool = input.bool(True, "فعال‌سازی فیلتر هلال برای مدل آتی", group="منطق استراتژی CT"),
 
-def wma(series: pd.Series, length: int) -> pd.Series:
-    weights = np.arange(1, length + 1)
+    # ---------------- حد ضرر و تارگت ----------------
+    anni_stop_mode: str = input.string(
+        "Mid-Cloud (وسط ابر)", "حالت حد ضرر مدل آنی",
+        options=["Mid-Cloud (وسط ابر)", "Far Edge (لبه دور ابر)"], group="حد ضرر و تارگت",
+    ),
+    aati_stop_mode: str = input.string(
+        "Safe (امن)", "حالت حد ضرر مدل آتی",
+        options=["Safe (امن)", "Risky (ریسکی)"], group="حد ضرر و تارگت",
+    ),
+    safe_buffer_atr_mult: float = input.float(
+        0.25, "بافر اضافه برای حالت امن (ضریب ATR)", minval=0.0, step=0.05, group="حد ضرر و تارگت"
+    ),
+    rr_anni: float = input.float(7.0, "ریسک به ریوارد - مدل آنی", minval=0.5, step=0.5, group="حد ضرر و تارگت"),
+    rr_aati_risky: float = input.float(10.0, "ریسک به ریوارد - آتی (ریسکی)", minval=0.5, step=0.5, group="حد ضرر و تارگت"),
+    rr_aati_safe: float = input.float(5.0, "ریسک به ریوارد - آتی (امن)", minval=0.5, step=0.5, group="حد ضرر و تارگت"),
 
-    def _w(x):
-        return np.dot(x, weights) / weights.sum()
+    # ---------------- ریسک فری ----------------
+    enable_risk_free_on_second_touch: bool = input.bool(True, "ریسک‌فری با برخورد دوم به عبر", group="ریسک فری"),
+    enable_risk_free_on_reversal_candle: bool = input.bool(True, "ریسک‌فری با کندل بازگشتی", group="ریسک فری"),
+    enable_catalyst_filter: bool = input.bool(True, "فعال‌سازی کاتالیزور (RSI Divergence Proxy)", group="ریسک فری"),
 
-    return series.rolling(length, min_periods=length).apply(_w, raw=True)
+    # ---------------- فیلترها ----------------
+    enable_anni: bool = input.bool(True, "فعال‌سازی مدل آنی", group="فیلترها"),
+    enable_aati: bool = input.bool(True, "فعال‌سازی مدل آتی", group="فیلترها"),
+    trade_direction: str = input.string(
+        "هر دو جهت", "جهت مجاز معامله",
+        options=["هر دو جهت", "فقط لانگ", "فقط شورت"], group="فیلترها",
+    ),
 
+    # ---------------- لاگ تشخیصی ----------------
+    enable_log: bool = input.bool(True, "فعال‌سازی لاگ رویدادها (Pine Logs)", group="لاگ تشخیصی"),
+    enable_verbose_log: bool = input.bool(False, "لاگ کامل هر کندل بسته‌شده (سنگین)", group="لاگ تشخیصی"),
+):
+    # ============================================
+    # بخش ۲: تابع لاگ  (معادل f_log پاین)
+    # ============================================
+    def f_log(tag: str, msg: str) -> None:
+        if enable_log:
+            log.info(
+                tag + " | bar=" + pine_str.tostring(bar_index) + " "
+                + pine_str.format_time(time, "yyyy-MM-dd HH:mm") + " | " + msg
+            )
 
-def hma(series: pd.Series, length: int) -> pd.Series:
-    half = max(int(length / 2), 1)
-    sqrt_len = max(int(round(math.sqrt(length))), 1)
-    raw = 2 * wma(series, half) - wma(series, length)
-    return wma(raw, sqrt_len)
+    # ============================================
+    # بخش ۳: محاسبهٔ ایچیموکو
+    # ============================================
+    def donchian(length: int) -> Series[float]:
+        return math.avg(ta.highest(high, length), ta.lowest(low, length))
 
+    conversion_line: Series[float] = donchian(conversion_periods)
+    base_line: Series[float] = donchian(base_periods)
+    lead_line1: Series[float] = math.avg(conversion_line, base_line)
+    lead_line2: Series[float] = donchian(lagging_span2_periods)
 
-def rma(series: pd.Series, length: int) -> pd.Series:
-    """Wilder's smoothing — همان چیزی که ta.atr / ta.rsi در پاین استفاده می‌کنند."""
-    return series.ewm(alpha=1.0 / length, adjust=False, min_periods=length).mean()
+    kumo_top = math.max(lead_line1[displacement], lead_line2[displacement])
+    kumo_bot = math.min(lead_line1[displacement], lead_line2[displacement])
+    kumo_valid = not na(kumo_top) and not na(kumo_bot)
 
+    atr_val: Series[float] = ta.atr(atr_len)
 
-def atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int) -> pd.Series:
-    prev_close = close.shift(1)
-    tr = pd.concat(
-        [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
-        ],
-        axis=1,
-    ).max(axis=1)
-    return rma(tr, length)
+    is_above = kumo_valid and low > kumo_top
+    is_below = kumo_valid and high < kumo_bot
 
+    # نسخهٔ زنده/intrabar — فقط برای گارد ضدِ بیات‌شدگی
+    fully_above_now = kumo_valid and ((low > kumo_top) if use_wicks_for_exit else (math.min(open, close) > kumo_top))
+    fully_below_now = kumo_valid and ((high < kumo_bot) if use_wicks_for_exit else (math.max(open, close) < kumo_bot))
 
-def rsi(close: pd.Series, length: int) -> pd.Series:
-    delta = close.diff()
-    gain = delta.clip(lower=0.0)
-    loss = -delta.clip(upper=0.0)
-    avg_gain = rma(gain, length)
-    avg_loss = rma(loss, length)
-    rs = avg_gain / avg_loss.replace(0, np.nan)
-    out = 100 - (100 / (1 + rs))
-    out = out.where(avg_loss != 0, 100.0)
-    out = out.where(avg_gain != 0, out.where(avg_loss == 0, 0.0))
-    return out
+    # ============================================
+    # بخش ۴: تایید «خروج کامل» فقط روی کندل بسته‌شده
+    # ============================================
+    consec_above: Persistent[int] = 0
+    consec_below: Persistent[int] = 0
 
+    if barstate.isconfirmed:
+        f_ac = kumo_valid and ((low > kumo_top) if use_wicks_for_exit else (math.min(open, close) > kumo_top))
+        f_bc = kumo_valid and ((high < kumo_bot) if use_wicks_for_exit else (math.max(open, close) < kumo_bot))
+        consec_above = consec_above + 1 if f_ac else 0
+        consec_below = consec_below + 1 if f_bc else 0
+        if enable_verbose_log:
+            f_log(
+                "[BAR-CLOSED]",
+                "consecAbove=" + pine_str.tostring(consec_above)
+                + " consecBelow=" + pine_str.tostring(consec_below)
+                + " kumoTop=" + pine_str.tostring(kumo_top)
+                + " kumoBot=" + pine_str.tostring(kumo_bot)
+                + " C=" + pine_str.tostring(close),
+            )
 
-# ============================================================
-# 🔵 بخش ۳: ساختار معامله / ورودی معلق
-# ============================================================
-@dataclass
-class PendingOrder:
-    side: str          # "long" | "short"
-    limit_price: float
+    # ============================================
+    # بخش ۵: State — ردیابی «لگ جهت‌دار»
+    # ============================================
+    exit_dir: Persistent[str] = na(str)
+    exit_bar: Persistent[int] = na(int)
+    exit_zone_high: Persistent[float] = na(float)
+    exit_zone_low: Persistent[float] = na(float)
+    max_distance_atr: Persistent[float] = 0.0
+    anni_done: Persistent[bool] = False
+    aati_armed: Persistent[bool] = False
+    aati_done: Persistent[bool] = False
+    exit_number: Persistent[int] = 0
 
+    new_leg_up = barstate.isconfirmed and consec_above == exit_consecutive_bars and exit_dir != "up"
+    new_leg_down = barstate.isconfirmed and consec_below == exit_consecutive_bars and exit_dir != "down"
 
-@dataclass
-class OpenTrade:
-    entry_id: str
-    side: str           # "long" | "short"
-    entry_price: float
-    sl: float
-    tp: float
-    touches: int = 0
-    entry_bar: int = -1
+    if new_leg_up:
+        exit_dir = "up"
+        exit_bar = bar_index
+        exit_zone_high = high
+        exit_zone_low = low
+        max_distance_atr = 0.0
+        anni_done = False
+        aati_armed = False
+        aati_done = False
+        exit_number = exit_number + 1
+        f_log(
+            "[LEG-UP]",
+            "leg #" + pine_str.tostring(exit_number) + " confirmed after "
+            + pine_str.tostring(consec_above) + " closed candle(s) | zone=["
+            + pine_str.tostring(low) + "," + pine_str.tostring(high) + "]",
+        )
 
+    if new_leg_down:
+        exit_dir = "down"
+        exit_bar = bar_index
+        exit_zone_high = high
+        exit_zone_low = low
+        max_distance_atr = 0.0
+        anni_done = False
+        aati_armed = False
+        aati_done = False
+        exit_number = exit_number + 1
+        f_log(
+            "[LEG-DOWN]",
+            "leg #" + pine_str.tostring(exit_number) + " confirmed after "
+            + pine_str.tostring(consec_below) + " closed candle(s) | zone=["
+            + pine_str.tostring(low) + "," + pine_str.tostring(high) + "]",
+        )
 
-@dataclass
-class ClosedTrade:
-    entry_id: str
-    side: str
-    entry_price: float
-    exit_price: float
-    entry_bar: int
-    exit_bar: int
-    exit_reason: str   # "stop" | "target"
-    pnl_per_unit: float
+    bars_since_exit = na(int) if na(exit_bar) else bar_index - exit_bar
 
+    if not na(exit_dir) and kumo_valid and atr_val > 0:
+        cur_dist = (low - kumo_top) / atr_val if exit_dir == "up" else (kumo_bot - high) / atr_val
+        max_distance_atr = math.max(max_distance_atr, cur_dist)
+        if max_distance_atr >= distance_atr_mult and not aati_armed:
+            aati_armed = True
+            f_log("[AATI-ARMED]", "distance threshold reached | maxDistanceATR=" + pine_str.tostring(max_distance_atr))
 
-@dataclass
-class EntrySlot:
-    """معادل هر یک از ۴ شناسهٔ ورود در پاین: CT-Anni-L / CT-Anni-S / CT-Aati-L / CT-Aati-S"""
-    entry_id: str
-    side: str
-    pending: Optional[PendingOrder] = None
-    open_trade: Optional[OpenTrade] = None
+    # ============================================
+    # بخش ۶: برخورد با ابر + فیلتر هلال + گارد ضدِ بیات‌شدگی
+    # ============================================
+    touch_cloud_now: Series[bool] = kumo_valid and low <= kumo_top and high >= kumo_bot
+    touch_cloud_event = touch_cloud_now and not touch_cloud_now[1]
 
+    if touch_cloud_event:
+        f_log("[TOUCH]", "H=" + pine_str.tostring(high) + " L=" + pine_str.tostring(low)
+              + " kumoTop=" + pine_str.tostring(kumo_top) + " kumoBot=" + pine_str.tostring(kumo_bot))
 
-# ============================================================
-# 🔵 بخش ۴: موتور اصلی استراتژی
-# ============================================================
-class CTDTMIchimokuStrategy:
-    def __init__(self, df: pd.DataFrame, inputs: Inputs = Inputs()):
-        required = {"open", "high", "low", "close"}
-        if not required.issubset(df.columns):
-            raise ValueError(f"DataFrame باید ستون‌های {required} را داشته باشد")
-        self.df = df.reset_index(drop=True).copy()
-        self.inp = inputs
-        self.log: List[str] = []
-        self.closed_trades: List[ClosedTrade] = []
-        self._prepare_indicators()
-        self._init_state()
+    hma20: Series[float] = ta.hma(close, 20)
+    hma50: Series[float] = ta.hma(close, 50)
+    bullish_crescent = hma20 > hma50 and hma20 > hma20[1] and hma50 > hma50[1]
+    bearish_crescent = hma20 < hma50 and hma20 < hma20[1] and hma50 < hma50[1]
 
-    # ---------------------------------------------------------------
-    def _log(self, tag: str, msg: str, bar: int) -> None:
-        self.log.append(f"{tag} | bar={bar} | {msg}")
+    not_stale = not ((exit_dir == "down" and fully_above_now) or (exit_dir == "up" and fully_below_now))
 
-    # ---------------------------------------------------------------
-    def _prepare_indicators(self) -> None:
-        d = self.df
-        inp = self.inp
+    if not not_stale:
+        f_log("[STALE-GUARD]", "exitDir=" + pine_str.tostring(exit_dir) + " contradicted intrabar → pending orders will cancel")
 
-        d["conversion"] = donchian(d.high, d.low, inp.conversion_periods)
-        d["base"] = donchian(d.high, d.low, inp.base_periods)
-        d["lead1"] = (d["conversion"] + d["base"]) / 2.0
-        d["lead2"] = donchian(d.high, d.low, inp.lagging_span2_periods)
+    # ============================================
+    # بخش ۷: شرایط واجدشرایط‌بودن
+    # ============================================
+    allow_long = trade_direction != "فقط شورت"
+    allow_short = trade_direction != "فقط لانگ"
 
-        lead1_shift = d["lead1"].shift(inp.displacement)
-        lead2_shift = d["lead2"].shift(inp.displacement)
-        d["kumo_top"] = pd.concat([lead1_shift, lead2_shift], axis=1).max(axis=1)
-        d["kumo_bot"] = pd.concat([lead1_shift, lead2_shift], axis=1).min(axis=1)
-        d["kumo_valid"] = d["kumo_top"].notna() & d["kumo_bot"].notna()
+    anni_long_elig: Series[bool] = (
+        enable_anni and allow_long and exit_dir == "up" and not na(bars_since_exit)
+        and bars_since_exit >= 0 and bars_since_exit <= max_anni_candles
+        and not anni_done and not_stale
+    )
+    anni_short_elig: Series[bool] = (
+        enable_anni and allow_short and exit_dir == "down" and not na(bars_since_exit)
+        and bars_since_exit >= 0 and bars_since_exit <= max_anni_candles
+        and not anni_done and not_stale
+    )
 
-        d["atr"] = atr(d.high, d.low, d.close, inp.atr_len)
-        d["rsi"] = rsi(d.close, 14)
-        d["hma20"] = hma(d.close, 20)
-        d["hma50"] = hma(d.close, 50)
+    aati_long_elig: Series[bool] = (
+        enable_aati and allow_long and exit_dir == "up" and aati_armed
+        and not na(bars_since_exit) and bars_since_exit >= aati_min_bars
+        and not aati_done and not_stale
+        and (not enable_crescent_filter or bullish_crescent)
+    )
+    aati_short_elig: Series[bool] = (
+        enable_aati and allow_short and exit_dir == "down" and aati_armed
+        and not na(bars_since_exit) and bars_since_exit >= aati_min_bars
+        and not aati_done and not_stale
+        and (not enable_crescent_filter or bearish_crescent)
+    )
 
-        if inp.use_wicks_for_exit:
-            full_above = d["kumo_valid"] & (d["low"] > d["kumo_top"])
-            full_below = d["kumo_valid"] & (d["high"] < d["kumo_bot"])
+    if anni_long_elig and not anni_long_elig[1]:
+        f_log("[ELIG-ON]", "Anni-L | kumoTop=" + pine_str.tostring(kumo_top))
+    if not anni_long_elig and anni_long_elig[1]:
+        f_log("[ELIG-OFF]", "Anni-L | anniDone=" + pine_str.tostring(anni_done)
+              + " notStale=" + pine_str.tostring(not_stale) + " barsSinceExit=" + pine_str.tostring(bars_since_exit))
+    if anni_short_elig and not anni_short_elig[1]:
+        f_log("[ELIG-ON]", "Anni-S | kumoBot=" + pine_str.tostring(kumo_bot))
+    if not anni_short_elig and anni_short_elig[1]:
+        f_log("[ELIG-OFF]", "Anni-S | anniDone=" + pine_str.tostring(anni_done)
+              + " notStale=" + pine_str.tostring(not_stale) + " barsSinceExit=" + pine_str.tostring(bars_since_exit))
+    if aati_long_elig and not aati_long_elig[1]:
+        f_log("[ELIG-ON]", "Aati-L | kumoTop=" + pine_str.tostring(kumo_top))
+    if aati_short_elig and not aati_short_elig[1]:
+        f_log("[ELIG-ON]", "Aati-S | kumoBot=" + pine_str.tostring(kumo_bot))
+
+    # ============================================
+    # بخش ۸: توابع کمکی
+    # ============================================
+    def f_is_entry_open(entry_id: str) -> bool:
+        found = False
+        for i in range(strategy.opentrades):
+            if strategy.opentrades.entry_id(i) == entry_id:
+                found = True
+        return found
+
+    def f_entry_price(entry_id: str) -> float:
+        price = na(float)
+        for i in range(strategy.opentrades):
+            if strategy.opentrades.entry_id(i) == entry_id:
+                price = strategy.opentrades.entry_price(i)
+        return price
+
+    def f_bearish_reversal() -> bool:
+        return close < open and close[1] > open[1] and close < open[1] and open > close[1]
+
+    def f_bullish_reversal() -> bool:
+        return close > open and close[1] < open[1] and close > open[1] and open < close[1]
+
+    def f_catalyst() -> bool:
+        rsi14: Series[float] = ta.rsi(close, 14)
+        return (close > close[1] and rsi14 < rsi14[1]) or (close < close[1] and rsi14 > rsi14[1])
+
+    # ============================================================================
+    # بخش ۹: ورود با سفارش Limit معلق + مدیریت پس از پر شدن — چهار لگِ مستقل
+    # ============================================================================
+
+    # ---- آنی - لانگ ----
+    an_l_sl: Persistent[float] = na(float)
+    an_l_tp: Persistent[float] = na(float)
+    an_l_entry: Persistent[float] = na(float)
+    an_l_touches: Persistent[int] = 0
+
+    if f_is_entry_open("CT-Anni-L"):
+        if na(an_l_entry):
+            an_l_entry = f_entry_price("CT-Anni-L")
+            an_l_sl = (kumo_top + kumo_bot) / 2 if anni_stop_mode == "Mid-Cloud (وسط ابر)" else kumo_bot
+            an_l_tp = an_l_entry + (an_l_entry - an_l_sl) * rr_anni
+            an_l_touches = 0
+            anni_done = True
+            f_log("[FILL]", "Anni-L @ " + pine_str.tostring(an_l_entry)
+                  + " SL=" + pine_str.tostring(an_l_sl) + " TP=" + pine_str.tostring(an_l_tp))
+        if touch_cloud_event:
+            an_l_touches += 1
+        if (enable_risk_free_on_second_touch and an_l_touches >= 2) or (
+            enable_risk_free_on_reversal_candle and f_bearish_reversal() and (not enable_catalyst_filter or f_catalyst())
+        ):
+            if an_l_sl < an_l_entry:
+                f_log("[RISK-FREE]", "Anni-L moved to breakeven @ " + pine_str.tostring(an_l_entry))
+            an_l_sl = math.max(an_l_sl, an_l_entry)
+        strategy.exit("CT-Anni-L-X", from_entry="CT-Anni-L", stop=an_l_sl, limit=an_l_tp)
+    else:
+        an_l_entry = na(float)
+        if anni_long_elig:
+            strategy.entry("CT-Anni-L", strategy.long, limit=kumo_top)
         else:
-            body_lo = d[["open", "close"]].min(axis=1)
-            body_hi = d[["open", "close"]].max(axis=1)
-            full_above = d["kumo_valid"] & (body_lo > d["kumo_top"])
-            full_below = d["kumo_valid"] & (body_hi < d["kumo_bot"])
-        d["full_above"] = full_above
-        d["full_below"] = full_below
+            strategy.cancel("CT-Anni-L")
 
-        d["touch_now"] = d["kumo_valid"] & (d["low"] <= d["kumo_top"]) & (d["high"] >= d["kumo_bot"])
-        d["touch_event"] = d["touch_now"] & ~d["touch_now"].shift(1, fill_value=False)
+    # ---- آنی - شورت ----
+    an_s_sl: Persistent[float] = na(float)
+    an_s_tp: Persistent[float] = na(float)
+    an_s_entry: Persistent[float] = na(float)
+    an_s_touches: Persistent[int] = 0
 
-    # ---------------------------------------------------------------
-    def _init_state(self) -> None:
-        self.exit_dir: Optional[str] = None      # "up" | "down"
-        self.exit_bar: Optional[int] = None
-        self.max_distance_atr: float = 0.0
-        self.anni_done = False
-        self.aati_armed = False
-        self.aati_done = False
-        self.exit_number = 0
-        self.consec_above = 0
-        self.consec_below = 0
+    if f_is_entry_open("CT-Anni-S"):
+        if na(an_s_entry):
+            an_s_entry = f_entry_price("CT-Anni-S")
+            an_s_sl = (kumo_top + kumo_bot) / 2 if anni_stop_mode == "Mid-Cloud (وسط ابر)" else kumo_top
+            an_s_tp = an_s_entry - (an_s_sl - an_s_entry) * rr_anni
+            an_s_touches = 0
+            anni_done = True
+            f_log("[FILL]", "Anni-S @ " + pine_str.tostring(an_s_entry)
+                  + " SL=" + pine_str.tostring(an_s_sl) + " TP=" + pine_str.tostring(an_s_tp))
+        if touch_cloud_event:
+            an_s_touches += 1
+        if (enable_risk_free_on_second_touch and an_s_touches >= 2) or (
+            enable_risk_free_on_reversal_candle and f_bullish_reversal() and (not enable_catalyst_filter or f_catalyst())
+        ):
+            if an_s_sl > an_s_entry:
+                f_log("[RISK-FREE]", "Anni-S moved to breakeven @ " + pine_str.tostring(an_s_entry))
+            an_s_sl = math.min(an_s_sl, an_s_entry)
+        strategy.exit("CT-Anni-S-X", from_entry="CT-Anni-S", stop=an_s_sl, limit=an_s_tp)
+    else:
+        an_s_entry = na(float)
+        if anni_short_elig:
+            strategy.entry("CT-Anni-S", strategy.short, limit=kumo_bot)
+        else:
+            strategy.cancel("CT-Anni-S")
 
-        self.slots: Dict[str, EntrySlot] = {
-            "CT-Anni-L": EntrySlot("CT-Anni-L", "long"),
-            "CT-Anni-S": EntrySlot("CT-Anni-S", "short"),
-            "CT-Aati-L": EntrySlot("CT-Aati-L", "long"),
-            "CT-Aati-S": EntrySlot("CT-Aati-S", "short"),
-        }
+    # ---- آتی - لانگ ----
+    at_l_sl: Persistent[float] = na(float)
+    at_l_tp: Persistent[float] = na(float)
+    at_l_entry: Persistent[float] = na(float)
+    at_l_touches: Persistent[int] = 0
 
-    # ---------------------------------------------------------------
-    def _bearish_reversal(self, i: int) -> bool:
-        d = self.df
-        if i < 1:
-            return False
-        return (
-            d.close[i] < d.open[i]
-            and d.close[i - 1] > d.open[i - 1]
-            and d.close[i] < d.open[i - 1]
-            and d.open[i] > d.close[i - 1]
-        )
+    if f_is_entry_open("CT-Aati-L"):
+        if na(at_l_entry):
+            risky_mode2 = aati_stop_mode == "Risky (ریسکی)"
+            cloud_mid2 = (kumo_top + kumo_bot) / 2
+            at_l_entry = f_entry_price("CT-Aati-L")
+            at_l_sl = cloud_mid2 if risky_mode2 else kumo_bot - safe_buffer_atr_mult * atr_val
+            rr2 = rr_aati_risky if risky_mode2 else rr_aati_safe
+            at_l_tp = at_l_entry + (at_l_entry - at_l_sl) * rr2
+            at_l_touches = 0
+            aati_done = True
+            aati_armed = False
+            f_log("[FILL]", "Aati-L @ " + pine_str.tostring(at_l_entry)
+                  + " SL=" + pine_str.tostring(at_l_sl) + " TP=" + pine_str.tostring(at_l_tp))
+        if touch_cloud_event:
+            at_l_touches += 1
+        if (enable_risk_free_on_second_touch and at_l_touches >= 2) or (
+            enable_risk_free_on_reversal_candle and f_bearish_reversal() and (not enable_catalyst_filter or f_catalyst())
+        ):
+            if at_l_sl < at_l_entry:
+                f_log("[RISK-FREE]", "Aati-L moved to breakeven @ " + pine_str.tostring(at_l_entry))
+            at_l_sl = math.max(at_l_sl, at_l_entry)
+        strategy.exit("CT-Aati-L-X", from_entry="CT-Aati-L", stop=at_l_sl, limit=at_l_tp)
+    else:
+        at_l_entry = na(float)
+        if aati_long_elig:
+            strategy.entry("CT-Aati-L", strategy.long, limit=kumo_top)
+        else:
+            strategy.cancel("CT-Aati-L")
 
-    def _bullish_reversal(self, i: int) -> bool:
-        d = self.df
-        if i < 1:
-            return False
-        return (
-            d.close[i] > d.open[i]
-            and d.close[i - 1] < d.open[i - 1]
-            and d.close[i] > d.open[i - 1]
-            and d.open[i] < d.close[i - 1]
-        )
+    # ---- آتی - شورت ----
+    at_s_sl: Persistent[float] = na(float)
+    at_s_tp: Persistent[float] = na(float)
+    at_s_entry: Persistent[float] = na(float)
+    at_s_touches: Persistent[int] = 0
 
-    def _catalyst(self, i: int) -> bool:
-        d = self.df
-        if i < 1 or pd.isna(d.rsi[i]) or pd.isna(d.rsi[i - 1]):
-            return False
-        if d.close[i] > d.close[i - 1] and d.rsi[i] < d.rsi[i - 1]:
-            return True
-        if d.close[i] < d.close[i - 1] and d.rsi[i] > d.rsi[i - 1]:
-            return True
-        return False
-
-    # ---------------------------------------------------------------
-    def _fill_pending_orders(self, i: int) -> None:
-        """بررسی پر شدن سفارش‌های Limit معلق با High/Low کندل جاری."""
-        d = self.df
-        for slot in self.slots.values():
-            if slot.open_trade is not None or slot.pending is None:
-                continue
-            p = slot.pending
-            hit = (
-                d.low[i] <= p.limit_price <= d.high[i]
-            )
-            if not hit:
-                continue
-            self._on_fill(slot, i, p.limit_price)
-            slot.pending = None
-
-    def _on_fill(self, slot: EntrySlot, i: int, entry_price: float) -> None:
-        d = self.df
-        inp = self.inp
-        kumo_top, kumo_bot, atr_val = d.kumo_top[i], d.kumo_bot[i], d.atr[i]
-
-        if slot.entry_id == "CT-Anni-L":
-            sl = (kumo_top + kumo_bot) / 2 if inp.anni_stop_mode.startswith("Mid") else kumo_bot
-            tp = entry_price + (entry_price - sl) * inp.rr_anni
-            self.anni_done = True
-        elif slot.entry_id == "CT-Anni-S":
-            sl = (kumo_top + kumo_bot) / 2 if inp.anni_stop_mode.startswith("Mid") else kumo_top
-            tp = entry_price - (sl - entry_price) * inp.rr_anni
-            self.anni_done = True
-        elif slot.entry_id == "CT-Aati-L":
-            risky = inp.aati_stop_mode == "Risky"
-            cloud_mid = (kumo_top + kumo_bot) / 2
-            sl = cloud_mid if risky else kumo_bot - inp.safe_buffer_atr_mult * atr_val
-            rr = inp.rr_aati_risky if risky else inp.rr_aati_safe
-            tp = entry_price + (entry_price - sl) * rr
-            self.aati_done = True
-            self.aati_armed = False
-        else:  # CT-Aati-S
-            risky = inp.aati_stop_mode == "Risky"
-            cloud_mid = (kumo_top + kumo_bot) / 2
-            sl = cloud_mid if risky else kumo_top + inp.safe_buffer_atr_mult * atr_val
-            rr = inp.rr_aati_risky if risky else inp.rr_aati_safe
-            tp = entry_price - (sl - entry_price) * rr
-            self.aati_done = True
-            self.aati_armed = False
-
-        slot.open_trade = OpenTrade(
-            entry_id=slot.entry_id, side=slot.side,
-            entry_price=entry_price, sl=sl, tp=tp, touches=0, entry_bar=i,
-        )
-        self._log("[FILL]", f"{slot.entry_id} @ {entry_price:.5f} SL={sl:.5f} TP={tp:.5f}", i)
-
-    # ---------------------------------------------------------------
-    def _manage_open_trades(self, i: int) -> None:
-        d = self.df
-        inp = self.inp
-        for slot in self.slots.values():
-            t = slot.open_trade
-            if t is None:
-                continue
-
-            if d.touch_event[i]:
-                t.touches += 1
-
-            # --- ریسک‌فری ---
-            catalyst_ok = (not inp.enable_catalyst_filter) or self._catalyst(i)
-            if t.side == "long":
-                reversal = self._bearish_reversal(i)
-                rf_trigger = (inp.enable_rf_on_second_touch and t.touches >= 2) or (
-                    inp.enable_rf_on_reversal_candle and reversal and catalyst_ok
-                )
-                if rf_trigger:
-                    if t.sl < t.entry_price:
-                        self._log("[RISK-FREE]", f"{slot.entry_id} moved to breakeven @ {t.entry_price:.5f}", i)
-                    t.sl = max(t.sl, t.entry_price)
-            else:
-                reversal = self._bullish_reversal(i)
-                rf_trigger = (inp.enable_rf_on_second_touch and t.touches >= 2) or (
-                    inp.enable_rf_on_reversal_candle and reversal and catalyst_ok
-                )
-                if rf_trigger:
-                    if t.sl > t.entry_price:
-                        self._log("[RISK-FREE]", f"{slot.entry_id} moved to breakeven @ {t.entry_price:.5f}", i)
-                    t.sl = min(t.sl, t.entry_price)
-
-            # --- بررسی خروج (Stop / Target) ---
-            hi, lo = d.high[i], d.low[i]
-            if t.side == "long":
-                hit_sl = lo <= t.sl
-                hit_tp = hi >= t.tp
-            else:
-                hit_sl = hi >= t.sl
-                hit_tp = lo <= t.tp
-
-            if hit_sl and hit_tp:
-                # فرض محافظه‌کارانه: اگر هر دو در یک کندل لمس شوند، ابتدا حد ضرر
-                exit_price, reason = t.sl, "stop"
-            elif hit_sl:
-                exit_price, reason = t.sl, "stop"
-            elif hit_tp:
-                exit_price, reason = t.tp, "target"
-            else:
-                continue
-
-            pnl = (exit_price - t.entry_price) if t.side == "long" else (t.entry_price - exit_price)
-            self.closed_trades.append(
-                ClosedTrade(
-                    entry_id=t.entry_id, side=t.side, entry_price=t.entry_price,
-                    exit_price=exit_price, entry_bar=t.entry_bar, exit_bar=i,
-                    exit_reason=reason, pnl_per_unit=pnl,
-                )
-            )
-            self._log("[EXIT]", f"{t.entry_id} {reason} @ {exit_price:.5f} pnl/unit={pnl:.5f}", i)
-            slot.open_trade = None
-
-    # ---------------------------------------------------------------
-    def _update_leg_state(self, i: int) -> None:
-        """بخش ۴/۵ پاین: تشخیص خروج کامل کندل بسته‌شده و لگ جدید."""
-        d = self.df
-        inp = self.inp
-
-        full_above = bool(d.full_above[i]) if d.kumo_valid[i] else False
-        full_below = bool(d.full_below[i]) if d.kumo_valid[i] else False
-
-        self.consec_above = self.consec_above + 1 if full_above else 0
-        self.consec_below = self.consec_below + 1 if full_below else 0
-
-        new_leg_up = self.consec_above == inp.exit_consecutive_bars and self.exit_dir != "up"
-        new_leg_down = self.consec_below == inp.exit_consecutive_bars and self.exit_dir != "down"
-
-        if new_leg_up:
-            self.exit_dir = "up"
-            self.exit_bar = i
-            self.max_distance_atr = 0.0
-            self.anni_done = False
-            self.aati_armed = False
-            self.aati_done = False
-            self.exit_number += 1
-            self._log("[LEG-UP]", f"leg #{self.exit_number} confirmed", i)
-
-        if new_leg_down:
-            self.exit_dir = "down"
-            self.exit_bar = i
-            self.max_distance_atr = 0.0
-            self.anni_done = False
-            self.aati_armed = False
-            self.aati_done = False
-            self.exit_number += 1
-            self._log("[LEG-DOWN]", f"leg #{self.exit_number} confirmed", i)
-
-        # فاصله از ابر برای آرم کردن آتی
-        if self.exit_dir is not None and d.kumo_valid[i] and d.atr[i] and d.atr[i] > 0:
-            if self.exit_dir == "up":
-                cur_dist = (d.low[i] - d.kumo_top[i]) / d.atr[i]
-            else:
-                cur_dist = (d.kumo_bot[i] - d.high[i]) / d.atr[i]
-            self.max_distance_atr = max(self.max_distance_atr, cur_dist)
-            if self.max_distance_atr >= inp.distance_atr_mult and not self.aati_armed:
-                self.aati_armed = True
-                self._log("[AATI-ARMED]", f"maxDistanceATR={self.max_distance_atr:.3f}", i)
-
-    # ---------------------------------------------------------------
-    def _eligibility(self, i: int) -> Dict[str, bool]:
-        d = self.df
-        inp = self.inp
-
-        bars_since_exit = (i - self.exit_bar) if self.exit_bar is not None else None
-        not_stale = not (
-            (self.exit_dir == "down" and bool(d.full_above[i]))
-            or (self.exit_dir == "up" and bool(d.full_below[i]))
-        )
-
-        allow_long = inp.trade_direction != "short_only"
-        allow_short = inp.trade_direction != "long_only"
-
-        bullish_crescent = bool(
-            d.hma20[i] > d.hma50[i] and d.hma20[i] > d.hma20[i - 1] and d.hma50[i] > d.hma50[i - 1]
-        ) if i >= 1 and not pd.isna(d.hma20[i - 1]) and not pd.isna(d.hma50[i - 1]) else False
-        bearish_crescent = bool(
-            d.hma20[i] < d.hma50[i] and d.hma20[i] < d.hma20[i - 1] and d.hma50[i] < d.hma50[i - 1]
-        ) if i >= 1 and not pd.isna(d.hma20[i - 1]) and not pd.isna(d.hma50[i - 1]) else False
-
-        anni_long = (
-            inp.enable_anni and allow_long and self.exit_dir == "up"
-            and bars_since_exit is not None and 0 <= bars_since_exit <= inp.max_anni_candles
-            and not self.anni_done and not_stale
-        )
-        anni_short = (
-            inp.enable_anni and allow_short and self.exit_dir == "down"
-            and bars_since_exit is not None and 0 <= bars_since_exit <= inp.max_anni_candles
-            and not self.anni_done and not_stale
-        )
-        aati_long = (
-            inp.enable_aati and allow_long and self.exit_dir == "up" and self.aati_armed
-            and bars_since_exit is not None and bars_since_exit >= inp.aati_min_bars
-            and not self.aati_done and not_stale
-            and (not inp.enable_crescent_filter or bullish_crescent)
-        )
-        aati_short = (
-            inp.enable_aati and allow_short and self.exit_dir == "down" and self.aati_armed
-            and bars_since_exit is not None and bars_since_exit >= inp.aati_min_bars
-            and not self.aati_done and not_stale
-            and (not inp.enable_crescent_filter or bearish_crescent)
-        )
-        return {
-            "CT-Anni-L": anni_long, "CT-Anni-S": anni_short,
-            "CT-Aati-L": aati_long, "CT-Aati-S": aati_short,
-        }
-
-    # ---------------------------------------------------------------
-    def _place_or_cancel_orders(self, i: int, elig: Dict[str, bool]) -> None:
-        d = self.df
-        for entry_id, slot in self.slots.items():
-            if slot.open_trade is not None:
-                continue
-            limit_price = d.kumo_top[i] if slot.side == "long" else d.kumo_bot[i]
-            if elig[entry_id] and not pd.isna(limit_price):
-                slot.pending = PendingOrder(side=slot.side, limit_price=float(limit_price))
-            else:
-                slot.pending = None
-
-    # ---------------------------------------------------------------
-    def run(self) -> pd.DataFrame:
-        n = len(self.df)
-        for i in range(n):
-            if i > 0:
-                self._fill_pending_orders(i)
-            self._manage_open_trades(i)
-            self._update_leg_state(i)
-            elig = self._eligibility(i)
-            self._place_or_cancel_orders(i, elig)
-
-        return self.trades_dataframe()
-
-    # --------------------------------------------------------------
-    def trades_dataframe(self) -> pd.DataFrame:
-        rows = [t.__dict__ for t in self.closed_trades]
-        return pd.DataFrame(rows)
+    if f_is_entry_open("CT-Aati-S"):
+        if na(at_s_entry):
+            risky_mode3 = aati_stop_mode == "Risky (ریسکی)"
+            cloud_mid3 = (kumo_top + kumo_bot) / 2
+            at_s_entry = f_entry_price("CT-Aati-S")
+            at_s_sl = cloud_mid3 if risky_mode3 else kumo_top + safe_buffer_atr_mult * atr_val
+            rr3 = rr_aati_risky if risky_mode3 else rr_aati_safe
+            at_s_tp = at_s_entry - (at_s_sl - at_s_entry) * rr3
+            at_s_touches = 0
+            aati_done = True
+            aati_armed = False
+            f_log("[FILL]", "Aati-S @ " + pine_str.tostring(at_s_entry)
+                  + " SL=" + pine_str.tostring(at_s_sl) + " TP=" + pine_str.tostring(at_s_tp))
+        if touch_cloud_event:
+            at_s_touches += 1
+        if (enable_risk_free_on_second_touch and at_s_touches >= 2) or (
+            enable_risk_free_on_reversal_candle and f_bullish_reversal() and (not enable_catalyst_filter or f_catalyst())
+        ):
+            if at_s_sl > at_s_entry:
+                f_log("[RISK-FREE]", "Aati-S moved to breakeven @ " + pine_str.tostring(at_s_entry))
+            at_s_sl = math.min(at_s_sl, at_s_entry)
+        strategy.exit("CT-Aati-S-X", from_entry="CT-Aati-S", stop=at_s_sl, limit=at_s_tp)
+    else:
+        at_s_entry = na(float)
+        if aati_short_elig:
+            strategy.entry("CT-Aati-S", strategy.short, limit=kumo_bot)
+        else:
+            strategy.cancel("CT-Aati-S")
 
 
-# ============================================================
-# 🔵 بخش ۵: نمونه اجرا
-# ============================================================
 if __name__ == "__main__":
-    # مثال: بارگذاری دیتای OHLC از CSV با ستون‌های open,high,low,close
-    # df = pd.read_csv("your_data.csv")
-    # strat = CTDTMIchimokuStrategy(df, Inputs())
-    # trades = strat.run()
-    # print(trades)
-    # print("\n".join(strat.log[-50:]))
-    pass
+    from pynecore.standalone import run
+    run(__file__)
