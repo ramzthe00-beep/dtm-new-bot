@@ -512,7 +512,7 @@ class CTDTMIchimokuStrategy:
 
         return self.trades_dataframe()
 
-    # ---------------------------------------------------------------
+    # --------------------------------------------------------------
     def trades_dataframe(self) -> pd.DataFrame:
         rows = [t.__dict__ for t in self.closed_trades]
         return pd.DataFrame(rows)
