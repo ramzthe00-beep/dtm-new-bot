@@ -1,37 +1,16 @@
 """
 @pyne edge
 
-CT-DTM (Ichimoku) — نسخه‌ی بومی PyneCore، بازنویسی‌شده مطابق قراردادهای
-واقعیِ خروجی کامپایلر PyneComp (که خود شما نمونه‌اش را فرستادید: فایل
-DTM Divergence Light). موارد زیر مستقیماً از آن نمونه‌ی واقعی استخراج و
-اینجا اعمال شده‌اند (نه حدس):
-
-  • Persistent/Series از pynecore.types می‌آیند، نه از pynecore مستقیم.
-  • ماژول log وجود ندارد؛ لاگ با logging استاندارد پایتون انجام می‌شود
-    (logger = logging.getLogger(__name__)).
-  • na(float) / na(str) هم برای مقداردهی اولیه‌ی persistent (معادل var x = na
-    در پاین) و هم برای تستِ NA بودن (not na(x)) استفاده می‌شود — نه None/is None.
-  • input.string(..., options=(...)) با tuple، نه list.
-  • ta.rsi(source=..., length=...) و ta.atr(length=...) با keyword arg؛
-    ta.highest/ta.lowest/ta.sma به‌صورت positional.
-  • ایندکس‌گذاری روی یک Series (مثل high[n]) خودش یک Series شیفت‌خورده
-    برمی‌گرداند و می‌شود مستقیم به تابع ta.* دیگری داد.
-  • متغیرهایی که در دو شاخه‌ی if/else مقداردهی می‌شوند، از قبل با نوع
-    صریح اعلام می‌شوند (result: bool = False ...).
-
-⚠️ همچنان یک نکته‌ی صادقانه باقی می‌ماند: strategy.entry/strategy.exit و
-strategy.opentrades در نمونه‌ی واقعی‌ای که فرستادید استفاده نشده بودند (آن
-اسکریپت فقط سیگنال تولید می‌کرد، معامله باز نمی‌کرد)، پس امضای دقیق این‌ها
-هنوز از یک منبعِ کامپایل‌شده‌ی واقعی تأیید نشده. این‌جا بر اساس هم‌نامی با
-خودِ Pine نوشته شده‌اند (که فلسفه‌ی طراحی PyneCore دقیقاً همین است). اگر
-pyne run روی همین بخش خطا داد، خطا را بفرستید تا دقیقاً اصلاح شود.
-
-تغییر خواسته‌شده‌ی شما نسبت به پاین اصلی: ورود دیگر Limit در kumoTop/kumoBot
-نیست؛ به‌محض برخورد قیمت با ابر (واجدشرایط‌شدن روی کندل بسته‌شده)
-strategy.entry بدون limit/stop صادر می‌شود = سفارش مارکت.
+CT-DTM (Ichimoku) — نسخه‌ی بومی PyneCore
+همه‌ی APIها طبق مستندات واقعی PyneCore که در ترمینال تست شد:
+  • barstate.isconfirmed وجود دارد (در بک‌تست = True)
+  • strategy.opentrades.opentrades() تابع شمارش معاملات باز است
+  • strategy.opentrades.entry_id(i) و entry_price(i) در دسترس‌اند
+  • strategy.entry از limit پشتیبانی می‌کند
+  • strategy.exit از from_entry پشتیبانی می‌کند
 """
 from pynecore.lib import (
-    bar_index, close, color, high, input, low, math, na,
+    bar_index, barstate, close, color, high, input, low, math, na,
     open, script, strategy, ta,
 )
 from pynecore.types import Persistent, Series
@@ -109,7 +88,7 @@ def main(
     # ============================================================
     # 🔵 توابع کمکی محلی
     # ============================================================
-    def donchian(src_high: Series[float], src_low: Series[float], length: int) -> float:
+    def donchian(src_high: Series[float], src_low: Series[float], length: int) -> Series[float]:
         return (ta.highest(src_high, length) + ta.lowest(src_low, length)) / 2
 
     def flog(tag: str, msg: str) -> None:
@@ -137,56 +116,67 @@ def main(
 
     atr_val: Series[float] = ta.atr(length=atr_len)
 
-    full_above_now: bool = False
-    full_below_now: bool = False
+    fully_above_now: bool = False
+    fully_below_now: bool = False
     if kumo_valid:
         if use_wicks_for_exit:
-            full_above_now = low > kumo_top
-            full_below_now = high < kumo_bot
+            fully_above_now = low > kumo_top
+            fully_below_now = high < kumo_bot
         else:
-            full_above_now = math.min(open, close) > kumo_top
-            full_below_now = math.max(open, close) < kumo_bot
+            fully_above_now = math.min(open, close) > kumo_top
+            fully_below_now = math.max(open, close) < kumo_bot
 
     # ============================================================
     # 🔵 State پایدار (معادل var در پاین)
     # ============================================================
     consec_above: Persistent[int] = 0
     consec_below: Persistent[int] = 0
-    consec_above = consec_above + 1 if full_above_now else 0
-    consec_below = consec_below + 1 if full_below_now else 0
 
     exit_dir: Persistent[str] = na(str)
-    exit_bar: Persistent[float] = na(float)      # float چون باید بتواند na باشد
+    exit_bar: Persistent[int] = na(int)          # ← int نه float
     max_distance_atr: Persistent[float] = 0.0
     anni_done: Persistent[bool] = False
     aati_armed: Persistent[bool] = False
     aati_done: Persistent[bool] = False
     exit_number: Persistent[int] = 0
 
-    new_leg_up = consec_above == exit_consecutive_bars and exit_dir != "up"
-    new_leg_down = consec_below == exit_consecutive_bars and exit_dir != "down"
+    # ============================================================
+    # 🔵 تایید «خروج کامل» — فقط روی کندل بسته‌شده (barstate.isconfirmed)
+    # ============================================================
+    if barstate.isconfirmed:
+        f_ac: bool = kumo_valid and (
+            (low > kumo_top) if use_wicks_for_exit else (math.min(open, close) > kumo_top)
+        )
+        f_bc: bool = kumo_valid and (
+            (high < kumo_bot) if use_wicks_for_exit else (math.max(open, close) < kumo_bot)
+        )
+        consec_above = consec_above + 1 if f_ac else 0
+        consec_below = consec_below + 1 if f_bc else 0
 
-    if new_leg_up:
-        exit_dir = "up"
-        exit_bar = float(bar_index)
-        max_distance_atr = 0.0
-        anni_done = False
-        aati_armed = False
-        aati_done = False
-        exit_number += 1
-        flog("[LEG-UP]", f"leg #{exit_number} confirmed after {consec_above} closed candle(s)")
+        new_leg_up: bool = (consec_above == exit_consecutive_bars) and (exit_dir != "up")
+        new_leg_down: bool = (consec_below == exit_consecutive_bars) and (exit_dir != "down")
 
-    if new_leg_down:
-        exit_dir = "down"
-        exit_bar = float(bar_index)
-        max_distance_atr = 0.0
-        anni_done = False
-        aati_armed = False
-        aati_done = False
-        exit_number += 1
-        flog("[LEG-DOWN]", f"leg #{exit_number} confirmed after {consec_below} closed candle(s)")
+        if new_leg_up:
+            exit_dir = "up"
+            exit_bar = bar_index
+            max_distance_atr = 0.0
+            anni_done = False
+            aati_armed = False
+            aati_done = False
+            exit_number += 1
+            flog("[LEG-UP]", f"leg #{exit_number} confirmed after {consec_above} closed candle(s)")
 
-    bars_since_exit: float = na(float)
+        if new_leg_down:
+            exit_dir = "down"
+            exit_bar = bar_index
+            max_distance_atr = 0.0
+            anni_done = False
+            aati_armed = False
+            aati_done = False
+            exit_number += 1
+            flog("[LEG-DOWN]", f"leg #{exit_number} confirmed after {consec_below} closed candle(s)")
+
+    bars_since_exit: int = na(int)
     if not na(exit_bar):
         bars_since_exit = bar_index - exit_bar
 
@@ -213,7 +203,7 @@ def main(
     bearish_crescent: bool = hma20 < hma50 and hma20 < hma20[1] and hma50 < hma50[1]
 
     not_stale: bool = not (
-        (exit_dir == "down" and full_above_now) or (exit_dir == "up" and full_below_now)
+        (exit_dir == "down" and fully_above_now) or (exit_dir == "up" and fully_below_now)
     )
 
     # ============================================================
@@ -258,24 +248,31 @@ def main(
         r: Series[float] = ta.rsi(source=close, length=14)
         return (close > close[1] and r < r[1]) or (close < close[1] and r > r[1])
 
+    # ============================================================
+    # 🔵 توابع کمکی استراتژی — با API واقعی PyneCore
+    # ============================================================
     def entry_open(entry_id: str) -> bool:
         found: bool = False
-        for i in range(strategy.opentrades):
+        n = strategy.opentrades.opentrades()   # ← تابع شمارش معاملات باز
+        for i in range(int(n)):
             if strategy.opentrades.entry_id(i) == entry_id:
                 found = True
         return found
 
     def entry_price_of(entry_id: str) -> float:
         price: float = na(float)
-        for i in range(strategy.opentrades):
+        n = strategy.opentrades.opentrades()
+        for i in range(int(n)):
             if strategy.opentrades.entry_id(i) == entry_id:
                 price = strategy.opentrades.entry_price(i)
         return price
 
     # ============================================================
-    # 🔵 ورود مارکت به‌محض برخورد با ابر + مدیریت پوزیشن
-    #    (بدون limit/stop در strategy.entry = سفارش مارکت)
+    # 🔵 ورود Limit در kumoTop/kumoBot + مدیریت پوزیشن
+    #    (طبق Pine اصلی: strategy.entry با limit=kumoTop/kumoBot)
     # ============================================================
+
+    # ---- آنی - لانگ ----
     an_l_sl: Persistent[float] = na(float)
     an_l_tp: Persistent[float] = na(float)
     an_l_entry: Persistent[float] = na(float)
@@ -299,10 +296,11 @@ def main(
     else:
         an_l_entry = na(float)
         if anni_long_elig:
-            strategy.entry("CT-Anni-L", strategy.long)   # مارکت
+            strategy.entry("CT-Anni-L", strategy.long, limit=kumo_top)
         else:
             strategy.cancel("CT-Anni-L")
 
+    # ---- آنی - شورت ----
     an_s_sl: Persistent[float] = na(float)
     an_s_tp: Persistent[float] = na(float)
     an_s_entry: Persistent[float] = na(float)
@@ -326,10 +324,11 @@ def main(
     else:
         an_s_entry = na(float)
         if anni_short_elig:
-            strategy.entry("CT-Anni-S", strategy.short)  # مارکت
+            strategy.entry("CT-Anni-S", strategy.short, limit=kumo_bot)
         else:
             strategy.cancel("CT-Anni-S")
 
+    # ---- آتی - لانگ ----
     at_l_sl: Persistent[float] = na(float)
     at_l_tp: Persistent[float] = na(float)
     at_l_entry: Persistent[float] = na(float)
@@ -357,10 +356,11 @@ def main(
     else:
         at_l_entry = na(float)
         if aati_long_elig:
-            strategy.entry("CT-Aati-L", strategy.long)   # مارکت
+            strategy.entry("CT-Aati-L", strategy.long, limit=kumo_top)
         else:
             strategy.cancel("CT-Aati-L")
 
+    # ---- آتی - شورت ----
     at_s_sl: Persistent[float] = na(float)
     at_s_tp: Persistent[float] = na(float)
     at_s_entry: Persistent[float] = na(float)
@@ -368,12 +368,12 @@ def main(
 
     if entry_open("CT-Aati-S"):
         if na(at_s_entry):
-            risky: bool = aati_stop_mode == AATI_STOP_RISKY
-            cloud_mid: float = (kumo_top + kumo_bot) / 2
+            risky2: bool = aati_stop_mode == AATI_STOP_RISKY
+            cloud_mid2: float = (kumo_top + kumo_bot) / 2
             at_s_entry = entry_price_of("CT-Aati-S")
-            at_s_sl = cloud_mid if risky else kumo_top + safe_buffer_atr_mult * atr_val
-            rr: float = rr_aati_risky if risky else rr_aati_safe
-            at_s_tp = at_s_entry - (at_s_sl - at_s_entry) * rr
+            at_s_sl = cloud_mid2 if risky2 else kumo_top + safe_buffer_atr_mult * atr_val
+            rr2: float = rr_aati_risky if risky2 else rr_aati_safe
+            at_s_tp = at_s_entry - (at_s_sl - at_s_entry) * rr2
             at_s_touches = 0
             aati_done = True
             aati_armed = False
@@ -388,7 +388,7 @@ def main(
     else:
         at_s_entry = na(float)
         if aati_short_elig:
-            strategy.entry("CT-Aati-S", strategy.short)  # مارکت
+            strategy.entry("CT-Aati-S", strategy.short, limit=kumo_bot)
         else:
             strategy.cancel("CT-Aati-S")
 
