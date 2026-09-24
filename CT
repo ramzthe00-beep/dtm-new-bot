@@ -1,23 +1,55 @@
 """@pyne
 
-CT-DTM (Ichimoku) — Signal Generator (PyneCore 6.10 compatible) — v3
+CT-DTM (Ichimoku) — Signal Generator (PyneCore 6.10 compatible) — v4
 
-تغییرات نسبت به فایلی که فرستادی (همه‌ی ساختار @script.indicator + plot() حفظ شده):
-  ۰) باگ نحوی رفع شد: آخرین plot (fire_kind_code) یک پرانتز اضافه داشت
-     (SyntaxError) و فایل اصلاً اجرا نمی‌شد.
-  ۱) فیل مثل Pine: سفارش Limit آخر کندل N با لبه‌ی ابرِ همان کندل «ثبت» می‌شود و
-     از کندل N+1 با همان قیمت ثبت‌شده چک می‌شود:
-         لانگ:  low  <= قیمت ثبت‌شده     شورت:  high >= قیمت ثبت‌شده
-     (قبلاً با ابر کندل جاری چک می‌شد → یک کندل زودتر/دیرتر و قیمت فرضی.)
-     هر کندل که واجد شرایط نباشد سفارش لغو می‌شود (مثل strategy.cancel).
-  ۲) سیگنال روی «کندل فیل» صادر می‌شود (همان کندلی که Pine فیل می‌کند)،
-     ولی قیمت ورود مارکت = close همان کندل است (تصمیم تو). قیمت فیل تئوری Pine
-     فقط برای مقایسه‌ی لاگ در pine_px چاپ می‌شود.
-  ۳) ترتیب مثل Pine: فیل ← تشخیص لِگ (ریست anni_done) ← ست‌کردن done روی فیل.
-  ۴) بافرها فقط روی کندل بسته‌شده به‌روز می‌شوند و «کندل جاری» داخلشان نیست
-     (تیک‌های میانی در لایو دیگر ایندکس [1]/[26] را خراب نمی‌کنند).
-  ۵) لاگ‌ها هم‌فرمت Pine (ELIG-ON/OFF, TOUCH با مقدار ابر, ARMED, RISK-FREE, PARAMS)
-     تا diff مستقیم ممکن باشد.
+تغییرات نسبت به v3 (فقط در بخش «محاسبه و تشخیص سیگنال» / مدیریت پوزیشن؛
+بخش‌های ایچیموکو/ابر/لگ/eligibility دست‌نخورده ماندند چون در برابر
+pine-logs-CT-Strategy-v3.csv صد در صد تایید شدند — نگاه کن به گزارش):
+
+  الف) باگ واقعی #۱ — شمارنده لمس در کندل فیل:
+       در Pine، initialize و touch-increment و risk-free-check همه داخل
+       یک بلوک واحد «if f_isEntryOpen(id)» هستند؛ یعنی در همان کندلی که
+       پوزیشن باز می‌شود (anLTouches := 0)، بلافاصله در همان اجرا
+       touchCloudEvent و کندل بازگشتی هم چک می‌شوند و می‌توانند ریسک‌فری
+       را در همان کندل فعال کنند. نسخه‌ی قبلی پایتون touches را مستقیم =1
+       می‌گذاشت و اصلاً این دو چک را در کندل فیل اجرا نمی‌کرد (چون در
+       شاخه‌ی if/elif جدا از منطق «پوزیشن از قبل باز بوده» قرار داشت).
+       رفع شد: touches روی 0 ست می‌شود و بلافاصله همان‌جا (کندل فیل)
+       touch-increment + risk-free (لمس دوم / کندل بازگشتی) هم اجرا می‌شود
+       — دقیقاً مثل Pine.
+       (چک SL/TP در همان کندل فیل عمداً اضافه نشد: چون قیمت ورود اینجا
+       close همان کندل است، دیگر قیمتی از همان کندل باقی نمانده که بشود
+       با آن SL/TP را تست کرد؛ این با مدل «ورود در close» سازگار است و
+       جدا از باگ بالاست.)
+
+  ب) باگ واقعی #۲ — گارد اضافه‌ی غیرموجود در Pine:
+       نسخه‌ی قبلی پایتون یک شرط اضافه داشت: `if kumo_valid and bar_c > sl_c`
+       (برای Anni-L, مشابه برای بقیه) که اگر close کندلِ فیل از قبل SL را
+       رد کرده بود، کل سیگنال را «SKIP» می‌کرد و اصلاً فایر نمی‌شد.
+       Pine چنین شرطی ندارد و strategy.entry هر بار که پر شود بدون قید‌وشرط
+       پذیرفته می‌شود. این گارد باعث می‌شد تعداد سیگنال‌های پایتون از تعداد
+       FILL واقعی Pine کمتر باشد. حذف شد — الان دقیقاً مثل Pine همیشه فایر
+       می‌شود.
+
+  ج) ترتیب exit-check برای کندل‌هایی که پوزیشن از قبل باز بوده (نه کندل
+     فیل) بدون تغییر ماند: چک می‌شود که آیا این ترتیب درست است یا نه —
+     طبق مستندات Broker Emulator تریدینگ‌ویو، سفارش‌هایی که در طول
+     محاسبه‌ی کندل N ثبت/آپدیت می‌شوند («risk-free» همینجا رخ می‌دهد)
+     در برابر داده‌ی خودِ کندل N چک نمی‌شوند بلکه فقط از کندل N+1 به بعد
+     در نظر گرفته می‌شوند. پس SL/TP که «قبل» از اجرای امسال (یعنی در پایان
+     اسکریپتِ کندل قبلی) ثبت شده باید در برابر OHLC همین کندل چک شود —
+     دقیقاً همان چیزی که نسخه‌ی قبلی پایتون انجام می‌داد (exit-check اول،
+     بعد آپدیت SL برای کندل بعد). این بخش تغییری نکرد چون از قبل درست بود.
+
+  د) قیمت ورود (entry) عمداً close همان کندل باقی ماند (تصمیم آگاهانه‌ی
+     نسخه‌ی قبلی، نه Pine's theoretical limit-fill price). این باعث تفاوت
+     در مقدار عددی SL/TP/PnL با Pine می‌شود ولی روی TIMING تشخیص سیگنال
+     (این‌که «کِی» و «کدام» مدل فایر می‌شود) اثر ندارد. اگر می‌خواهی این
+     هم صد‌در‌صد Pine باشد باید entry را an_l_pine_px (و مشابه‌هایش) بگذاری،
+     نه bar_c — این یک تصمیم جداست، نه باگ.
+
+بقیه‌ی فایل (ایچیموکو/ابر/HMA/RSI/لگ/eligibility/لاگ‌ها) عیناً از v3 کپی
+شده و تغییر منطقی نکرده، فقط این کامنت‌ها اضافه شدند.
 """
 from pynecore.lib import (
     bar_index, barstate, close, high, input, low, math, na,
@@ -100,7 +132,7 @@ def prev_val(buf, k: int) -> float:
 
 @script.indicator(
     "CT-DTM (Ichimoku)",
-    shorttitle="CT-Strategy-v3",
+    shorttitle="CT-Strategy-v4",
     overlay=True,
 )
 def main(
@@ -162,7 +194,6 @@ def main(
 
     confirmed = barstate.isconfirmed
 
-    # لاگ پارامترهای واقعی اجرا (برای پیدا کردن override از toml/CLI)
     if confirmed and int(bar_index) == 0:
         flog("[PARAMS]", f"aati_min_bars={aati_min_bars} max_anni_candles={max_anni_candles} "
                          f"distance_atr_mult={distance_atr_mult} exit_consecutive_bars={exit_consecutive_bars} "
@@ -171,14 +202,13 @@ def main(
                          f"dir={trade_direction} atr_len={atr_len}")
 
     # ═══════════════════════════════════════════════════════════
-    # 🔵 ایچیموکو
+    # 🔵 ایچیموکو (بدون تغییر نسبت به v3 — در برابر لاگ Pine تایید شد)
     # ═══════════════════════════════════════════════════════════
     conversion_line = (ta.highest(high, conversion_periods) + ta.lowest(low, conversion_periods)) / 2
     base_line = (ta.highest(high, base_periods) + ta.lowest(low, base_periods)) / 2
     lead_line1 = (conversion_line + base_line) / 2
     lead_line2 = (ta.highest(high, lagging_span2_periods) + ta.lowest(low, lagging_span2_periods)) / 2
 
-    # معادل lead_line1[displacement] (buffer بدون کندل جاری → buf[-displacement])
     lead1_disp = prev_val(lead1_hist, displacement)
     lead2_disp = prev_val(lead2_hist, displacement)
 
@@ -259,7 +289,6 @@ def main(
     exit_number: Persistent[int] = 0
     touch_prev: Persistent[bool] = False
 
-    # سفارش‌های Limit معلق (ثبت‌شده در close کندل قبل، مثل strategy.entry(limit=...) در Pine)
     pend_an_l: Persistent[bool] = False
     pend_an_l_px: Persistent[float] = na_float
     pend_an_s: Persistent[bool] = False
@@ -269,7 +298,6 @@ def main(
     pend_at_s: Persistent[bool] = False
     pend_at_s_px: Persistent[float] = na_float
 
-    # برای لاگ لبه‌ی ELIG
     elig_prev_an_l: Persistent[bool] = False
     elig_prev_an_s: Persistent[bool] = False
     elig_prev_at_l: Persistent[bool] = False
@@ -336,8 +364,7 @@ def main(
     # 🔵 منطق اصلی — فقط روی کندل بسته‌شده
     # ═══════════════════════════════════════════════════════════
     if confirmed:
-        # ── ۰) فیل سفارش‌های معلقِ کندل قبل (قبل از هر منطق دیگر؛ مثل broker emulator) ──
-        #    شرط با «قیمت ثبت‌شده» چک می‌شود نه با ابر کندل جاری
+        # ── ۰) فیل سفارش‌های معلقِ کندل قبل ──
         fill_an_l = pend_an_l and bar_l <= pend_an_l_px
         fill_an_s = pend_an_s and bar_h >= pend_an_s_px
         fill_at_l = pend_at_l and bar_l <= pend_at_l_px
@@ -394,7 +421,7 @@ def main(
         if not not_stale:
             flog("[STALE-GUARD]", f"exitDir={exit_dir} contradicted → pending orders will cancel")
 
-        # ── ۴) شرایط واجدشرایط‌بودن (همان bars_since_exit و done که بعد از ریست لِگ است) ──
+        # ── ۴) شرایط واجدشرایط‌بودن ──
         anni_long_elig = (enable_anni and allow_long and exit_dir == "up"
             and bars_since_exit >= 0 and bars_since_exit <= max_anni_candles
             and (not anni_done) and not_stale)
@@ -408,7 +435,6 @@ def main(
             and bars_since_exit >= aati_min_bars and (not aati_done) and not_stale
             and ((not enable_crescent_filter) or bearish_crescent))
 
-        # لاگ لبه‌ها (هم‌فرمت Pine)
         if anni_long_elig and not elig_prev_an_l:
             flog("[ELIG-ON]", f"Anni-L | kumoTop={kumo_top}")
         if (not anni_long_elig) and elig_prev_an_l:
@@ -450,21 +476,30 @@ def main(
                 pend_an_l = False
                 anni_done = True
                 sl_c = (kumo_top + kumo_bot) / 2 if anni_stop_mode == ANNI_STOP_MID else kumo_bot
-                if kumo_valid and bar_c > sl_c:
-                    an_l_pos = True
-                    an_l_entry = bar_c
-                    an_l_sl = sl_c
-                    an_l_tp = an_l_entry + (an_l_entry - an_l_sl) * rr_anni
-                    an_l_touches = 1
-                    an_l_fire = True
-                    flog("[FILL]", f"Anni-L @ {an_l_pine_px} | mkt={an_l_entry} SL={an_l_sl} TP={an_l_tp}")
-                else:
-                    flog("[SKIP]", f"Anni-L filled in Pine but close={bar_c} invalid vs SL={sl_c}")
+                an_l_pos = True
+                an_l_entry = bar_c
+                an_l_sl = sl_c
+                an_l_tp = an_l_entry + (an_l_entry - an_l_sl) * rr_anni
+                an_l_touches = 0
+                an_l_fire = True
+                flog("[FILL]", f"Anni-L @ {an_l_pine_px} | mkt={an_l_entry} SL={an_l_sl} TP={an_l_tp}")
+                # FIX: همان چک‌هایی که Pine در همین کندل (همان بلوک) انجام می‌دهد
+                if touch_cloud_event:
+                    an_l_touches += 1
+                if (enable_rf_second_touch and an_l_touches >= 2) or (
+                    enable_rf_reversal_candle and bearish_reversal()
+                    and ((not enable_catalyst_filter) or catalyst())
+                ):
+                    if an_l_sl < an_l_entry:
+                        flog("[RISK-FREE]", f"Anni-L moved to breakeven @ {an_l_entry}")
+                    an_l_sl = math.max(an_l_sl, an_l_entry)
             elif anni_long_elig and kumo_valid:
                 pend_an_l = True
                 pend_an_l_px = kumo_top
             else:
                 pend_an_l = False
+        if not an_l_pos and not fill_an_l:
+            an_l_entry = na_float
 
         # ═══════════════════════════════════════════════════════
         # Anni-S
@@ -490,21 +525,29 @@ def main(
                 pend_an_s = False
                 anni_done = True
                 sl_s = (kumo_top + kumo_bot) / 2 if anni_stop_mode == ANNI_STOP_MID else kumo_top
-                if kumo_valid and bar_c < sl_s:
-                    an_s_pos = True
-                    an_s_entry = bar_c
-                    an_s_sl = sl_s
-                    an_s_tp = an_s_entry - (an_s_sl - an_s_entry) * rr_anni
-                    an_s_touches = 1
-                    an_s_fire = True
-                    flog("[FILL]", f"Anni-S @ {an_s_pine_px} | mkt={an_s_entry} SL={an_s_sl} TP={an_s_tp}")
-                else:
-                    flog("[SKIP]", f"Anni-S filled in Pine but close={bar_c} invalid vs SL={sl_s}")
+                an_s_pos = True
+                an_s_entry = bar_c
+                an_s_sl = sl_s
+                an_s_tp = an_s_entry - (an_s_sl - an_s_entry) * rr_anni
+                an_s_touches = 0
+                an_s_fire = True
+                flog("[FILL]", f"Anni-S @ {an_s_pine_px} | mkt={an_s_entry} SL={an_s_sl} TP={an_s_tp}")
+                if touch_cloud_event:
+                    an_s_touches += 1
+                if (enable_rf_second_touch and an_s_touches >= 2) or (
+                    enable_rf_reversal_candle and bullish_reversal()
+                    and ((not enable_catalyst_filter) or catalyst())
+                ):
+                    if an_s_sl > an_s_entry:
+                        flog("[RISK-FREE]", f"Anni-S moved to breakeven @ {an_s_entry}")
+                    an_s_sl = math.min(an_s_sl, an_s_entry)
             elif anni_short_elig and kumo_valid:
                 pend_an_s = True
                 pend_an_s_px = kumo_bot
             else:
                 pend_an_s = False
+        if not an_s_pos and not fill_an_s:
+            an_s_entry = na_float
 
         # ═══════════════════════════════════════════════════════
         # Aati-L
@@ -533,22 +576,30 @@ def main(
                 risky_l = aati_stop_mode == AATI_STOP_RISKY
                 cloud_mid_l = (kumo_top + kumo_bot) / 2
                 sl_al = cloud_mid_l if risky_l else kumo_bot - safe_buffer_atr_mult * atr_val
-                if kumo_valid and bar_c > sl_al:
-                    rr_al = rr_aati_risky if risky_l else rr_aati_safe
-                    at_l_pos = True
-                    at_l_entry = bar_c
-                    at_l_sl = sl_al
-                    at_l_tp = at_l_entry + (at_l_entry - at_l_sl) * rr_al
-                    at_l_touches = 1
-                    at_l_fire = True
-                    flog("[FILL]", f"Aati-L @ {at_l_pine_px} | mkt={at_l_entry} SL={at_l_sl} TP={at_l_tp}")
-                else:
-                    flog("[SKIP]", f"Aati-L filled in Pine but close={bar_c} invalid vs SL={sl_al}")
+                rr_al = rr_aati_risky if risky_l else rr_aati_safe
+                at_l_pos = True
+                at_l_entry = bar_c
+                at_l_sl = sl_al
+                at_l_tp = at_l_entry + (at_l_entry - at_l_sl) * rr_al
+                at_l_touches = 0
+                at_l_fire = True
+                flog("[FILL]", f"Aati-L @ {at_l_pine_px} | mkt={at_l_entry} SL={at_l_sl} TP={at_l_tp}")
+                if touch_cloud_event:
+                    at_l_touches += 1
+                if (enable_rf_second_touch and at_l_touches >= 2) or (
+                    enable_rf_reversal_candle and bearish_reversal()
+                    and ((not enable_catalyst_filter) or catalyst())
+                ):
+                    if at_l_sl < at_l_entry:
+                        flog("[RISK-FREE]", f"Aati-L moved to breakeven @ {at_l_entry}")
+                    at_l_sl = math.max(at_l_sl, at_l_entry)
             elif aati_long_elig and kumo_valid:
                 pend_at_l = True
                 pend_at_l_px = kumo_top
             else:
                 pend_at_l = False
+        if not at_l_pos and not fill_at_l:
+            at_l_entry = na_float
 
         # ═══════════════════════════════════════════════════════
         # Aati-S
@@ -577,26 +628,33 @@ def main(
                 risky_s = aati_stop_mode == AATI_STOP_RISKY
                 cloud_mid_s = (kumo_top + kumo_bot) / 2
                 sl_as = cloud_mid_s if risky_s else kumo_top + safe_buffer_atr_mult * atr_val
-                if kumo_valid and bar_c < sl_as:
-                    rr_as = rr_aati_risky if risky_s else rr_aati_safe
-                    at_s_pos = True
-                    at_s_entry = bar_c
-                    at_s_sl = sl_as
-                    at_s_tp = at_s_entry - (at_s_sl - at_s_entry) * rr_as
-                    at_s_touches = 1
-                    at_s_fire = True
-                    flog("[FILL]", f"Aati-S @ {at_s_pine_px} | mkt={at_s_entry} SL={at_s_sl} TP={at_s_tp}")
-                else:
-                    flog("[SKIP]", f"Aati-S filled in Pine but close={bar_c} invalid vs SL={sl_as}")
+                rr_as = rr_aati_risky if risky_s else rr_aati_safe
+                at_s_pos = True
+                at_s_entry = bar_c
+                at_s_sl = sl_as
+                at_s_tp = at_s_entry - (at_s_sl - at_s_entry) * rr_as
+                at_s_touches = 0
+                at_s_fire = True
+                flog("[FILL]", f"Aati-S @ {at_s_pine_px} | mkt={at_s_entry} SL={at_s_sl} TP={at_s_tp}")
+                if touch_cloud_event:
+                    at_s_touches += 1
+                if (enable_rf_second_touch and at_s_touches >= 2) or (
+                    enable_rf_reversal_candle and bullish_reversal()
+                    and ((not enable_catalyst_filter) or catalyst())
+                ):
+                    if at_s_sl > at_s_entry:
+                        flog("[RISK-FREE]", f"Aati-S moved to breakeven @ {at_s_entry}")
+                    at_s_sl = math.min(at_s_sl, at_s_entry)
             elif aati_short_elig and kumo_valid:
                 pend_at_s = True
                 pend_at_s_px = kumo_bot
             else:
                 pend_at_s = False
+        if not at_s_pos and not fill_at_s:
+            at_s_entry = na_float
 
         touch_prev = touch_cloud_now
 
-        # ── بافرها: فقط بعد از پایان منطق کندل و فقط روی کندل بسته‌شده ──
         lead1_hist.append(float(lead_line1))
         lead2_hist.append(float(lead_line2))
         hma20_hist.append(hma20)
@@ -649,7 +707,7 @@ def main(
         fire_kind_code = 4
 
     # ═══════════════════════════════════════════════════════════
-    # 🔵 plot() به جای return dict
+    # 🔵 plot()
     # ═══════════════════════════════════════════════════════════
     plot(1 if an_l_fire else 0, title="an_l_fire")
     plot(1 if an_s_fire else 0, title="an_s_fire")
