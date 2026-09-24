@@ -34,7 +34,7 @@ DIR_LONG_ONLY = "فقط لانگ"
 DIR_SHORT_ONLY = "فقط شورت"
 
 # ─── حداکثر تاریخچه‌ای که نگه می‌داریم ───
-MAX_HIST = 200
+MAX_HIST = 1000
 
 
 def sim_exit(is_long: bool, o: float, h: float, l: float, sl: float, tp: float):
