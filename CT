@@ -1,26 +1,31 @@
 """
 @pyne edge
 
-CT-DTM (Ichimoku) — نسخه‌ی بومی PyneCore
-همه‌ی APIها طبق مستندات واقعی PyneCore که در ترمینال تست شد:
-  • barstate.isconfirmed وجود دارد (در بک‌تست = True)
-  • strategy.opentrades.opentrades() تابع شمارش معاملات باز است
-  • strategy.opentrades.entry_id(i) و entry_price(i) در دسترس‌اند
-  • strategy.entry از limit پشتیبانی می‌کند
-  • strategy.exit از from_entry پشتیبانی می‌کند
+CT-DTM (Ichimoku) — Signal Generator (Live Trading)
+
+نسخه‌ی اصلاح‌شده مطابق الگوی DTM:
+  • استراتژی فقط سیگنال تولید می‌کند و dict برمی‌گرداند
+  • هیچ strategy.entry / strategy.exit / strategy.cancel صدا زده نمی‌شود
+  • منطق تشخیص (LEG, ELIG, AATI-ARMED, Touch, Crescent, ...) دست‌نخورده
+  • position tracking به‌صورت محلی با Persistent انجام می‌شود
+  • خروجی dict شامل signal/entry/stop/target/kind برای bot.py
+
+API های تست‌شده در PyneCore 6.10.0:
+  • barstate.isconfirmed = True در بک‌تست
+  • close[n], open[n], high[n], low[n] مستقیم قابل ایندکس‌گذاری
+  • Series[bool] با annotation کار می‌کند
+  • برای bool → Series از buffer محلی استفاده می‌کنیم
 """
 from pynecore.lib import (
-    bar_index, barstate, close, color, high, input, low, math, na,
-    open, script, strategy, ta,
+    bar_index, barstate, close, high, input, low, math, na,
+    open, script, ta,
 )
 from pynecore.types import Persistent, Series
 import logging
 
 logger = logging.getLogger(__name__)
 
-# ============================================================
-# نام گروه‌های ورودی
-# ============================================================
+# ─── گروه‌های ورودی ───
 grp_ichi = "ایچیموکو"
 grp_logic = "منطق استراتژی CT"
 grp_stop = "حد ضرر و تارگت"
@@ -28,7 +33,6 @@ grp_rf = "ریسک فری"
 grp_filter = "فیلترها"
 grp_log = "لاگ تشخیصی"
 
-# گزینه‌های input.string — به‌صورت ثابت تعریف می‌شوند تا مقایسه‌ی == دقیق باشد
 ANNI_STOP_MID = "Mid-Cloud (وسط ابر)"
 ANNI_STOP_FAR = "Far Edge (لبه دور ابر)"
 AATI_STOP_SAFE = "Safe (امن)"
@@ -42,11 +46,6 @@ DIR_SHORT_ONLY = "فقط شورت"
     "CT-DTM (Ichimoku)",
     shorttitle="CT-Strategy-v3",
     overlay=True,
-    default_qty_type=strategy.percent_of_equity,
-    default_qty_value=10,
-    calc_on_every_tick=True,
-    pyramiding=2,
-    initial_capital=10000,
 )
 def main(
     # --- ایچیموکو ---
@@ -56,38 +55,38 @@ def main(
     displacement=input.int(26, "Displacement (Cloud Shift)", group=grp_ichi),
 
     # --- منطق CT ---
-    use_wicks_for_exit=input.bool(True, "خروج کامل با احتساب سایه (Wick)؟", group=grp_logic),
-    exit_consecutive_bars=input.int(1, "تعداد کندل کامل بسته‌شده برای تایید خروج", minval=1, maxval=10, group=grp_logic),
-    max_anni_candles=input.int(5, "حداکثر تعداد کندل برای مدل آنی", minval=1, group=grp_logic),
-    aati_min_bars=input.int(3, "حداقل تعداد کندل قبل از تست آتی (پروکسی هلال)", minval=1, group=grp_logic),
-    distance_atr_mult=input.float(1.5, "حداقل فاصله از عبر (ضریب ATR) برای اعتبار آتی", minval=0.1, step=0.1, group=grp_logic),
+    use_wicks_for_exit=input.bool(True, "خروج کامل با احتساب سایه", group=grp_logic),
+    exit_consecutive_bars=input.int(1, "کندل بسته‌شده برای تایید خروج", minval=1, maxval=10, group=grp_logic),
+    max_anni_candles=input.int(5, "حداکثر کندل برای مدل آنی", minval=1, group=grp_logic),
+    aati_min_bars=input.int(3, "حداقل کندل قبل از تست آتی", minval=1, group=grp_logic),
+    distance_atr_mult=input.float(1.5, "حداقل فاصله از عبر (ATR)", minval=0.1, step=0.1, group=grp_logic),
     atr_len=input.int(14, "دوره ATR", group=grp_logic),
-    enable_crescent_filter=input.bool(True, "فعال‌سازی فیلتر هلال برای مدل آتی", group=grp_logic),
+    enable_crescent_filter=input.bool(True, "فعال‌سازی فیلتر هلال", group=grp_logic),
 
     # --- حد ضرر / تارگت ---
-    anni_stop_mode=input.string(ANNI_STOP_MID, "حالت حد ضرر مدل آنی", options=(ANNI_STOP_MID, ANNI_STOP_FAR), group=grp_stop),
-    aati_stop_mode=input.string(AATI_STOP_SAFE, "حالت حد ضرر مدل آتی", options=(AATI_STOP_SAFE, AATI_STOP_RISKY), group=grp_stop),
-    safe_buffer_atr_mult=input.float(0.25, "بافر اضافه برای حالت امن (ضریب ATR)", minval=0.0, step=0.05, group=grp_stop),
-    rr_anni=input.float(7.0, "ریسک به ریوارد - مدل آنی", minval=0.5, step=0.5, group=grp_stop),
-    rr_aati_risky=input.float(10.0, "ریسک به ریوارد - آتی (ریسکی)", minval=0.5, step=0.5, group=grp_stop),
-    rr_aati_safe=input.float(5.0, "ریسک به ریوارد - آتی (امن)", minval=0.5, step=0.5, group=grp_stop),
+    anni_stop_mode=input.string(ANNI_STOP_MID, "حد ضرر آنی", options=(ANNI_STOP_MID, ANNI_STOP_FAR), group=grp_stop),
+    aati_stop_mode=input.string(AATI_STOP_SAFE, "حد ضرر آتی", options=(AATI_STOP_SAFE, AATI_STOP_RISKY), group=grp_stop),
+    safe_buffer_atr_mult=input.float(0.25, "بافر حالت امن (ATR)", minval=0.0, step=0.05, group=grp_stop),
+    rr_anni=input.float(7.0, "R:R آنی", minval=0.5, step=0.5, group=grp_stop),
+    rr_aati_risky=input.float(10.0, "R:R آتی (ریسکی)", minval=0.5, step=0.5, group=grp_stop),
+    rr_aati_safe=input.float(5.0, "R:R آتی (امن)", minval=0.5, step=0.5, group=grp_stop),
 
     # --- ریسک‌فری ---
-    enable_rf_second_touch=input.bool(True, "ریسک‌فری با برخورد دوم به عبر", group=grp_rf),
+    enable_rf_second_touch=input.bool(True, "ریسک‌فری با برخورد دوم", group=grp_rf),
     enable_rf_reversal_candle=input.bool(True, "ریسک‌فری با کندل بازگشتی", group=grp_rf),
-    enable_catalyst_filter=input.bool(True, "فعال‌سازی کاتالیزور (RSI Divergence Proxy)", group=grp_rf),
+    enable_catalyst_filter=input.bool(True, "فعال‌سازی کاتالیزور", group=grp_rf),
 
     # --- فیلترها ---
     enable_anni=input.bool(True, "فعال‌سازی مدل آنی", group=grp_filter),
     enable_aati=input.bool(True, "فعال‌سازی مدل آتی", group=grp_filter),
-    trade_direction=input.string(DIR_BOTH, "جهت مجاز معامله", options=(DIR_BOTH, DIR_LONG_ONLY, DIR_SHORT_ONLY), group=grp_filter),
+    trade_direction=input.string(DIR_BOTH, "جهت مجاز", options=(DIR_BOTH, DIR_LONG_ONLY, DIR_SHORT_ONLY), group=grp_filter),
 
     # --- لاگ ---
-    enable_log=input.bool(True, "فعال‌سازی لاگ رویدادها", group=grp_log),
+    enable_log=input.bool(True, "لاگ رویدادها", group=grp_log),
 ):
-    # ============================================================
-    # 🔵 توابع کمکی محلی
-    # ============================================================
+    # ═══════════════════════════════════════════════════════════
+    # 🔵 توابع کمکی
+    # ═══════════════════════════════════════════════════════════
     def donchian(src_high: Series[float], src_low: Series[float], length: int) -> Series[float]:
         return (ta.highest(src_high, length) + ta.lowest(src_low, length)) / 2
 
@@ -95,17 +94,16 @@ def main(
         if enable_log:
             logger.info(f"{tag} | bar={bar_index} | {msg}")
 
-    # ============================================================
+    # ═══════════════════════════════════════════════════════════
     # 🔵 محاسبه ایچیموکو
-    # ============================================================
+    # ═══════════════════════════════════════════════════════════
     conversion_line: Series[float] = donchian(high, low, conversion_periods)
     base_line: Series[float] = donchian(high, low, base_periods)
     lead_line1: Series[float] = (conversion_line + base_line) / 2
     lead_line2: Series[float] = donchian(high, low, lagging_span2_periods)
 
-    # kumoTop/kumoBot = مقادیر lead_line1/2 از displacement کندل قبل
-    lead1_disp = lead_line1[displacement]
-    lead2_disp = lead_line2[displacement]
+    lead1_disp: Series[float] = lead_line1[displacement]
+    lead2_disp: Series[float] = lead_line2[displacement]
     kumo_valid: bool = (not na(lead1_disp)) and (not na(lead2_disp))
 
     kumo_top: float = na(float)
@@ -126,23 +124,26 @@ def main(
             fully_above_now = math.min(open, close) > kumo_top
             fully_below_now = math.max(open, close) < kumo_bot
 
-    # ============================================================
-    # 🔵 State پایدار (معادل var در پاین)
-    # ============================================================
+    # ═══════════════════════════════════════════════════════════
+    # 🔵 State پایدار
+    # ═══════════════════════════════════════════════════════════
     consec_above: Persistent[int] = 0
     consec_below: Persistent[int] = 0
 
-    exit_dir: Persistent[str] = na(str)
-    exit_bar: Persistent[int] = na(int)          # ← int نه float
+    exit_dir: Persistent[str] = ""
+    exit_bar: Persistent[int] = -1
     max_distance_atr: Persistent[float] = 0.0
     anni_done: Persistent[bool] = False
     aati_armed: Persistent[bool] = False
     aati_done: Persistent[bool] = False
     exit_number: Persistent[int] = 0
 
-    # ============================================================
-    # 🔵 تایید «خروج کامل» — فقط روی کندل بسته‌شده (barstate.isconfirmed)
-    # ============================================================
+    # buffer برای touch_cloud_event (چون touch_cloud_now یک bool ساده است)
+    touch_buf: Persistent[list] = []
+
+    # ═══════════════════════════════════════════════════════════
+    # 🔵 تشخیص LEG — فقط روی کندل بسته‌شده
+    # ═══════════════════════════════════════════════════════════
     if barstate.isconfirmed:
         f_ac: bool = kumo_valid and (
             (low > kumo_top) if use_wicks_for_exit else (math.min(open, close) > kumo_top)
@@ -158,7 +159,7 @@ def main(
 
         if new_leg_up:
             exit_dir = "up"
-            exit_bar = bar_index
+            exit_bar = int(bar_index)
             max_distance_atr = 0.0
             anni_done = False
             aati_armed = False
@@ -168,7 +169,7 @@ def main(
 
         if new_leg_down:
             exit_dir = "down"
-            exit_bar = bar_index
+            exit_bar = int(bar_index)
             max_distance_atr = 0.0
             anni_done = False
             aati_armed = False
@@ -176,11 +177,11 @@ def main(
             exit_number += 1
             flog("[LEG-DOWN]", f"leg #{exit_number} confirmed after {consec_below} closed candle(s)")
 
-    bars_since_exit: int = na(int)
-    if not na(exit_bar):
-        bars_since_exit = bar_index - exit_bar
+    bars_since_exit: int = -1
+    if exit_bar >= 0:
+        bars_since_exit = int(bar_index) - exit_bar
 
-    if (not na(exit_dir)) and kumo_valid and atr_val > 0:
+    if (exit_dir != "") and kumo_valid and atr_val > 0:
         cur_dist: float = 0.0
         if exit_dir == "up":
             cur_dist = (low - kumo_top) / atr_val
@@ -191,11 +192,13 @@ def main(
             aati_armed = True
             flog("[AATI-ARMED]", f"maxDistanceATR={max_distance_atr}")
 
-    # ============================================================
-    # 🔵 برخورد با ابر + فیلتر هلال (HMA) + گارد ضدِ بیات‌شدگی
-    # ============================================================
+    # ═══════════════════════════════════════════════════════════
+    # 🔵 برخورد با ابر + فیلتر هلال + گارد بیات‌شدگی
+    # ═══════════════════════════════════════════════════════════
     touch_cloud_now: bool = kumo_valid and low <= kumo_top and high >= kumo_bot
-    touch_cloud_event: bool = touch_cloud_now and not touch_cloud_now[1]
+    touch_buf.append(touch_cloud_now)
+    touch_prev: bool = touch_buf[-2] if len(touch_buf) >= 2 else False
+    touch_cloud_event: bool = touch_cloud_now and not touch_prev
 
     hma20: Series[float] = ta.hma(close, 20)
     hma50: Series[float] = ta.hma(close, 50)
@@ -206,38 +209,38 @@ def main(
         (exit_dir == "down" and fully_above_now) or (exit_dir == "up" and fully_below_now)
     )
 
-    # ============================================================
-    # 🔵 واجدشرایط‌بودن
-    # ============================================================
+    # ═══════════════════════════════════════════════════════════
+    # 🔵 شرایط واجدشرایط‌بودن (ELIG)
+    # ═══════════════════════════════════════════════════════════
     allow_long: bool = trade_direction != DIR_SHORT_ONLY
     allow_short: bool = trade_direction != DIR_LONG_ONLY
 
     anni_long_elig: bool = (
         enable_anni and allow_long and exit_dir == "up"
-        and (not na(bars_since_exit)) and 0 <= bars_since_exit <= max_anni_candles
+        and bars_since_exit >= 0 and bars_since_exit <= max_anni_candles
         and (not anni_done) and not_stale
     )
     anni_short_elig: bool = (
         enable_anni and allow_short and exit_dir == "down"
-        and (not na(bars_since_exit)) and 0 <= bars_since_exit <= max_anni_candles
+        and bars_since_exit >= 0 and bars_since_exit <= max_anni_candles
         and (not anni_done) and not_stale
     )
     aati_long_elig: bool = (
         enable_aati and allow_long and exit_dir == "up" and aati_armed
-        and (not na(bars_since_exit)) and bars_since_exit >= aati_min_bars
+        and bars_since_exit >= aati_min_bars
         and (not aati_done) and not_stale
         and ((not enable_crescent_filter) or bullish_crescent)
     )
     aati_short_elig: bool = (
         enable_aati and allow_short and exit_dir == "down" and aati_armed
-        and (not na(bars_since_exit)) and bars_since_exit >= aati_min_bars
+        and bars_since_exit >= aati_min_bars
         and (not aati_done) and not_stale
         and ((not enable_crescent_filter) or bearish_crescent)
     )
 
-    # ============================================================
-    # 🔵 الگوی کندل / کاتالیزور
-    # ============================================================
+    # ═══════════════════════════════════════════════════════════
+    # 🔵 الگوهای کندلی + کاتالیزور
+    # ═══════════════════════════════════════════════════════════
     def bearish_reversal() -> bool:
         return close < open and close[1] > open[1] and close < open[1] and open > close[1]
 
@@ -248,149 +251,218 @@ def main(
         r: Series[float] = ta.rsi(source=close, length=14)
         return (close > close[1] and r < r[1]) or (close < close[1] and r > r[1])
 
-    # ============================================================
-    # 🔵 توابع کمکی استراتژی — با API واقعی PyneCore
-    # ============================================================
-    def entry_open(entry_id: str) -> bool:
-        found: bool = False
-        n = strategy.opentrades.opentrades()   # ← تابع شمارش معاملات باز
-        for i in range(int(n)):
-            if strategy.opentrades.entry_id(i) == entry_id:
-                found = True
-        return found
-
-    def entry_price_of(entry_id: str) -> float:
-        price: float = na(float)
-        n = strategy.opentrades.opentrades()
-        for i in range(int(n)):
-            if strategy.opentrades.entry_id(i) == entry_id:
-                price = strategy.opentrades.entry_price(i)
-        return price
-
-    # ============================================================
-    # 🔵 ورود Limit در kumoTop/kumoBot + مدیریت پوزیشن
-    #    (طبق Pine اصلی: strategy.entry با limit=kumoTop/kumoBot)
-    # ============================================================
-
-    # ---- آنی - لانگ ----
+    # ═══════════════════════════════════════════════════════════
+    # 🔵 Position tracking محلی (بدون strategy.entry/exit)
+    # ═══════════════════════════════════════════════════════════
+    # هر کانال: pos(باز هست؟) + entry + stop + target + touches
+    an_l_pos: Persistent[bool] = False
+    an_l_entry: Persistent[float] = na(float)
     an_l_sl: Persistent[float] = na(float)
     an_l_tp: Persistent[float] = na(float)
-    an_l_entry: Persistent[float] = na(float)
     an_l_touches: Persistent[int] = 0
 
-    if entry_open("CT-Anni-L"):
-        if na(an_l_entry):
-            an_l_entry = entry_price_of("CT-Anni-L")
+    an_s_pos: Persistent[bool] = False
+    an_s_entry: Persistent[float] = na(float)
+    an_s_sl: Persistent[float] = na(float)
+    an_s_tp: Persistent[float] = na(float)
+    an_s_touches: Persistent[int] = 0
+
+    at_l_pos: Persistent[bool] = False
+    at_l_entry: Persistent[float] = na(float)
+    at_l_sl: Persistent[float] = na(float)
+    at_l_tp: Persistent[float] = na(float)
+    at_l_touches: Persistent[int] = 0
+
+    at_s_pos: Persistent[bool] = False
+    at_s_entry: Persistent[float] = na(float)
+    at_s_sl: Persistent[float] = na(float)
+    at_s_tp: Persistent[float] = na(float)
+    at_s_touches: Persistent[int] = 0
+
+    # برای گزارش‌دهی: اولین سیگنالی که در این کندل فایر می‌شود
+    fire_kind: str = ""
+    fire_dir: str = ""
+    fire_entry: float = na(float)
+    fire_stop: float = na(float)
+    fire_target: float = na(float)
+    fire_rr: float = na(float)
+
+    # ─── Anni-L ───
+    if an_l_pos:
+        # چک خروج
+        if low <= an_l_sl:
+            an_l_pos = False
+            flog("[EXIT]", f"Anni-L stopped @ {an_l_sl}")
+        elif high >= an_l_tp:
+            an_l_pos = False
+            flog("[EXIT]", f"Anni-L target hit @ {an_l_tp}")
+        else:
+            # ریسک فری
+            if touch_cloud_event:
+                an_l_touches += 1
+            if (enable_rf_second_touch and an_l_touches >= 2) or (
+                enable_rf_reversal_candle and bearish_reversal() and ((not enable_catalyst_filter) or catalyst())
+            ):
+                an_l_sl = math.max(an_l_sl, an_l_entry)
+    else:
+        # چک ورود: Limit در kumo_top
+        if anni_long_elig and kumo_valid and low <= kumo_top:
+            an_l_pos = True
+            an_l_entry = kumo_top
             an_l_sl = (kumo_top + kumo_bot) / 2 if anni_stop_mode == ANNI_STOP_MID else kumo_bot
             an_l_tp = an_l_entry + (an_l_entry - an_l_sl) * rr_anni
             an_l_touches = 0
             anni_done = True
+            risk_abs = an_l_entry - an_l_sl
+            rr_val = (an_l_tp - an_l_entry) / risk_abs if risk_abs > 0 else 0.0
             flog("[FILL]", f"Anni-L @ {an_l_entry} SL={an_l_sl} TP={an_l_tp}")
-        if touch_cloud_event:
-            an_l_touches += 1
-        if (enable_rf_second_touch and an_l_touches >= 2) or (
-            enable_rf_reversal_candle and bearish_reversal() and ((not enable_catalyst_filter) or catalyst())
-        ):
-            an_l_sl = math.max(an_l_sl, an_l_entry)
-        strategy.exit("CT-Anni-L-X", from_entry="CT-Anni-L", stop=an_l_sl, limit=an_l_tp)
-    else:
-        an_l_entry = na(float)
-        if anni_long_elig:
-            strategy.entry("CT-Anni-L", strategy.long, limit=kumo_top)
+            if fire_kind == "":
+                fire_kind = "Anni-L"; fire_dir = "LONG"; fire_entry = an_l_entry
+                fire_stop = an_l_sl; fire_target = an_l_tp; fire_rr = rr_val
+
+    # ─── Anni-S ───
+    if an_s_pos:
+        if high >= an_s_sl:
+            an_s_pos = False
+            flog("[EXIT]", f"Anni-S stopped @ {an_s_sl}")
+        elif low <= an_s_tp:
+            an_s_pos = False
+            flog("[EXIT]", f"Anni-S target hit @ {an_s_tp}")
         else:
-            strategy.cancel("CT-Anni-L")
-
-    # ---- آنی - شورت ----
-    an_s_sl: Persistent[float] = na(float)
-    an_s_tp: Persistent[float] = na(float)
-    an_s_entry: Persistent[float] = na(float)
-    an_s_touches: Persistent[int] = 0
-
-    if entry_open("CT-Anni-S"):
-        if na(an_s_entry):
-            an_s_entry = entry_price_of("CT-Anni-S")
+            if touch_cloud_event:
+                an_s_touches += 1
+            if (enable_rf_second_touch and an_s_touches >= 2) or (
+                enable_rf_reversal_candle and bullish_reversal() and ((not enable_catalyst_filter) or catalyst())
+            ):
+                an_s_sl = math.min(an_s_sl, an_s_entry)
+    else:
+        if anni_short_elig and kumo_valid and high >= kumo_bot:
+            an_s_pos = True
+            an_s_entry = kumo_bot
             an_s_sl = (kumo_top + kumo_bot) / 2 if anni_stop_mode == ANNI_STOP_MID else kumo_top
             an_s_tp = an_s_entry - (an_s_sl - an_s_entry) * rr_anni
             an_s_touches = 0
             anni_done = True
+            risk_abs = an_s_sl - an_s_entry
+            rr_val = (an_s_entry - an_s_tp) / risk_abs if risk_abs > 0 else 0.0
             flog("[FILL]", f"Anni-S @ {an_s_entry} SL={an_s_sl} TP={an_s_tp}")
-        if touch_cloud_event:
-            an_s_touches += 1
-        if (enable_rf_second_touch and an_s_touches >= 2) or (
-            enable_rf_reversal_candle and bullish_reversal() and ((not enable_catalyst_filter) or catalyst())
-        ):
-            an_s_sl = math.min(an_s_sl, an_s_entry)
-        strategy.exit("CT-Anni-S-X", from_entry="CT-Anni-S", stop=an_s_sl, limit=an_s_tp)
-    else:
-        an_s_entry = na(float)
-        if anni_short_elig:
-            strategy.entry("CT-Anni-S", strategy.short, limit=kumo_bot)
+            if fire_kind == "":
+                fire_kind = "Anni-S"; fire_dir = "SHORT"; fire_entry = an_s_entry
+                fire_stop = an_s_sl; fire_target = an_s_tp; fire_rr = rr_val
+
+    # ─── Aati-L ───
+    if at_l_pos:
+        if low <= at_l_sl:
+            at_l_pos = False
+            flog("[EXIT]", f"Aati-L stopped @ {at_l_sl}")
+        elif high >= at_l_tp:
+            at_l_pos = False
+            flog("[EXIT]", f"Aati-L target hit @ {at_l_tp}")
         else:
-            strategy.cancel("CT-Anni-S")
-
-    # ---- آتی - لانگ ----
-    at_l_sl: Persistent[float] = na(float)
-    at_l_tp: Persistent[float] = na(float)
-    at_l_entry: Persistent[float] = na(float)
-    at_l_touches: Persistent[int] = 0
-
-    if entry_open("CT-Aati-L"):
-        if na(at_l_entry):
+            if touch_cloud_event:
+                at_l_touches += 1
+            if (enable_rf_second_touch and at_l_touches >= 2) or (
+                enable_rf_reversal_candle and bearish_reversal() and ((not enable_catalyst_filter) or catalyst())
+            ):
+                at_l_sl = math.max(at_l_sl, at_l_entry)
+    else:
+        if aati_long_elig and kumo_valid and low <= kumo_top:
             risky: bool = aati_stop_mode == AATI_STOP_RISKY
             cloud_mid: float = (kumo_top + kumo_bot) / 2
-            at_l_entry = entry_price_of("CT-Aati-L")
+            at_l_pos = True
+            at_l_entry = kumo_top
             at_l_sl = cloud_mid if risky else kumo_bot - safe_buffer_atr_mult * atr_val
-            rr: float = rr_aati_risky if risky else rr_aati_safe
-            at_l_tp = at_l_entry + (at_l_entry - at_l_sl) * rr
+            rr_a: float = rr_aati_risky if risky else rr_aati_safe
+            at_l_tp = at_l_entry + (at_l_entry - at_l_sl) * rr_a
             at_l_touches = 0
             aati_done = True
             aati_armed = False
+            risk_abs = at_l_entry - at_l_sl
+            rr_val = (at_l_tp - at_l_entry) / risk_abs if risk_abs > 0 else 0.0
             flog("[FILL]", f"Aati-L @ {at_l_entry} SL={at_l_sl} TP={at_l_tp}")
-        if touch_cloud_event:
-            at_l_touches += 1
-        if (enable_rf_second_touch and at_l_touches >= 2) or (
-            enable_rf_reversal_candle and bearish_reversal() and ((not enable_catalyst_filter) or catalyst())
-        ):
-            at_l_sl = math.max(at_l_sl, at_l_entry)
-        strategy.exit("CT-Aati-L-X", from_entry="CT-Aati-L", stop=at_l_sl, limit=at_l_tp)
-    else:
-        at_l_entry = na(float)
-        if aati_long_elig:
-            strategy.entry("CT-Aati-L", strategy.long, limit=kumo_top)
+            if fire_kind == "":
+                fire_kind = "Aati-L"; fire_dir = "LONG"; fire_entry = at_l_entry
+                fire_stop = at_l_sl; fire_target = at_l_tp; fire_rr = rr_val
+
+    # ─── Aati-S ───
+    if at_s_pos:
+        if high >= at_s_sl:
+            at_s_pos = False
+            flog("[EXIT]", f"Aati-S stopped @ {at_s_sl}")
+        elif low <= at_s_tp:
+            at_s_pos = False
+            flog("[EXIT]", f"Aati-S target hit @ {at_s_tp}")
         else:
-            strategy.cancel("CT-Aati-L")
-
-    # ---- آتی - شورت ----
-    at_s_sl: Persistent[float] = na(float)
-    at_s_tp: Persistent[float] = na(float)
-    at_s_entry: Persistent[float] = na(float)
-    at_s_touches: Persistent[int] = 0
-
-    if entry_open("CT-Aati-S"):
-        if na(at_s_entry):
+            if touch_cloud_event:
+                at_s_touches += 1
+            if (enable_rf_second_touch and at_s_touches >= 2) or (
+                enable_rf_reversal_candle and bullish_reversal() and ((not enable_catalyst_filter) or catalyst())
+            ):
+                at_s_sl = math.min(at_s_sl, at_s_entry)
+    else:
+        if aati_short_elig and kumo_valid and high >= kumo_bot:
             risky2: bool = aati_stop_mode == AATI_STOP_RISKY
             cloud_mid2: float = (kumo_top + kumo_bot) / 2
-            at_s_entry = entry_price_of("CT-Aati-S")
+            at_s_pos = True
+            at_s_entry = kumo_bot
             at_s_sl = cloud_mid2 if risky2 else kumo_top + safe_buffer_atr_mult * atr_val
-            rr2: float = rr_aati_risky if risky2 else rr_aati_safe
-            at_s_tp = at_s_entry - (at_s_sl - at_s_entry) * rr2
+            rr_b: float = rr_aati_risky if risky2 else rr_aati_safe
+            at_s_tp = at_s_entry - (at_s_sl - at_s_entry) * rr_b
             at_s_touches = 0
             aati_done = True
             aati_armed = False
+            risk_abs = at_s_sl - at_s_entry
+            rr_val = (at_s_entry - at_s_tp) / risk_abs if risk_abs > 0 else 0.0
             flog("[FILL]", f"Aati-S @ {at_s_entry} SL={at_s_sl} TP={at_s_tp}")
-        if touch_cloud_event:
-            at_s_touches += 1
-        if (enable_rf_second_touch and at_s_touches >= 2) or (
-            enable_rf_reversal_candle and bullish_reversal() and ((not enable_catalyst_filter) or catalyst())
-        ):
-            at_s_sl = math.min(at_s_sl, at_s_entry)
-        strategy.exit("CT-Aati-S-X", from_entry="CT-Aati-S", stop=at_s_sl, limit=at_s_tp)
-    else:
-        at_s_entry = na(float)
-        if aati_short_elig:
-            strategy.entry("CT-Aati-S", strategy.short, limit=kumo_bot)
-        else:
-            strategy.cancel("CT-Aati-S")
+            if fire_kind == "":
+                fire_kind = "Aati-S"; fire_dir = "SHORT"; fire_entry = at_s_entry
+                fire_stop = at_s_sl; fire_target = at_s_tp; fire_rr = rr_val
+
+    # ═══════════════════════════════════════════════════════════
+    # 🔵 خروجی dict (مثل DTM)
+    # ═══════════════════════════════════════════════════════════
+    return {
+        # ─── سیگنال اصلی ───
+        "signal": fire_dir if fire_kind != "" else None,
+        "entry": fire_entry if fire_kind != "" else close,
+        "stop": fire_stop,
+        "target": fire_target,
+        "kind": fire_kind if fire_kind != "" else None,
+        "rr": fire_rr,
+
+        # ─── وضعیت کانال‌ها ───
+        "an_l_pos": an_l_pos, "an_l_entry": an_l_entry, "an_l_sl": an_l_sl, "an_l_tp": an_l_tp,
+        "an_s_pos": an_s_pos, "an_s_entry": an_s_entry, "an_s_sl": an_s_sl, "an_s_tp": an_s_tp,
+        "at_l_pos": at_l_pos, "at_l_entry": at_l_entry, "at_l_sl": at_l_sl, "at_l_tp": at_l_tp,
+        "at_s_pos": at_s_pos, "at_s_entry": at_s_entry, "at_s_sl": at_s_sl, "at_s_tp": at_s_tp,
+
+        # ─── اطلاعات تشخیص ───
+        "leg_up": exit_dir == "up",
+        "leg_down": exit_dir == "down",
+        "exit_dir": exit_dir,
+        "exit_number": exit_number,
+        "bars_since_exit": bars_since_exit,
+        "aati_armed": aati_armed,
+        "anni_done": anni_done,
+        "aati_done": aati_done,
+
+        "kumo_top": kumo_top,
+        "kumo_bot": kumo_bot,
+        "kumo_valid": kumo_valid,
+        "atr": atr_val,
+
+        "touch_cloud_event": touch_cloud_event,
+        "bullish_crescent": bullish_crescent,
+        "bearish_crescent": bearish_crescent,
+        "not_stale": not_stale,
+
+        "anni_long_elig": anni_long_elig,
+        "anni_short_elig": anni_short_elig,
+        "aati_long_elig": aati_long_elig,
+        "aati_short_elig": aati_short_elig,
+
+        "total_bars_fed": int(bar_index),
+    }
 
 
 if __name__ == "__main__":
