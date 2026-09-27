@@ -500,13 +500,41 @@ _last_sent = {}
 def _should_send(key, now_str):
     return _last_sent.get(key) != now_str
 
+
+def _send_ct_report(ct_report_fn, send_telegram_fn, context_label=""):
+    """
+    🆕 تابع کمکی برای ارسال گزارش CT.
+    - ct_report_fn: یه تابع که گزارش CT رو می‌سازه (با PublicData)
+    - send_telegram_fn: تابع ارسال به تلگرام
+    - context_label: برچسب برای لاگ (مثلاً "daily_08:00")
+    """
+    if ct_report_fn is None:
+        return
+    try:
+        ct_report = ct_report_fn()
+        if ct_report:
+            send_telegram_fn(ct_report)
+            logger.info(f"[LEDGER] CT report sent ({context_label}, {len(ct_report)} chars)")
+        else:
+            logger.warning(f"[LEDGER] CT report empty ({context_label})")
+    except Exception as e:
+        logger.error(f"[LEDGER] CT report error ({context_label}): {e}")
+
+
 def scheduler_loop(send_telegram_fn, stop_event=None,
                     daily_times=("08:00", "13:00", "21:00"),
                     end_of_day_time="23:55",
                     ct_report_fn=None):
-                        
     """
     زمان‌بند گزارش‌ها — یک Thread جدا
+
+    Args:
+        send_telegram_fn: تابع ارسال به تلگرام
+        stop_event: threading.Event برای توقف
+        daily_times: زمان‌های گزارش صبح/ظهر/شب
+        end_of_day_time: زمان گزارش پایان روز
+        ct_report_fn: 🆕 تابعی که گزارش CT رو می‌سازه (بدون آرگومان) و رشته برمی‌گردونه.
+                       اگه None باشه، گزارش CT ارسال نمی‌شه.
     """
     logger.info("[LEDGER] scheduler_loop started")
     
@@ -524,7 +552,9 @@ def scheduler_loop(send_telegram_fn, stop_event=None,
             hhmm = now.strftime("%H:%M")
             date_str = now.strftime("%Y-%m-%d")
 
-            # گزارش‌های صبح/ظهر/شب
+            # ═══════════════════════════════════════════════════════════
+            # گزارش‌های صبح/ظهر/شب (به همراه CT)
+            # ═══════════════════════════════════════════════════════════
             if hhmm in daily_times:
                 key = f"daily_{hhmm}"
                 tag = f"{date_str}_{hhmm}"
@@ -533,10 +563,16 @@ def scheduler_loop(send_telegram_fn, stop_event=None,
                         report = report_for_day(now)
                         send_telegram_fn(report)
                         _last_sent[key] = tag
+                        logger.info(f"[LEDGER] Daily report sent ({hhmm})")
                     except Exception as e:
                         logger.error(f"[LEDGER] daily report error: {e}")
 
-            # گزارش پایان روز
+                    # 🆕 گزارش CT بعد از گزارش روزانه
+                    _send_ct_report(ct_report_fn, send_telegram_fn, context_label=f"daily_{hhmm}")
+
+            # ═══════════════════════════════════════════════════════════
+            # گزارش پایان روز (به همراه CT)
+            # ═══════════════════════════════════════════════════════════
             if hhmm == end_of_day_time:
                 key = "end_of_day"
                 tag = date_str
@@ -545,10 +581,16 @@ def scheduler_loop(send_telegram_fn, stop_event=None,
                         report = report_for_day(now)
                         send_telegram_fn("🌙 گزارش پایان روز\n\n" + report)
                         _last_sent[key] = tag
+                        logger.info(f"[LEDGER] End-of-day report sent ({hhmm})")
                     except Exception as e:
                         logger.error(f"[LEDGER] end-of-day report error: {e}")
 
-            # گزارش ابتدای ماه
+                    # 🆕 گزارش CT بعد از پایان روز
+                    _send_ct_report(ct_report_fn, send_telegram_fn, context_label="end_of_day")
+
+            # ═══════════════════════════════════════════════════════════
+            # گزارش ابتدای ماه (به همراه CT)
+            # ═══════════════════════════════════════════════════════════
             if now.day == 1 and hhmm == "09:00":
                 key = "monthly"
                 tag = now.strftime("%Y-%m")
@@ -557,8 +599,12 @@ def scheduler_loop(send_telegram_fn, stop_event=None,
                         report = report_current_and_previous_month()
                         send_telegram_fn("🗓️ گزارش ماهانه\n\n" + report)
                         _last_sent[key] = tag
+                        logger.info(f"[LEDGER] Monthly report sent ({tag})")
                     except Exception as e:
                         logger.error(f"[LEDGER] monthly report error: {e}")
+
+                    # 🆕 گزارش CT بعد از گزارش ماهانه
+                    _send_ct_report(ct_report_fn, send_telegram_fn, context_label="monthly")
 
         except Exception as e:
             logger.error(f"[LEDGER] scheduler_loop unexpected error: {e}")
