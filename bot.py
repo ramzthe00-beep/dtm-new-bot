@@ -1409,6 +1409,23 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _handle_shutdown)
     signal.signal(signal.SIGINT, _handle_shutdown)
 
+    # ============================================================
+    # 🆕 callback برای گزارش CT (در گزارش‌های روزانه/پایان‌روز/ماهانه)
+    # ============================================================
+    def _ct_report_callback():
+        try:
+            from ct_startup_report import build_ct_startup_report
+            p = PublicData()
+            report = build_ct_startup_report(p)
+            logger.info(f"[CT-CALLBACK] report built ({len(report)} chars)")
+            return report
+        except Exception as e:
+            logger.exception(f"[CT-CALLBACK] failed: {e}")
+            return None
+
+    # ============================================================
+    # Health server
+    # ============================================================
     health_thread = threading.Thread(
         target=run_health_server,
         args=(port,),
@@ -1417,9 +1434,13 @@ if __name__ == "__main__":
     )
     health_thread.start()
 
+    # ============================================================
+    # Report scheduler (با ct_report_fn)
+    # ============================================================
     report_thread = threading.Thread(
         target=trade_ledger.scheduler_loop,
         args=(send_telegram_long, STOP_EVENT),
+        kwargs={"ct_report_fn": _ct_report_callback},
         name="report-scheduler",
         daemon=True,
     )
@@ -1456,5 +1477,5 @@ if __name__ == "__main__":
         STOP_EVENT.set()
         health_thread.join(timeout=3)
         report_thread.join(timeout=3)
-        
+
         logger.info("DTM PROCESS EXIT")
