@@ -500,10 +500,11 @@ _last_sent = {}
 def _should_send(key, now_str):
     return _last_sent.get(key) != now_str
 
-
 def scheduler_loop(send_telegram_fn, stop_event=None,
                     daily_times=("08:00", "13:00", "21:00"),
-                    end_of_day_time="23:55"):
+                    end_of_day_time="23:55",
+                    ct_report_fn=None):
+                        
     """
     زمان‌بند گزارش‌ها — یک Thread جدا
     """
