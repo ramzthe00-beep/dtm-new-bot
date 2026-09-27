@@ -1087,7 +1087,6 @@ def risk_free_monitor(exchange):
         send_telegram_long(msg)
         logger.info(f"[RISK-FREE] {symbol} {side} | SL {old_sl} -> {new_sl:.{prec}f} | DONE")
 
-
 def loop():
     public = PublicData()
     exchange = PrivateExchange()
@@ -1178,7 +1177,7 @@ def loop():
                                 entry_time_ms=signal_bar_ts_ms,
                                 leverage=LEVERAGE_MAP.get(symbol, 50),
                                 order_placed=None,
-                                risk_free_pct=risk_free_pct,  # 🆕 برای شبیه‌سازی مستقل ریسک‌فری در گزارش‌ها
+                                risk_free_pct=risk_free_pct,
                             )
 
                         if not sig or balance <= 0 or stop_price is None or entry is None:
@@ -1406,6 +1405,7 @@ def loop():
                     exchange=exchange,
                     ledger=trade_ledger,
                     leverage_map=LEVERAGE_MAP,
+                    send_telegram_fn=send_telegram_long,
                     base_capital=BASE_CAPITAL,
                     min_order_cost=MIN_ORDER_COST_USDT,
                 )
@@ -1417,7 +1417,6 @@ def loop():
         except Exception as e:
             logger.exception("Loop error")
             STOP_EVENT.wait(60)
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "10000"))
