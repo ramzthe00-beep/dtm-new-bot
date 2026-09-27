@@ -155,15 +155,16 @@ def main(
     aati_min_bars=input.int(3, "حداقل کندل قبل از تست آتی", minval=1, group=grp_logic),
     distance_atr_mult=input.float(1.5, "حداقل فاصله از ابر (ATR)", minval=0.1, step=0.1, group=grp_logic),
     atr_len=input.int(14, "دوره ATR", group=grp_logic),
-    enable_crescent_filter=input.bool(True, "فعال‌سازی فیلتر هلال", group=grp_logic),
+    enable_crescent_filter=input.bool(False, "فعال‌سازی فیلتر هلال", group=grp_logic),
+
 
     # ─── حد ضرر / تارگت ───
-    anni_stop_mode=input.string(ANNI_STOP_MID, "حد ضرر آنی", options=(ANNI_STOP_MID, ANNI_STOP_FAR), group=grp_stop),
+    anni_stop_mode=input.string(ANNI_STOP_FAR, "حد ضرر آنی", options=(ANNI_STOP_MID, ANNI_STOP_FAR), group=grp_stop),
     aati_stop_mode=input.string(AATI_STOP_SAFE, "حد ضرر آتی", options=(AATI_STOP_SAFE, AATI_STOP_RISKY), group=grp_stop),
     safe_buffer_atr_mult=input.float(0.25, "بافر حالت امن (ATR)", minval=0.0, step=0.05, group=grp_stop),
     rr_anni=input.float(7.0, "R:R آنی", minval=0.5, step=0.5, group=grp_stop),
     rr_aati_risky=input.float(10.0, "R:R آتی (ریسکی)", minval=0.5, step=0.5, group=grp_stop),
-    rr_aati_safe=input.float(5.0, "R:R آتی (امن)", minval=0.5, step=0.5, group=grp_stop),
+    rr_aati_safe=input.float(7.0, "R:R آتی (امن)", minval=0.5, step=0.5, group=grp_stop),
 
     # ─── ریسک‌فری ───
     enable_rf_second_touch=input.bool(True, "ریسک‌فری با برخورد دوم", group=grp_rf),
