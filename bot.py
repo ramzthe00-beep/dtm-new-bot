@@ -1156,10 +1156,9 @@ def loop():
                         trade_ledger.update_open_trades(symbol, timeframe, df_exec)
 
                         # ============================================================
-                        # اجرای استراتژی — ۶ مقدار
+                        # اجرای استراتژی — ۷ مقدار
                         # ============================================================
-                        sig, entry, stop_price, target_price, signal_bar_ts_ms, risk_free_pct = calculate_signals(df, symbol, timeframe)
-
+                        sig, entry, stop_price, target_price, signal_bar_ts_ms, risk_free_pct, signal_msg = calculate_signals(df, symbol, timeframe, silent=True)
                         logger.info(
                             f"[{timeframe}m] {symbol}: signal={sig}, entry={entry}, "
                             f"stop={stop_price}, target={target_price}, candles={len(df)}, "
@@ -1209,6 +1208,13 @@ def loop():
                                 order_placed=None,
                                 risk_free_pct=risk_free_pct,
                             )
+                            # ✅ ارسال پیام سیگنال به تلگرام (فقط بعد از تأیید CT)
+                            if signal_msg:
+                                try:
+                                    send_telegram_long(signal_msg)
+                                    logger.info(f"[{timeframe}m][{symbol}] سیگنال تأییدشده به تلگرام ارسال شد")
+                                except Exception as _te:
+                                    logger.error(f"[{timeframe}m][{symbol}] send signal to telegram failed: {_te}")
 
                         if not sig or balance <= 0 or stop_price is None or entry is None:
                             continue
