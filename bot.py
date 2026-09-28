@@ -824,7 +824,7 @@ def startup_diagnostic(exchange, public):
             try:
                 df = public.fetch_ohlcv(symbol)
                 if df is not None and not df.empty:
-                    test_signal, test_entry, stop_price, target_price, _, _ = calculate_signals_fn(df, symbol)
+                    test_signal, test_entry, stop_price, target_price, _, _, _ = calculate_signals_fn(df, symbol, silent=True)
                     strategy_ok = True
                     test_symbol = symbol
                     break
