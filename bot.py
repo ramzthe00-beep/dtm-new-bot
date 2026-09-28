@@ -1166,7 +1166,37 @@ def loop():
                             f"signal_bar_ts_ms={signal_bar_ts_ms}"
                         )
 
+                        # ============================================================
+                        # 🎯 CT FILTER — تأیید از تایم‌فریم بالاتر
+                        # ============================================================
                         if sig and entry is not None:
+                            ct_allowed = False
+                            ct_result = None
+                            try:
+                                from ct_signal_filter import check_ct_filter, format_ct_filter_log
+                                ct_result = check_ct_filter(public, symbol, sig, timeframe)
+                                logger.info(format_ct_filter_log(symbol, sig, timeframe, ct_result))
+                                ct_allowed = ct_result.get('allowed', False)
+                            except Exception as ct_err:
+                                logger.exception(
+                                    f"[CT-FILTER] {symbol} {timeframe}: fatal error: {ct_err}"
+                                )
+                                # در صورت خطا → محافظه‌کارانه reject
+                                ct_allowed = False
+
+                            if not ct_allowed:
+                                reason = ct_result.get('reason', 'unknown') if ct_result else 'ct_error'
+                                logger.info(
+                                    f"[{timeframe}m][{symbol}] سیگنال {sig} "
+                                    f"توسط CT تأیید نشد (reason={reason}) → skip (نه ledger، نه سفارش)"
+                                )
+                                continue
+
+                            # ✅ CT تأیید کرد → حالا ثبت در ledger
+                            logger.info(
+                                f"[{timeframe}m][{symbol}] سیگنال {sig} "
+                                f"توسط CT تأیید شد → ادامه به ثبت و ارسال سفارش"
+                            )
                             trade_ledger.record_signal(
                                 symbol=symbol,
                                 timeframe=timeframe,
