@@ -1004,6 +1004,8 @@ Value: {str(last_values)[:500]}
         # ============================================================
         # 📊 گزارش نهایی — قالب حرفه‌ای و خوانا
         # ============================================================
+   
+        result_msg = None  # 🆕 جلوگیری از UnboundLocalError در return نهایی
         if signal in ("LONG", "SHORT"):
             emoji = "🟢" if signal == "LONG" else "🔴"
             direction = "خرید" if signal == "LONG" else "فروش"
