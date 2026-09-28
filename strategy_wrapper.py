@@ -261,7 +261,7 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
 
     entry = last_values.get("entry")
     if not _valid(entry):
-        return None, None, None, None
+        return None, None, None, None, None
 
     buffer_abs = buffer_ticks * mintick
 
@@ -273,7 +273,7 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
 
         if not (_valid(low1) and _valid(low2) and _valid(bar1) and _valid(bar2)):
             logger.warning(f"[SL/TP] LONG: missing pivot data low1={low1} low2={low2} bar1={bar1} bar2={bar2}")
-            return None, None, None, None
+            return None, None, None, None, None
 
         # ── استاپ: fallback (منطق قدیم) ──
         fallback_low = min(low1, low2)
@@ -301,14 +301,14 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
         lo, hi = sorted((int(bar1), int(bar2)))
         lo, hi = max(lo, 0), min(hi, len(candles) - 1)
         if hi < lo:
-            return None, None, None, None
+            return None, None, None, None, None
 
         # پیدا کردن بالاترین قله بین دو دره
         mid_peak = max(c.high for c in candles[lo:hi + 1])
 
         risk = entry - stop
         if risk <= 0:
-            return None, None, None, None
+            return None, None, None, None, None
 
         rr = (mid_peak - entry) / risk
         target = mid_peak if rr >= MIN_RR else entry + MIN_RR * risk
@@ -322,7 +322,7 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
 
         if not (_valid(high1) and _valid(high2) and _valid(bar1) and _valid(bar2)):
             logger.warning(f"[SL/TP] SHORT: missing pivot data high1={high1} high2={high2} bar1={bar1} bar2={bar2}")
-            return None, None, None, None
+            return None, None, None, None, None
 
         # ── استاپ: fallback (منطق قدیم) ──
         fallback_high = max(high1, high2)
@@ -350,20 +350,20 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
         lo, hi = sorted((int(bar1), int(bar2)))
         lo, hi = max(lo, 0), min(hi, len(candles) - 1)
         if hi < lo:
-            return None, None, None, None
+            return None, None, None, None, None
 
         # پیدا کردن پایین‌ترین دره بین دو قله
         mid_trough = min(c.low for c in candles[lo:hi + 1])
 
         risk = stop - entry
         if risk <= 0:
-            return None, None, None, None
+            return None, None, None, None, None
 
         rr = (entry - mid_trough) / risk
         target = mid_trough if rr >= MIN_RR else entry - MIN_RR * risk
         return stop, target, max(rr, MIN_RR), mid_trough
 
-    return None, None, None, None
+    return None, None, None, None, None
 
 
 # ═══════════════════════════════════════════════════════════
@@ -404,8 +404,7 @@ def _py_check_color_change(hist_series, bar_index_current, bar_start, bar_end, n
             return True
     return False
 
-
-def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
+def calculate_signals(df, symbol="BNBUSDT", timeframe="1", silent=False):
     import logging
     from pathlib import Path
     from datetime import time as dt_time
@@ -469,7 +468,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
             msg = f"Too few candles: {len(candles)}"
             logger.warning(msg)
             _send_telegram(f"⚠️ WARNING: {msg}")
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
 
         symbol = symbol.upper()
         tick_info = SYMBOL_TICK_INFO.get(
@@ -681,7 +680,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1"):
 """
             logger.warning(error_msg)
             _send_telegram(error_msg)
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
 
         # ============================================================
         # استخراج سیگنال از last_values
@@ -1000,7 +999,7 @@ Value: {str(last_values)[:500]}
             _bl = PER_SYMBOL_BLACKLIST.get(symbol.upper(), [])
             if signal_type_pre in _bl:
                 logger.info(f"[FILTER-E] {symbol.upper()} {signal_type_pre} rejected (per-symbol blacklist)")
-                return None, None, None, None, None, None
+                return None, None, None, None, None, None, None
 
         # ============================================================
         # 📊 گزارش نهایی — قالب حرفه‌ای و خوانا
@@ -1068,7 +1067,8 @@ Value: {str(last_values)[:500]}
 🔒 وضعیت: {'✅ معتبر' if rr_value and rr_value >= MIN_RR else '⚠️ ریسک بالا'}
 """
             logger.info(result_msg)
-            _send_telegram(result_msg)
+            if not silent:
+                _send_telegram(result_msg)
 
         else:
             if result_count % 10 == 0:
@@ -1076,9 +1076,9 @@ Value: {str(last_values)[:500]}
                 logger.info(status_msg)
 
         # ============================================================
-        # 📤 برگرداندن ۶ مقدار
+        # 📤 برگرداندن ۷ مقدار
         # ============================================================
-        return signal, entry, stop_price, target_price, signal_bar_ts_ms, risk_free_pct
+        return signal, entry, stop_price, target_price, signal_bar_ts_ms, risk_free_pct, result_msg
 
     except Exception as e:
         tb = traceback.format_exc()
@@ -1102,4 +1102,4 @@ Value: {str(last_values)[:500]}
 """
         logger.error(error_msg)
         _send_telegram(error_msg)
-        return None, None, None, None, None, None
+        return None, None, None, None, None, None, None
