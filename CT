@@ -216,8 +216,8 @@ def main(
     lead_line1 = (conversion_line + base_line) / 2
     lead_line2 = (ta.highest(high, lagging_span2_periods) + ta.lowest(low, lagging_span2_periods)) / 2
 
-    lead1_disp = prev_val(lead1_hist, displacement)
-    lead2_disp = prev_val(lead2_hist, displacement)
+    lead1_disp = prev_val(lead1_hist, displacement - 1)
+    lead2_disp = prev_val(lead2_hist, displacement - 1)
 
     kumo_valid = (not na(lead1_disp)) and (not na(lead2_disp))
 
