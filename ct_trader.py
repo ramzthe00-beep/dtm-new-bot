@@ -1,15 +1,16 @@
 """
 ct_trader.py
 ============
-اجرای مستقل CT + معامله — با تمام امکانات DTM (به‌جز ریسک فری)
+اجرای مستقل CT + معامله + فیلتر FINAL_RULES
 
 - در هر چرخه، تایم‌فریم‌هایی که کندلشون تازه بسته شده رو چک می‌کنه
 - سیگنال‌های CT رو استخراج می‌کنه
+- 🎯 فیلتر FINAL_RULES (kind/direction/timeframe/risk_pct/weekday/ADX/RSI) رو اعمال می‌کنه
 - محاسبه‌ی سرمایه مثل DTM: BALANCE_USE_RATIO + LEVERAGE_MAP + MIN_ORDER_COST
 - Anchor price از thetruetrade.io برای exec_stop/exec_target
 - ثبت کامل در trade_ledger
 - لاگ تفصیلی + پیام تلگرام (مثل DTM)
-- بدون ریسک فری
+- RF flag برای BTC (پیاده‌سازی عملی RF در نسخه بعدی)
 """
 import math
 import logging
@@ -21,19 +22,35 @@ IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
 UTC_TZ = timezone.utc
 
 # ═══════════════════════════════════════════════════════════
+# 🎯 فیلتر FINAL_RULES — import امن
+# ═══════════════════════════════════════════════════════════
+try:
+    from filter_main import should_take_signal, get_risk_free_enabled
+    _FILTER_AVAILABLE = True
+    logger.info("[CT-TRADER] FINAL_RULES filter loaded ✅")
+except ImportError as _e:
+    logger.warning(f"[CT-TRADER] filter_main not available ({_e}) — filter disabled")
+    _FILTER_AVAILABLE = False
+
+    def should_take_signal(signal, df):
+        return True, "filter_not_available"
+
+    def get_risk_free_enabled(symbol):
+        return False
+
+
+# ═══════════════════════════════════════════════════════════
 # پیکربندی — مشابه DTM
 # ═══════════════════════════════════════════════════════════
 CT_TRADED_SYMBOLS = ["ETHUSDT", "BTCUSDT", "SOLUSDT", "BNBUSDT"]
 CT_TIMEFRAMES = ["60", "240"]   # 1h, 4h
 
-# بازه‌ی چک بعد از بسته‌شدن کندل (دقیقه‌های 0 تا این عدد)
 CT_CHECK_WINDOW_MINUTES = 4
 
-# سرمایه پایه برای CT (مشابه DTM)
 CT_BASE_CAPITAL = 1.5
 CT_BALANCE_USE_RATIO = 0.70
 
-# State — در حافظه
+# State
 _last_processed_signal_ms = {}
 _ct_trade_counter = 0
 
@@ -47,7 +64,6 @@ def _tf_label(tf):
 
 
 def should_check_timeframe(timeframe, now_utc):
-    """آیا الان باید این تایم‌فریم رو چک کنیم؟"""
     tf_min = int(timeframe)
     if tf_min < 60:
         return True
@@ -102,7 +118,6 @@ def _next_trade_id():
 def _send_signal_telegram(send_telegram_fn, symbol, tf_label, sig, entry, stop, target,
                            stop_pct, target_pct, rr, capital, leverage, mode,
                            actual_stop_dollar, actual_profit_dollar, trade_id, balance):
-    """پیام تلگرام مثل DTM"""
     direction = sig['direction']
     emoji = "🟢" if direction == "LONG" else "🔴"
     direction_fa = "خرید" if direction == "LONG" else "فروش"
@@ -163,6 +178,7 @@ def _send_signal_telegram(send_telegram_fn, symbol, tf_label, sig, entry, stop, 
 def _execute_ct_trade(
     sig, symbol, timeframe, public, exchange, ledger,
     leverage_map, min_order_cost, send_telegram_fn,
+    enable_rf=False,
 ):
     direction = sig['direction']
     signal_entry = sig['entry']
@@ -172,19 +188,19 @@ def _execute_ct_trade(
     kind = sig['kind']
     tf_label = _tf_label(timeframe)
 
-    # ─── چک پایه ───
+    # چک پایه
     if not (_is_valid_num(signal_entry) and _is_valid_num(signal_stop) and _is_valid_num(signal_target)):
         logger.warning(f"[CT-TRADER] {symbol} {tf_label}: invalid signal numbers")
         return
 
-    # ─── محاسبه‌ی درصدها ───
+    # محاسبه‌ی درصدها
     if direction == "LONG":
         if signal_entry <= signal_stop:
             logger.warning(f"[CT-TRADER] {symbol} {tf_label}: invalid LONG (entry<=stop)")
             return
         stop_pct = (signal_entry - signal_stop) / signal_entry
         target_pct = (signal_target - signal_entry) / signal_entry
-    else:  # SHORT
+    else:
         if signal_stop <= signal_entry:
             logger.warning(f"[CT-TRADER] {symbol} {tf_label}: invalid SHORT (stop<=entry)")
             return
@@ -195,7 +211,7 @@ def _execute_ct_trade(
         logger.warning(f"[CT-TRADER] {symbol} {tf_label}: stop_pct<=0")
         return
 
-    # ─── دریافت balance اولیه ───
+    # دریافت balance
     try:
         balance = exchange.fetch_balance()
     except Exception as e:
@@ -206,7 +222,7 @@ def _execute_ct_trade(
         logger.warning(f"[CT-TRADER] {symbol} {tf_label}: balance<=0")
         return
 
-    # ─── anchor price (برای exec_stop / exec_target) ───
+    # anchor price
     df_anchor = public.fetch_ohlcv(symbol, "1")
     if df_anchor is None or df_anchor.empty:
         logger.warning(f"[CT-TRADER] {symbol}: cannot fetch anchor price")
@@ -222,10 +238,10 @@ def _execute_ct_trade(
 
     logger.info(
         f"[CT-TRADER] {symbol} {tf_label} anchor={exec_anchor_price:.4f} "
-        f"stop={exec_stop:.4f} target={exec_target:.4f}"
+        f"stop={exec_stop:.4f} target={exec_target:.4f} | RF={enable_rf}"
     )
 
-    # ─── محاسبه‌ی capital (مثل DTM) ───
+    # محاسبه‌ی capital
     allowed_leverage = leverage_map.get(symbol, 50)
     old_leverage = 1.0 / stop_pct
 
@@ -249,7 +265,7 @@ def _execute_ct_trade(
 
     rr = (target_pct / stop_pct) if stop_pct > 0 else 0.0
 
-    # ─── لاگ تفصیلی مثل DTM ───
+    # لاگ تفصیلی
     profit_str = f"{actual_profit_dollar:.4f}" if actual_profit_dollar else "N/A"
     logger.info(
         f"[CT-{tf_label}][{symbol}] سیگنال={kind} {direction} | ورود={exec_anchor_price:.4f}\n"
@@ -260,10 +276,10 @@ def _execute_ct_trade(
         f"  سرمایه ارسالی={capital:.4f}\n"
         f"  استاپ دلاری=${actual_stop_dollar:.4f}\n"
         f"  سود دلاری=${profit_str}\n"
-        f"  R={rr:.2f}"
+        f"  R={rr:.2f} | RF={enable_rf}"
     )
 
-    # ─── ثبت در ledger ───
+    # ثبت در ledger
     try:
         ledger.record_signal(
             symbol=symbol,
@@ -275,13 +291,13 @@ def _execute_ct_trade(
             entry_time_ms=signal_ms,
             leverage=allowed_leverage,
             order_placed=None,
-            order_reason=f"CT-{kind}",
-            risk_free_pct=None,  # بدون ریسک فری
+            order_reason=f"CT-{kind}{'|RF' if enable_rf else ''}",
+            risk_free_pct=None,
         )
     except Exception as e:
         logger.error(f"[CT-TRADER] {symbol}: record_signal failed: {e}")
 
-    # ─── چک MIN_ORDER_COST ───
+    # چک MIN_ORDER_COST
     if capital < min_order_cost:
         logger.warning(
             f"[CT-SKIP-LOW-BALANCE] {symbol} {kind} {direction}: "
@@ -298,7 +314,7 @@ def _execute_ct_trade(
             pass
         return
 
-    # ─── ارسال سفارش ───
+    # ارسال سفارش
     try:
         result = exchange.create_order(
             symbol,
@@ -312,7 +328,6 @@ def _execute_ct_trade(
         if result is not None:
             logger.info(f"[CT-TRADER] {symbol} {tf_label} {kind}: order placed ✅")
 
-            # ─── پیام تلگرام ───
             trade_id = _next_trade_id()
             _send_signal_telegram(
                 send_telegram_fn, symbol, tf_label, sig,
@@ -350,18 +365,18 @@ def process_ct_signals(
             key = (symbol, tf)
 
             try:
-                # ─── دریافت داده ───
+                # دریافت داده
                 df = public.fetch_ohlcv(symbol, tf)
                 if df is None or df.empty:
                     continue
 
-                # ─── به‌روزرسانی معاملات باز ───
+                # به‌روزرسانی معاملات باز
                 try:
                     ledger.update_open_trades(symbol, tf, df)
                 except Exception as e:
                     logger.error(f"[CT-TRADER] {symbol} {tf_label}: update_open_trades: {e}")
 
-                # ─── اجرای CT ───
+                # اجرای CT
                 signals = run_ct_strategy(df, symbol, tf)
                 signals = [s for s in signals if s is not None]
                 if not signals:
@@ -370,7 +385,7 @@ def process_ct_signals(
                 signals.sort(key=lambda x: x['time_ms'] or 0)
                 last_signal_ms = signals[-1]['time_ms'] or 0
 
-                # ─── اولین بار: seed ───
+                # اولین بار: seed
                 if key not in _last_processed_signal_ms:
                     _last_processed_signal_ms[key] = last_signal_ms
                     logger.info(
@@ -378,7 +393,7 @@ def process_ct_signals(
                     )
                     continue
 
-                # ─── سیگنال‌های جدید ───
+                # سیگنال‌های جدید
                 threshold_ms = _last_processed_signal_ms[key]
                 new_signals = [s for s in signals if (s['time_ms'] or 0) > threshold_ms]
 
@@ -391,9 +406,51 @@ def process_ct_signals(
 
                 for s in new_signals:
                     try:
+                        # ═══════════════════════════════════════════════════════
+                        # 🎯 فیلتر FINAL_RULES
+                        # ═══════════════════════════════════════════════════════
+                        entry_px = s.get('entry')
+                        stop_px = s.get('stop')
+
+                        if not (_is_valid_num(entry_px) and _is_valid_num(stop_px)) or entry_px <= 0:
+                            logger.warning(
+                                f"[CT-FILTER] {symbol} {tf_label}: invalid entry/stop "
+                                f"(entry={entry_px}, stop={stop_px})"
+                            )
+                            continue
+
+                        risk_pct = abs(entry_px - stop_px) / entry_px * 100
+
+                        signal_dict = {
+                            "symbol": symbol,
+                            "kind": s['kind'],
+                            "direction": s['direction'],
+                            "timeframe": tf_label,
+                            "risk_pct": risk_pct,
+                            "time_utc": now_utc,
+                        }
+
+                        take, reason = should_take_signal(signal_dict, df)
+
+                        if not take:
+                            logger.info(
+                                f"[CT-FILTER] {symbol} {s['kind']} {s['direction']} @ {tf_label} "
+                                f"REJECTED: {reason} | risk_pct={risk_pct:.3f}%"
+                            )
+                            continue
+
+                        enable_rf = get_risk_free_enabled(symbol)
+
+                        logger.info(
+                            f"[CT-FILTER] {symbol} {s['kind']} {s['direction']} @ {tf_label} "
+                            f"ACCEPTED | risk_pct={risk_pct:.3f}% | enable_rf={enable_rf}"
+                        )
+
+                        # اجرای معامله
                         _execute_ct_trade(
                             s, symbol, tf, public, exchange, ledger,
                             leverage_map, min_order_cost, send_telegram_fn,
+                            enable_rf=enable_rf,
                         )
                     except Exception as e:
                         logger.exception(f"[CT-TRADER] {symbol} {tf_label}: trade error: {e}")
