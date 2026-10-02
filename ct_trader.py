@@ -16,6 +16,9 @@ import math
 import logging
 from datetime import datetime, timezone, timedelta
 
+# ⏰ زمان استارت ربات — برای seed logic
+_BOT_START_MS = int(__import__('time').time() * 1000)
+
 logger = logging.getLogger("CT_TRADER")
 
 IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
@@ -391,7 +394,8 @@ def process_ct_signals(
 
                 # اولین بار: seed
                 if key not in _last_processed_signal_ms:
-                    _last_processed_signal_ms[key] = last_signal_ms
+                    # ✅ seed = BOT_START (نه last_signal)
+                    _last_processed_signal_ms[key] = _BOT_START_MS
                     logger.info(
                         f"[CT-TRADER] {symbol} {tf_label}: FIRST SEED = {last_signal_ms} "
                         f"({pd.Timestamp(last_signal_ms, unit='ms', tz='UTC') if last_signal_ms else 'None'})"
