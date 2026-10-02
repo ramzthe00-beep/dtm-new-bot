@@ -1434,8 +1434,10 @@ def loop():
             # ============================================================
             # 🆕 CT Trader — اجرای مستقل CT و معامله (بعد از حلقه timeframe)
             # ============================================================
+            logger.info("[CT-CALL] ==== ABOUT TO CALL process_ct_signals ====")
             try:
                 import ct_trader
+                logger.info("[CT-CALL] ct_trader imported OK")
                 ct_trader.process_ct_signals(
                     public=public,
                     exchange=exchange,
@@ -1445,6 +1447,7 @@ def loop():
                     base_capital=BASE_CAPITAL,
                     min_order_cost=MIN_ORDER_COST_USDT,
                 )
+                logger.info("[CT-CALL] process_ct_signals RETURNED OK")
             except Exception as e:
                 logger.exception(f"[CT-TRADER] top-level error: {e}")
 

@@ -355,10 +355,14 @@ def process_ct_signals(
     from ct_wrapper import run_ct_strategy
 
     now_utc = datetime.now(timezone.utc)
+    logger.info(f"[CT-TRADER] ==== CALLED at {now_utc} | minute={now_utc.minute} | hour={now_utc.hour} ====")
+    logger.info(f"[CT-TRADER] symbols={CT_TRADED_SYMBOLS} | timeframes={CT_TIMEFRAMES}")
 
     for symbol in CT_TRADED_SYMBOLS:
         for tf in CT_TIMEFRAMES:
-            if not should_check_timeframe(tf, now_utc):
+            tf_allowed = should_check_timeframe(tf, now_utc)
+            logger.info(f"[CT-TRADER] {symbol} {tf}: should_check={tf_allowed} | minute={now_utc.minute}")
+            if not tf_allowed:
                 continue
 
             tf_label = _tf_label(tf)
@@ -389,7 +393,8 @@ def process_ct_signals(
                 if key not in _last_processed_signal_ms:
                     _last_processed_signal_ms[key] = last_signal_ms
                     logger.info(
-                        f"[CT-TRADER] {symbol} {tf_label}: seeded at ms={last_signal_ms}"
+                        f"[CT-TRADER] {symbol} {tf_label}: FIRST SEED = {last_signal_ms} "
+                        f"({pd.Timestamp(last_signal_ms, unit='ms', tz='UTC') if last_signal_ms else 'None'})"
                     )
                     continue
 
