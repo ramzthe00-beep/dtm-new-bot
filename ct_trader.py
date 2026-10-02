@@ -55,6 +55,33 @@ CT_BALANCE_USE_RATIO = 0.70
 
 # State
 _last_processed_signal_ms = {}
+
+# ═══════════════════════════════════════════════════════════════
+# 💾 Persistent State — برای ذخیره در فایل
+# ═══════════════════════════════════════════════════════════════
+import json as _json
+from pathlib import Path as _Path
+
+_CT_STATE_FILE = _Path.home() / "ct_trader_state.json"
+
+def _load_ct_state():
+    """بارگذاری state از فایل (در ری‌استارت)"""
+    if _CT_STATE_FILE.exists():
+        try:
+            data = _json.loads(_CT_STATE_FILE.read_text())
+            return {tuple(k.split("|")): v for k, v in data.items()}
+        except Exception:
+            return {}
+    return {}
+
+def _save_ct_state(state):
+    """ذخیره state در فایل"""
+    try:
+        data = {f"{k[0]}|{k[1]}": v for k, v in state.items()}
+        _CT_STATE_FILE.write_text(_json.dumps(data))
+    except Exception:
+        pass
+
 _ct_trade_counter = 0
 
 
@@ -355,6 +382,13 @@ def process_ct_signals(
     """
     پردازش سیگنال‌های CT. از loop اصلی bot.py صدا زده می‌شه.
     """
+
+    # ═══ 💾 بارگذاری state از فایل (برای ری‌استارت) ═══
+    if not _last_processed_signal_ms:
+        loaded = _load_ct_state()
+        if loaded:
+            _last_processed_signal_ms.update(loaded)
+            logger.info(f"[CT-TRADER] LOADED {len(loaded)} state entries from file")
     from ct_wrapper import run_ct_strategy
 
     now_utc = datetime.now(timezone.utc)
@@ -396,6 +430,7 @@ def process_ct_signals(
                 if key not in _last_processed_signal_ms:
                     # ✅ seed = BOT_START (نه last_signal)
                     _last_processed_signal_ms[key] = _BOT_START_MS
+                    _save_ct_state(_last_processed_signal_ms)
                     logger.info(
                         f"[CT-TRADER] {symbol} {tf_label}: FIRST SEED = {last_signal_ms} "
                         f"({pd.Timestamp(last_signal_ms, unit='ms', tz='UTC') if last_signal_ms else 'None'})"
@@ -465,6 +500,7 @@ def process_ct_signals(
                         logger.exception(f"[CT-TRADER] {symbol} {tf_label}: trade error: {e}")
 
                 _last_processed_signal_ms[key] = last_signal_ms
+                _save_ct_state(_last_processed_signal_ms)
 
             except Exception as e:
                 logger.exception(f"[CT-TRADER] {symbol} {tf_label}: cycle error: {e}")
