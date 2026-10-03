@@ -24,8 +24,11 @@ UTC_TZ = timezone.utc
 
 LEDGER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_ledger.jsonl")
 
-# فرمول محاسبهٔ سود/ضرر دلاری فرضی — کاملاً مستقل از موجودی/اجرای واقعی صرافی
-BASE_CAPITAL = 2.0
+# فرمول محاسبهٔ سود/ضرر دلاری فرضی — کاملاً مستقل از موجودی/اجرای واقعی صرافی.
+# 🔧 هم‌تراز با سرمایهٔ پایهٔ واقعی ربات (قبلاً ۲٫۰ بود در حالی که bot.py و ct_trader با ۱٫۵
+# معامله می‌کردند؛ گزارش‌ها و پیام استارت‌آپ عدد اشتباه نشان می‌دادند).
+# bot.py و ct_trader.py مقدارشان را از همین‌جا می‌خوانند تا یک منبع واحد باشد.
+BASE_CAPITAL = 1.5
 
 _lock = threading.Lock()
 
@@ -253,6 +256,12 @@ def update_open_trades(symbol, timeframe, df):
     if df is None or df.empty:
         return
 
+    try:
+        tf_ms = int(timeframe) * 60 * 1000
+    except (TypeError, ValueError):
+        tf_ms = 0
+    now_ms = int(datetime.now(UTC_TZ).timestamp() * 1000)
+
     with _lock:
         rows = _read_all()
         changed = False
@@ -278,6 +287,12 @@ def update_open_trades(symbol, timeframe, df):
                         continue
 
                     candle_ms = int(ts.timestamp() * 1000) if hasattr(ts, "timestamp") else int(ts.value // 10**6)
+
+                    # 🔧 کندل در حال تشکیل را بررسی نکن. قبلاً last_checked_ms روی همین کندلِ
+                    # ناقص می‌رفت و بقیهٔ حرکت همان کندل (که بعداً کامل می‌شد) برای همیشه
+                    # نادیده گرفته می‌شد → برخورد استاپ/تارگت گاهی هرگز ثبت نمی‌شد.
+                    if candle_ms + tf_ms > now_ms:
+                        break
 
                     # ============================================================
                     # 🆕 شبیه‌سازی مستقلِ ریسک‌فری (بدون نیاز به اجرای واقعی سفارش
