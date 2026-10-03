@@ -100,7 +100,7 @@ RISK_FREE_TIMEFRAME = os.getenv("RISK_FREE_TIMEFRAME", TIMEFRAMES[0] if TIMEFRAM
 # "Collateral is below the minimum allowed" رد می‌کند. عدد دقیقِ صرافی در
 # مستندات ذکر نشده — این فقط یک مقدار پیش‌فرض احتیاطی است؛ آن را طبق حداقل
 # واقعی TheTrueTrade تنظیم کنید (متغیر محیطی MIN_ORDER_COST_USDT در Railway).
-MIN_ORDER_COST_USDT = float(os.getenv("MIN_ORDER_COST_USDT", "1.5"))
+MIN_ORDER_COST_USDT = float(os.getenv("MIN_ORDER_COST_USDT", "5"))
 
 # ============================================================
 # Rate limiter برای درخواست‌های thetruetrade.io
@@ -1263,9 +1263,10 @@ def loop():
                         else:
                             stop_pct = abs(stop_price - entry) / entry if entry > 0 else 0
 
-                        if stop_pct <= 0:
-                            logger.warning(f"{symbol}: invalid stop_pct={stop_pct}, skip")
-                            continue
+                        # (کامنت‌شده طبق درخواست — فیلتر stop_pct <= 0)
+                        # if stop_pct <= 0:
+                        #     logger.warning(f"{symbol}: invalid stop_pct={stop_pct}, skip")
+                        #     continue
 
                         if target_price is not None and not math.isnan(target_price) and target_price > 0:
                             if sig == "LONG":
