@@ -8,6 +8,7 @@ Wrapper برای استراتژی CT-DTM (Ichimoku)
 - خروجی: لیست سیگنال‌ها با زمان دقیق (UTC + ایران)
 """
 import logging
+import time as _time
 from pathlib import Path
 from datetime import time as dt_time, datetime, timezone, timedelta
 import math
@@ -129,15 +130,44 @@ CT_INPUTS_DEFAULT = {
 
 
 # ═══════════════════════════════════════════════════════════════
+# حذف کندل ناقص (دقیقاً همان قاعده‌ی strategy_wrapper.py برای DTM)
+# ═══════════════════════════════════════════════════════════════
+COMPLETION_SAFETY_BUFFER_SEC = 5
+
+
+def closed_candles_only(df, timeframe, now_ts=None, safety_buffer_sec=COMPLETION_SAFETY_BUFFER_SEC):
+    """
+    ct_strategy.py منطق اصلی را فقط روی کندل «بسته‌شده» اجرا می‌کند (barstate.isconfirmed)،
+    پس نباید کندل در حال تشکیل به آن داده شود. قاعده مثل DTM: اگر سنِ کندل آخر
+    کمتر از (طول تایم‌فریم + بافر) باشد، ناقص است و حذف می‌شود.
+    """
+    if df is None or len(df) < 2:
+        return df
+    try:
+        tf_sec = int(timeframe) * 60
+    except (TypeError, ValueError):
+        return df
+    now = _time.time() if now_ts is None else now_ts
+    last_open = df.index[-1].timestamp()
+    if (now - last_open) < tf_sec + safety_buffer_sec:
+        return df.iloc[:-1]
+    return df
+
+
+# ═══════════════════════════════════════════════════════════════
 # اجرای CT روی یه DataFrame
 # ═══════════════════════════════════════════════════════════════
 def run_ct_strategy(df, symbol, timeframe, inputs=None):
     """
     اجرای ct_strategy.py روی دیتای df و برگرداندن لیست سیگنال‌ها.
+    کندل در حال تشکیل (ناقص) قبل از اجرا حذف می‌شود؛ پس خروجی فقط شامل
+    سیگنال‌های کندل‌های بسته‌شده است.
     """
     if df is None or df.empty:
         logger.warning(f"[CT] {symbol} {timeframe}: empty dataframe")
         return []
+
+    df = closed_candles_only(df, timeframe)
 
     if len(df) < 100:
         logger.warning(f"[CT] {symbol} {timeframe}: too few candles ({len(df)})")
