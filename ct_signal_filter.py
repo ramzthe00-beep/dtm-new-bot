@@ -96,7 +96,7 @@ def check_ct_filter(public_data, symbol, dtm_direction, dtm_timeframe,
 
     # ۲. اجرای CT
     try:
-        from ct_wrapper import run_ct_strategy
+        from ct_wrapper import run_ct_strategy, closed_candles_only
         signals = run_ct_strategy(df, symbol, ct_tf)
         signals = [s for s in signals if s is not None]
         result['ct_signals_count'] = len(signals)
@@ -110,13 +110,15 @@ def check_ct_filter(public_data, symbol, dtm_direction, dtm_timeframe,
         result['reason'] = 'no_ct_signals'
         return result
 
-    # ۴. بررسی داده کافی
-    if len(df) < lookback_bars:
+    # ۴. بررسی داده کافی (فقط کندل‌های بسته‌شده؛ کندل در حال تشکیل شمرده نمی‌شود —
+    #    همان کاری که run_ct_strategy هم قبل از اجرای CT می‌کند)
+    df_closed = closed_candles_only(df, ct_tf)
+    if len(df_closed) < lookback_bars:
         result['reason'] = 'not_enough_candles'
         return result
 
     # ۵. سیگنال‌های ۱۰ کندل آخر
-    cutoff_ms = int(df.index[-lookback_bars].timestamp() * 1000)
+    cutoff_ms = int(df_closed.index[-lookback_bars].timestamp() * 1000)
     recent = [s for s in signals if (s['time_ms'] or 0) >= cutoff_ms]
 
     if not recent:
