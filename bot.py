@@ -9,7 +9,7 @@ import hashlib
 import logging
 import requests
 import pandas as pd
-from strategy_wrapper import calculate_signals
+from strategy_wrapper import calculate_signals, SYMBOL_TICK_INFO
 from datetime import datetime, timezone, timedelta
 import math
 import random
@@ -45,9 +45,17 @@ CHECK_INTERVAL = {
     "5": 300,
 }
 
+# فاصله‌ی استراحت بین سیکل‌های حلقه‌ی اصلی. قبلاً ۳۰ ثانیه بود؛ چون هر سیکل خودش ده‌ها ثانیه کار
+# می‌کند (throttle صرافی)، سیکل‌ها از ۶۰ ثانیه بیشتر می‌شد و بعضی کندل‌های ۱ دقیقه‌ای اصلاً
+# بررسی نمی‌شدند (استراتژی فقط «آخرین کندل بسته‌شده» را می‌بیند).
+LOOP_IDLE_SECONDS = float(os.getenv("LOOP_IDLE_SECONDS", "5"))
+
 LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75}
 TARGET_RISK = 2.0
-TICK_SIZES = {"LTCUSDT": 0.01, "DOGEUSDT": 0.00001, "ETHUSDT": 0.01, "BNBUSDT": 0.01, "PUMPUSDT": 0.000001}
+# 🔧 قبلاً فقط ۵ نماد اینجا بود؛ برای BTCUSDT (tick=0.1) و SOLUSDT مقدار پیش‌فرض 0.01 استفاده می‌شد و
+# قیمت SL/TP روی تیک اشتباه رند می‌شد. حالا از همان جدول ۶۳ مارکت TheTrueTrade (در strategy_wrapper) می‌آید.
+# مقادیر ۵ نماد قبلی دقیقاً همان‌اند.
+TICK_SIZES = {sym: info["mintick"] for sym, info in SYMBOL_TICK_INFO.items()}
 
 
 def _precision_from_tick(tick):
@@ -176,7 +184,8 @@ class PublicData:
         self._binance_base_working = None
 
     def fetch_ohlcv_binance(self, symbol, timeframe="1"):
-        interval_map = {"1": "1m", "5": "5m", "15": "15m"}
+        interval_map = {"1": "1m", "3": "3m", "5": "5m", "15": "15m", "30": "30m",
+                        "60": "1h", "240": "4h", "1440": "1d"}
         interval = interval_map.get(str(timeframe), f"{timeframe}m")
 
         multiplier = int(timeframe)
@@ -244,7 +253,7 @@ class PublicData:
         multiplier = int(timeframe)
         bars_needed = HISTORY_BARS * multiplier * 2
         from_ts = now - bars_needed * 60 - 60
-        uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution={timeframe}&from={from_ts}&to={now}&countback={HISTORY_BARS * multiplier}"
+        uri = f"/futures/udf/history?symbol={symbol.upper()}&resolution={timeframe}&from={from_ts}&to={now}&countback={HISTORY_BARS}"
 
         max_attempts = 2
         for attempt in range(max_attempts):
@@ -858,7 +867,7 @@ def startup_diagnostic(exchange, public):
     report_lines = [
         "🚀 راه‌اندازی ربات DTM",
         "─────────────────────────────────────────",
-        f"🔒 حالت: فقط‌خوانی | سفارش: ❌ ارسال نمی‌شود",
+        f"🔓 حالت: معامله فعال | سفارش: ✅ ارسال می‌شود",
         f"💰 موجودی: {balance:.4f} USDT" if balance else "💰 موجودی: ❌ نامشخص",
         f"📱 تلگرام: {'✅' if telegram_ok else '❌'} | صرافی: {'✅' if exchange_ok else '❌'}",
         "─────────────────────────────────────────",
@@ -893,6 +902,23 @@ def startup_diagnostic(exchange, public):
     report_lines.append(f"🔧 اهرم: {leverage_str}")
     report_lines.append(f"💼 سرمایه پایه: {trade_ledger.BASE_CAPITAL} USDT")
     
+    # 🎯 وضعیت CT Trader (ترکیب‌های فعال از FINAL_RULES)
+    try:
+        import ct_trader as _ctt
+        _combos = " ".join(f"{s_.replace('USDT', '')}@{_ctt._tf_label(t_)}" for s_, t_ in _ctt._active_combos())
+        report_lines.append(
+            f"🎯 CT Trader: {_combos} " + ("✅" if _ctt._FILTER_AVAILABLE else "❌ فیلتر لود نشد (همه‌ی سیگنال‌ها رد می‌شوند)")
+        )
+    except Exception as _ce:
+        report_lines.append(f"🎯 CT Trader: ❌ ({_ce})")
+
+    if trade_ledger.BASE_CAPITAL < MIN_ORDER_COST_USDT:
+        report_lines.append(
+            f"⚠️ هشدار: سرمایه پایه ({trade_ledger.BASE_CAPITAL}) کمتر از MIN_ORDER_COST_USDT "
+            f"({MIN_ORDER_COST_USDT}) است؛ تا وقتی این متغیر محیطی را پایین نیاورید، "
+            f"سفارش‌ها با پیام «اجرا نشد» رد می‌شوند."
+        )
+
     report_lines.append("─────────────────────────────────────────")
     report_lines.append(f"✅ راه‌اندازی کامل شد | زمان: {time_str}")
     
@@ -1097,10 +1123,10 @@ def loop():
     except Exception as e:
         logger.exception("[STARTUP DIAGNOSTIC] FATAL ERROR: %s", e)
 
-    send_telegram("🤖 ربات شروع شد - تایم‌فریم‌های ۱، ۵ و ۱۵ دقیقه")
+    send_telegram(f"🤖 ربات شروع شد - تایم‌فریم‌های DTM: {' و '.join(TIMEFRAMES)} دقیقه")
     logger.info("Worker bot started with timeframes: %s", TIMEFRAMES)
 
-    BASE_CAPITAL = 1.5
+    BASE_CAPITAL = trade_ledger.BASE_CAPITAL   # 🔧 منبع واحد (۱٫۵) — با ledger و ct_trader هماهنگ
     BALANCE_USE_RATIO = 0.70
 
     last_processed_boundary = {tf: 0 for tf in TIMEFRAMES}
@@ -1216,7 +1242,18 @@ def loop():
                                 except Exception as _te:
                                     logger.error(f"[{timeframe}m][{symbol}] send signal to telegram failed: {_te}")
 
-                        if not sig or balance <= 0 or stop_price is None or entry is None:
+                        if not sig:
+                            continue
+
+                        if balance <= 0 or stop_price is None or entry is None:
+                            logger.warning(
+                                f"[{timeframe}m][{symbol}] سیگنال {sig} تأیید شد ولی سفارش ارسال نشد: "
+                                f"balance={balance} stop={stop_price} entry={entry}"
+                            )
+                            send_telegram(
+                                f"⚠️ سیگنال {sig} برای {symbol} ({timeframe}m) تأیید شد ولی سفارش ارسال نشد\n"
+                                f"موجودی: {balance} | استاپ: {stop_price} | ورود: {entry}"
+                            )
                             continue
 
                         allowed_leverage = LEVERAGE_MAP.get(symbol, 50)
@@ -1434,10 +1471,10 @@ def loop():
             # ============================================================
             # 🆕 CT Trader — اجرای مستقل CT و معامله (بعد از حلقه timeframe)
             # ============================================================
-            logger.info("[CT-CALL] ==== ABOUT TO CALL process_ct_signals ====")
+            logger.debug("[CT-CALL] ==== ABOUT TO CALL process_ct_signals ====")
             try:
                 import ct_trader
-                logger.info("[CT-CALL] ct_trader imported OK")
+                logger.debug("[CT-CALL] ct_trader imported OK")
                 ct_trader.process_ct_signals(
                     public=public,
                     exchange=exchange,
@@ -1447,11 +1484,11 @@ def loop():
                     base_capital=BASE_CAPITAL,
                     min_order_cost=MIN_ORDER_COST_USDT,
                 )
-                logger.info("[CT-CALL] process_ct_signals RETURNED OK")
+                logger.debug("[CT-CALL] process_ct_signals RETURNED OK")
             except Exception as e:
                 logger.exception(f"[CT-TRADER] top-level error: {e}")
 
-            STOP_EVENT.wait(30)
+            STOP_EVENT.wait(LOOP_IDLE_SECONDS)
 
         except Exception as e:
             logger.exception("Loop error")
