@@ -120,17 +120,27 @@ PER_SYMBOL_BLACKLIST = {}
 # تابع ارسال پیام به تلگرام (برای گزارش خطاهای حیاتی)
 # ============================================================
 def _send_telegram(text):
-    """ارسال پیام به تلگرام برای دیباگ"""
+    """ارسال پیام به تلگرام برای دیباگ (همان env ها و همان fallback ربات اصلی)"""
     try:
         import requests
-        TELEGRAM_BOT_TOKEN = "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE"
-        TELEGRAM_CHAT_ID = "7402770612"
+        TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
+        TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=15)
         return r.ok
     except Exception as e:
         logger.error(f"Failed to send telegram: {e}")
         return False
+
+
+def _price_prec(mintick):
+    """تعداد رقم اعشار از روی mintick (برای نمایش درست قیمت در پیام تلگرام)"""
+    s_ = f"{float(mintick):.10f}".rstrip("0")
+    return len(s_.split(".")[1]) if "." in s_ else 0
+
+
+# فقط یک بار در هر پروسه (قبلاً در هر فراخوانی calculate_signals یک subprocess `pip show` اجرا می‌شد)
+_DIAG_STATE = {"done": False}
 
 
 def _is_na(x):
@@ -261,7 +271,7 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
 
     entry = last_values.get("entry")
     if not _valid(entry):
-        return None, None, None, None, None
+        return None, None, None, None
 
     buffer_abs = buffer_ticks * mintick
 
@@ -273,7 +283,7 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
 
         if not (_valid(low1) and _valid(low2) and _valid(bar1) and _valid(bar2)):
             logger.warning(f"[SL/TP] LONG: missing pivot data low1={low1} low2={low2} bar1={bar1} bar2={bar2}")
-            return None, None, None, None, None
+            return None, None, None, None
 
         # ── استاپ: fallback (منطق قدیم) ──
         fallback_low = min(low1, low2)
@@ -301,14 +311,14 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
         lo, hi = sorted((int(bar1), int(bar2)))
         lo, hi = max(lo, 0), min(hi, len(candles) - 1)
         if hi < lo:
-            return None, None, None, None, None
+            return None, None, None, None
 
         # پیدا کردن بالاترین قله بین دو دره
         mid_peak = max(c.high for c in candles[lo:hi + 1])
 
         risk = entry - stop
         if risk <= 0:
-            return None, None, None, None, None
+            return None, None, None, None
 
         rr = (mid_peak - entry) / risk
         target = mid_peak if rr >= MIN_RR else entry + MIN_RR * risk
@@ -322,7 +332,7 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
 
         if not (_valid(high1) and _valid(high2) and _valid(bar1) and _valid(bar2)):
             logger.warning(f"[SL/TP] SHORT: missing pivot data high1={high1} high2={high2} bar1={bar1} bar2={bar2}")
-            return None, None, None, None, None
+            return None, None, None, None
 
         # ── استاپ: fallback (منطق قدیم) ──
         fallback_high = max(high1, high2)
@@ -350,20 +360,20 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
         lo, hi = sorted((int(bar1), int(bar2)))
         lo, hi = max(lo, 0), min(hi, len(candles) - 1)
         if hi < lo:
-            return None, None, None, None, None
+            return None, None, None, None
 
         # پیدا کردن پایین‌ترین دره بین دو قله
         mid_trough = min(c.low for c in candles[lo:hi + 1])
 
         risk = stop - entry
         if risk <= 0:
-            return None, None, None, None, None
+            return None, None, None, None
 
         rr = (entry - mid_trough) / risk
         target = mid_trough if rr >= MIN_RR else entry - MIN_RR * risk
         return stop, target, max(rr, MIN_RR), mid_trough
 
-    return None, None, None, None, None
+    return None, None, None, None
 
 
 # ═══════════════════════════════════════════════════════════
@@ -530,53 +540,55 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1", silent=False):
         def candle_iterator():
             yield from candles
 
-        # ============================================================
-        # 📌 نمایش نسخه نصب شده و اجرایی PyneCore
-        # ============================================================
-        try:
-            from importlib.metadata import version
-            runtime_version = version("pynesys-pynecore")
-            logger.info(f"📌 PyneCore Runtime Version: {runtime_version}")
-        except Exception:
+        if not _DIAG_STATE["done"]:
+            _DIAG_STATE["done"] = True
+            # ============================================================
+            # 📌 نمایش نسخه نصب شده و اجرایی PyneCore
+            # ============================================================
             try:
-                import pkg_resources
-                runtime_version = pkg_resources.get_distribution("pynesys-pynecore").version
+                from importlib.metadata import version
+                runtime_version = version("pynesys-pynecore")
                 logger.info(f"📌 PyneCore Runtime Version: {runtime_version}")
             except Exception:
-                runtime_version = None
-                logger.warning("⚠️ Could not detect PyneCore runtime version")
+                try:
+                    import pkg_resources
+                    runtime_version = pkg_resources.get_distribution("pynesys-pynecore").version
+                    logger.info(f"📌 PyneCore Runtime Version: {runtime_version}")
+                except Exception:
+                    runtime_version = None
+                    logger.warning("⚠️ Could not detect PyneCore runtime version")
 
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["pip", "show", "pynesys-pynecore"],
-                capture_output=True, text=True
-            )
-            for line in result.stdout.split("\n"):
-                if line.startswith("Version:"):
-                    installed_version = line.split(":")[1].strip()
-                    logger.info(f"📦 PyneCore Installed Version: {installed_version}")
-                    break
-        except Exception:
-            installed_version = None
-            logger.warning("⚠️ Could not detect PyneCore installed version")
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["pip", "show", "pynesys-pynecore"],
+                    capture_output=True, text=True
+                )
+                for line in result.stdout.split("\n"):
+                    if line.startswith("Version:"):
+                        installed_version = line.split(":")[1].strip()
+                        logger.info(f"📦 PyneCore Installed Version: {installed_version}")
+                        break
+            except Exception:
+                installed_version = None
+                logger.warning("⚠️ Could not detect PyneCore installed version")
 
-        if runtime_version and installed_version and runtime_version != installed_version:
-            logger.warning(f"⚠️ VERSION MISMATCH! Runtime={runtime_version}, Installed={installed_version}")
+            if runtime_version and installed_version and runtime_version != installed_version:
+                logger.warning(f"⚠️ VERSION MISMATCH! Runtime={runtime_version}, Installed={installed_version}")
 
-        # ============================================================
-        # 🔍 تست pine_range — فقط برای دیباگ
-        # ============================================================
-        try:
-            from pynecore import pine_range
-            test_result = list(pine_range(2, 5))
-            logger.info(f"🔍 TEST pine_range(2, 5) = {test_result}")
-            if test_result == [2, 3, 4, 5]:
-                logger.info("✅ pine_range is INCLUSIVE (like Pine Script)")
-            else:
-                logger.warning(f"⚠️ pine_range is NOT inclusive! Expected [2,3,4,5], got {test_result}")
-        except Exception as e:
-            logger.warning(f"⚠️ Could not test pine_range: {e}")
+            # ============================================================
+            # 🔍 تست pine_range — فقط برای دیباگ
+            # ============================================================
+            try:
+                from pynecore import pine_range
+                test_result = list(pine_range(2, 5))
+                logger.info(f"🔍 TEST pine_range(2, 5) = {test_result}")
+                if test_result == [2, 3, 4, 5]:
+                    logger.info("✅ pine_range is INCLUSIVE (like Pine Script)")
+                else:
+                    logger.warning(f"⚠️ pine_range is NOT inclusive! Expected [2,3,4,5], got {test_result}")
+            except Exception as e:
+                logger.warning(f"⚠️ Could not test pine_range: {e}")
 
         # ─── Load Pine HL lookup ───
         try:
@@ -607,6 +619,7 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1", silent=False):
         # حلقه تشخیصی با کپی مستقل از دیکشنری
         # ============================================================
         last_values = None
+        last_result_valid = False   # آیا نتیجهٔ «آخرین کندل» معتبر بوده؟
         found_valid = False
         result_count = 0
         empty_count = 0
@@ -628,11 +641,15 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1", silent=False):
             if is_valid_dict:
                 last_values = dict(result[1])
                 found_valid = True
+                last_result_valid = True
                 hist_history.append(result[1].get("macd_histogram"))
-            elif len(result) >= 2 and isinstance(result[1], dict):
-                empty_count += 1
-                if len(empty_indices) < 20:
-                    empty_indices.append(result_count)
+            else:
+                last_result_valid = False
+                hist_history.append(None)   # هم‌ترازی ایندکس hist با bar_index حفظ شود
+                if len(result) >= 2 and isinstance(result[1], dict):
+                    empty_count += 1
+                    if len(empty_indices) < 20:
+                        empty_indices.append(result_count)
 
             if result_count <= 5 or result_count % 100 == 0 or result_count > 495:
                 debug_info.append({
@@ -680,6 +697,15 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1", silent=False):
 """
             logger.warning(error_msg)
             _send_telegram(error_msg)
+            return None, None, None, None, None, None, None
+
+        # اگر کندل آخر خروجی معتبر نداشت (خطای داخلی main)، هرگز از مقادیر کندل قبلی
+        # سیگنال نساز (قبلاً last_values کهنه باعث ثبت سیگنال با زمان اشتباه می‌شد).
+        if not last_result_valid:
+            logger.warning(
+                f"[{symbol} {timeframe}m] last bar returned an empty result — "
+                f"ignoring stale values from an earlier bar (no signal)"
+            )
             return None, None, None, None, None, None, None
 
         # ============================================================
@@ -1053,15 +1079,16 @@ Value: {str(last_values)[:500]}
 
             stars = "⭐" * score + "☆" * (5 - score)
 
+            _pp = _price_prec(tick_info["mintick"])
             result_msg = f"""
 {emoji} سیگنال {direction} ({signal}) - {symbol} - {timeframe} دقیقه
 ─────────────────────────────────────────
 🆔 شماره: {trade_id}
 🕐 زمان: {now_utc.strftime('%H:%M:%S')} UTC ({now_tehran.strftime('%H:%M:%S')} تهران)
 ─────────────────────────────────────────
-📊 ورود: {entry:.2f}
-🛑 حد ضرر: {stop_price:.2f} ({stop_distance:.2f}- | {stop_pct:.2f}%)
-🎯 هدف: {target_price:.2f} ({target_distance:.2f}+ | {target_pct:.2f}%)
+📊 ورود: {entry:.{_pp}f}
+🛑 حد ضرر: {stop_price:.{_pp}f} ({stop_distance:.{_pp}f}- | {stop_pct:.2f}%)
+🎯 هدف: {target_price:.{_pp}f} ({target_distance:.{_pp}f}+ | {target_pct:.2f}%)
 ⭐ نسبت ریسک: 1 : {rr_value:.2f} ({rr_status})
 📌 نوع: {signal_type_fa}
 🏆 امتیاز: {score}/5 {stars}
