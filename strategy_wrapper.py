@@ -775,28 +775,6 @@ Value: {str(last_values)[:500]}
             signal = None
 
         # ═══════════════════════════════════════════════════════════
-        # 🎯 Pine-Exact Parity: checkColorChange filter (tolerance=0.03)
-        # ═══════════════════════════════════════════════════════════
-        if signal in ("LONG", "SHORT") and found_valid and hist_history:
-            try:
-                if signal == "SHORT":
-                    b1 = last_values.get("previous_pivot_high_index")
-                    b2 = last_values.get("pivot_high_index")
-                    need_red = True
-                else:
-                    b1 = last_values.get("previous_pivot_low_index")
-                    b2 = last_values.get("pivot_low_index")
-                    need_red = False
-                bar_idx = len(hist_history) - 1
-                ok = _py_check_color_change(hist_history, bar_idx, b1, b2, need_red)
-                if not ok:
-                    logger.info(f"[PARITY] checkColorChange filtered: {signal} (b1={b1} b2={b2})")
-                    signal = None
-                    entry = None
-            except Exception as e:
-                logger.warning(f"[PARITY] checkColorChange error: {e}")
-
-        # ============================================================
         # لاگ تشخیصی DIVCHECK
         # ============================================================
         try:
