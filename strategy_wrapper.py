@@ -383,35 +383,79 @@ HIST_TOLERANCE = 0.03  # tolerance for near-zero hist
 
 def _py_check_color_change(hist_series, bar_index_current, bar_start, bar_end, need_red):
     """
-    Shobeh-sazi-e daghigh-e checkColorChange-e Pine ba tolerance.
-    hist nazdik-e sefr (|h| <= 0.03) = sefr dar nazar gerefte mishe.
+    Pine-exact MACD Histogram color-change detection.
+
+    Color is determined by histogram direction, not merely by
+    whether histogram is above/below zero.
+
+    A color change can therefore happen while histogram remains
+    entirely negative or entirely positive.
+
+    Example:
+        -0.0528 -> -0.0224 -> -0.0033 -> -0.0741
+
+    This is still a color change because histogram changes from
+    rising to falling without crossing zero.
     """
     if bar_start is None or bar_end is None:
         return False
+
     try:
         bar_start = int(bar_start)
         bar_end = int(bar_end)
     except (ValueError, TypeError):
         return False
+
     if bar_end <= bar_start:
         return False
+
     start_offset = bar_index_current - (bar_end - 1)
     end_offset = bar_index_current - (bar_start + 1)
+
     if start_offset < 0 or end_offset > 5000 or end_offset < start_offset:
         return False
-    for j in range(start_offset, end_offset + 1):
+
+    prev_h = None
+    prev_direction = 0
+
+    # Iterate chronologically through the interior bars.
+    for j in range(end_offset, start_offset - 1, -1):
         idx = bar_index_current - j
+
         if idx < 0 or idx >= len(hist_series):
             continue
+
         h = hist_series[idx]
+
         if h is None:
             continue
-        if abs(h) <= HIST_TOLERANCE:
+
+        try:
+            h = float(h)
+        except (TypeError, ValueError):
             continue
-        if need_red and h < 0:
-            return True
-        if not need_red and h > 0:
-            return True
+
+        if prev_h is None:
+            prev_h = h
+            continue
+
+        delta = h - prev_h
+
+        if delta > 0:
+            direction = 1
+        elif delta < 0:
+            direction = -1
+        else:
+            direction = 0
+
+        if direction != 0:
+            if prev_direction != 0 and direction != prev_direction:
+                return True
+
+            prev_direction = direction
+
+        prev_h = h
+
     return False
 
 def calculate_signals(df, symbol="BNBUSDT", timeframe="1", silent=False):
