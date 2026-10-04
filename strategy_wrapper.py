@@ -379,7 +379,7 @@ def _compute_stop_target(candles, signal, last_values, mintick, buffer_ticks=2):
 # ═══════════════════════════════════════════════════════════
 # 🎯 Pine-Exact Parity (100% match with Pine Script)
 # ═══════════════════════════════════════════════════════════
-HIST_TOLERANCE = 0.03  # tolerance for near-zero hist
+HIST_TOLERANCE = 0.00  # tolerance for near-zero hist
 
 def _py_check_color_change(hist_series, bar_index_current, bar_start, bar_end, need_red):
     """
