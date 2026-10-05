@@ -694,6 +694,331 @@ def verify_with_real_wrapper(df, symbol, tf, rows, signals, n_last, n_signals):
 
 
 # ═══════════════════════════════════════════════════════════════
+# مقایسه‌ی مرحله‌به‌مرحله‌ی [DIVCHECK] های Pine با پایتون (تشخیص ریشه‌ی ناهمخوانی)
+# ═══════════════════════════════════════════════════════════════
+_DIV_RE = re.compile(r"\[DIVCHECK\]\s+(.*)")
+
+
+def _parse_divcheck(path):
+    """هر خط [DIVCHECK] → dict. کلید تطبیق: (type, زمان کندل پیوت دوم)."""
+    out = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = _DIV_RE.search(line)
+            if not m:
+                continue
+            toks = m.group(1).split()
+            kv = {}
+            for t in toks:
+                if "=" in t:
+                    k, v = t.split("=", 1)
+                    kv[k] = v
+            if "type" not in kv or "p2" not in kv or "@" not in kv["p2"]:
+                continue
+            try:
+                p2p, p2t = kv["p2"].split("@")
+                rec = {"type": kv["type"], "p2_price": float(p2p), "p2_time": int(float(p2t)), "raw": kv}
+                if "@" in kv.get("p1", "") and not kv["p1"].startswith("NaN"):
+                    p1p, p1t = kv["p1"].split("@")
+                    rec["p1_price"], rec["p1_time"] = float(p1p), int(float(p1t))
+                else:
+                    rec["p1_price"] = rec["p1_time"] = None
+            except ValueError:
+                continue
+            out[(rec["type"], rec["p2_time"])] = rec
+    return out
+
+
+def _py_divchecks(rows):
+    """همان رکوردها را از ردیف‌های *_bars.csv پایتون می‌سازد."""
+    def f(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+    ts = [int(float(r["ts_ms"])) for r in rows]
+    ohlc = lambda b: tuple(f(rows[b][k]) for k in ("open", "high", "low", "close"))
+    out = {}
+    for r in rows:
+        for typ in ("H", "L"):
+            pk = "pivot_high" if typ == "H" else "pivot_low"
+            if r.get(pk, "") == "":
+                continue
+            pre = "ph" if typ == "H" else "pl"
+            nm = "high" if typ == "H" else "low"
+            b2 = int(float(r[f"pivot_{nm}_index"]))
+            b1 = f(r.get(f"previous_pivot_{nm}_index", ""))
+            b1 = int(b1) if b1 is not None else None
+            h1, h2 = f(r.get(f"{pre}_hist_1", "")), f(r.get(f"{pre}_hist_2", ""))
+            if typ == "H":
+                both = (h1 is not None and h2 is not None and h1 > 0 and h2 > 0)
+                kv = dict(cc=r.get("macd_color_changed_highs"), trend=r.get("trend_bearish_ok"),
+                          cdb=r.get("classic_bearish_base"), hdb=r.get("hidden_bearish_base"),
+                          fin=(r.get("final_classic_bearish") == "true" or r.get("final_hidden_bearish") == "true"))
+            else:
+                both = (h1 is not None and h2 is not None and h1 < 0 and h2 < 0)
+                kv = dict(cc=r.get("macd_color_changed_lows"), trend=r.get("trend_bullish_ok"),
+                          cdb=r.get("classic_bullish_base"), hdb=r.get("hidden_bullish_base"),
+                          fin=(r.get("final_classic_bullish") == "true" or r.get("final_hidden_bullish") == "true"))
+            b = lambda v: str(v).lower() == "true"
+            out[(typ, ts[b2])] = dict(
+                type=typ, bar=int(float(r["bar_index"])), b2=b2, b1=b1,
+                p2_time=ts[b2], p1_time=ts[b1] if b1 is not None else None,
+                p2_price=f(r[f"pivot_{nm}_price"]), p1_price=f(r.get(f"previous_pivot_{nm}_price", "")),
+                rsi1=f(r.get(f"{pre}_rsi_1", "")), rsi2=f(r.get(f"{pre}_rsi_2", "")),
+                macd1=f(r.get(f"{pre}_macdline_1", "")), macd2=f(r.get(f"{pre}_macdline_2", "")),
+                hist1=h1, hist2=h2, both=both, cc=b(kv["cc"]), trend=b(kv["trend"]),
+                cdb=b(kv["cdb"]), hdb=b(kv["hdb"]), fin=kv["fin"],
+                ohlc1=ohlc(b1) if b1 is not None else None, ohlc2=ohlc(b2))
+    return out
+
+
+def _tie_note(rows, b, typ, left=5, right=3):
+    """برای پیوت در کندل b: آیا در پنجره‌ی چپ/راست قیمت برابر با قیمت پیوت وجود دارد؟"""
+    k = "high" if typ == "H" else "low"
+    v = lambda i: float(rows[i][k])
+    m = v(b)
+    L = [i for i in range(max(0, b - left), b) if v(i) == m]
+    R = [i for i in range(b + 1, min(len(rows), b + right + 1)) if v(i) == m]
+    if not L and not R:
+        return None
+    return f"برابری قیمت در چپ={[b - i for i in L]} راست={[i - b for i in R]} (فاصله‌ی کندلی)"
+
+
+def compare_divcheck(pine_log, bars_csv, warmup=500, max_show=6):
+    with open(bars_csv, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    P, Y = _parse_divcheck(pine_log), _py_divchecks(rows)
+    if not P:
+        print("هیچ خط [DIVCHECK] معتبری در لاگ Pine پیدا نشد (باید «p2=قیمت@زمان» داشته باشد)")
+        return 1
+    ts = [int(float(r["ts_ms"])) for r in rows]
+    t_lo, t_hi = ts[warmup], ts[-1]
+    P = {k: v for k, v in P.items() if t_lo <= v["p2_time"] <= t_hi}
+    Y = {k: v for k, v in Y.items() if t_lo <= v["p2_time"] <= t_hi}
+    idx_of = {t: i for i, t in enumerate(ts)}
+    print(f"بازه‌ی مقایسه: {ts_str(t_lo)} تا {ts_str(t_hi)} (UTC) | پیوت‌های Pine={len(P)} پایتون={len(Y)}")
+    common = sorted(set(P) & set(Y), key=lambda k: k[1])
+    only_p = sorted(set(P) - set(Y), key=lambda k: k[1])
+    only_y = sorted(set(Y) - set(P), key=lambda k: k[1])
+    print(f"مشترک={len(common)} | فقط Pine={len(only_p)} | فقط پایتون={len(only_y)}")
+
+    # ── مرحله‌ی ۰: مجموعه‌ی پیوت‌ها ──
+    def show_only(lst, who, src):
+        tie = 0
+        for k in lst:
+            b = idx_of.get(k[1])
+            note = _tie_note(rows, b, k[0]) if b is not None else None
+            tie += 1 if note else 0
+        print(f"  [مرحله ۰] پیوت‌های «فقط {who}»: {len(lst)} | از این‌ها با برابری قیمت در همسایگی (مشکوک به قاعده‌ی tie): {tie}")
+        for k in lst[:max_show]:
+            b = idx_of.get(k[1])
+            note = _tie_note(rows, b, k[0]) if b is not None else "کندل در داده‌ی پایتون نیست"
+            pr = src[k]["p2_price"]
+            print(f"      {k[0]} {ts_str(k[1])} قیمت={pr} | {note or 'بدون برابری قیمت → علت tie نیست (داده/حالت پیوت؟)'}")
+    if only_p:
+        show_only(only_p, "Pine", P)
+    if only_y:
+        show_only(only_y, "پایتون", Y)
+
+    # ── مرحله‌های ۱ تا ۶ روی پیوت‌های مشترک ──
+    stage_names = {1: "p1 (پیوت قبلی) فرق دارد", 2: "قیمت/کندل‌های پیوت فرق دارد (داده‌ی کندل)", 3: "RSI/MACD/Hist فرق دارد",
+                   4: "رنگ/روند/هم‌علامتی فرق دارد", 5: "base فرق دارد", 6: "final فرق دارد"}
+    first_fail, examples = {}, {}
+    mt = lambda x: 0.5 * 10 ** -4  # رواداری گرد‌کردن #.#### Pine
+    for k in common:
+        pr, py = P[k], Y[k]
+        raw = pr["raw"]
+        stage, detail = 0, ""
+        if pr["p1_time"] != py["p1_time"]:
+            stage, detail = 1, f"p1 Pine={ts_str(pr['p1_time']) if pr['p1_time'] else None} پایتون={ts_str(py['p1_time']) if py['p1_time'] else None}"
+        if not stage:
+            tag = "ph" if k[0] == "H" else "pl"
+            bad = []
+            for i, (n, ohl) in enumerate((("1", py["ohlc1"]), ("2", py["ohlc2"]))):
+                if ohl is None:
+                    continue
+                for nm, v in zip(("open", "high", "low", "close"), ohl):
+                    key = f"{tag}{n}_{nm}"
+                    if key in raw:
+                        try:
+                            pv = float(raw[key])
+                        except ValueError:
+                            continue
+                        if v is not None and abs(pv - v) > 1e-9 + 0.5 * 10 ** -(len(raw[key].split(".")[1]) if "." in raw[key] else 0) + 1e-9:
+                            bad.append(f"{key}: Pine={pv} پایتون={v}")
+            if bad:
+                stage, detail = 2, "; ".join(bad[:3])
+        if not stage:
+            bad = []
+            for nm, tol in (("rsi1", 6e-5), ("rsi2", 6e-5), ("macd1", 1.1e-6), ("macd2", 1.1e-6), ("hist1", 1.1e-6), ("hist2", 1.1e-6)):
+                if nm in raw and raw[nm] not in ("NaN", "na"):
+                    try:
+                        pv = float(raw[nm])
+                    except ValueError:
+                        continue
+                    yv = py[nm]
+                    if yv is not None and abs(pv - yv) > tol:
+                        bad.append(f"{nm}: Pine={pv} پایتون={yv:.7g}")
+            if bad:
+                stage, detail = 3, "; ".join(bad[:3])
+        if not stage:
+            tb = lambda key: str(raw.get(key, "")).lower() == "true"
+            cc_k, tr_k, bo_k = (("colorChgHigh", "trendOkBear", "bothPeaksGreen") if k[0] == "H" else ("colorChgLow", "trendOkBull", "bothTroughsRed"))
+            diffs = [f"{n}: Pine={tb(key)} پایتون={val}" for n, key, val in (("both", bo_k, py["both"]), ("colorChg", cc_k, py["cc"]), ("trendOk", tr_k, py["trend"])) if key in raw and tb(key) != val]
+            if diffs:
+                stage, detail = 4, "; ".join(diffs)
+        if not stage:
+            cdk, hdk = ("CD-base", "HD-base") if k[0] == "H" else ("CD+base", "HD+base")
+            diffs = [f"{n}: Pine={str(raw.get(key)).lower()=='true'} پایتون={val}" for n, key, val in (("CD", cdk, py["cdb"]), ("HD", hdk, py["hdb"])) if key in raw and (str(raw.get(key)).lower() == "true") != val]
+            if diffs:
+                stage, detail = 5, "; ".join(diffs)
+        if not stage and "final" in raw and (str(raw["final"]).lower() == "true") != py["fin"]:
+            stage, detail = 6, f"final: Pine={raw['final']} پایتون={py['fin']}"
+        if stage:
+            first_fail[stage] = first_fail.get(stage, 0) + 1
+            examples.setdefault(stage, []).append((k, detail))
+    ok = len(common) - sum(first_fail.values())
+    print(f"\nپیوت‌های مشترک که تا انتها (final) کاملاً یکسان‌اند: {ok}/{len(common)}")
+    for st in sorted(first_fail):
+        print(f"  [مرحله {st}] {stage_names[st]}: {first_fail[st]} پیوت")
+        for k, d in examples[st][:max_show]:
+            print(f"      {k[0]} {ts_str(k[1])} → {d}")
+    # سیگنال‌های نهایی
+    pf = {k for k, v in P.items() if str(v["raw"].get("final", "")).lower() == "true"}
+    yf = {k for k, v in Y.items() if v["fin"]}
+    print(f"\nسیگنال‌های نهایی: Pine={len(pf)} پایتون={len(yf)} | مشترک={len(pf & yf)} | فقط Pine (از دست رفته در پایتون)={len(pf - yf)} | فقط پایتون (اضافه)={len(yf - pf)}")
+    for k in sorted(pf - yf, key=lambda x: x[1])[:max_show]:
+        print(f"   ✗ از دست رفته در پایتون: {k[0]} {ts_str(k[1])}")
+    for k in sorted(yf - pf, key=lambda x: x[1])[:max_show]:
+        print(f"   ✗ اضافه در پایتون: {k[0]} {ts_str(k[1])}")
+    perfect = (not only_p and not only_y and not first_fail and pf == yf)
+    print("\nنتیجه: " + ("تطابق ۱۰۰٪ در همه‌ی مراحل ✅" if perfect else "ناهمخوانی — مرحله‌ی اولین شکست بالا مشخص است ❌"))
+    return 0 if perfect else 1
+
+
+# ═══════════════════════════════════════════════════════════════
+# بررسی تطابق checkColorChange (روی همه‌ی پیوت‌ها)
+# ═══════════════════════════════════════════════════════════════
+def cc_parity_report(rows, W=None, show=8):
+    """
+    روی «همه‌ی» پیوت‌ها سه چیز را با تعریف حرف‌به‌حرف Pine (بدون تلرانس؛ h<0 یا h>0 سخت‌گیرانه) می‌سنجد:
+      (الف) فلگ macd_color_changed_highs/lows که خودِ strategy.py محاسبه کرده؛
+      (ب) تابع _py_check_color_change داخل strategy_wrapper (همانی که روی سیگنال نهایی اعمال می‌شود).
+    ورودی: ردیف‌های *_bars.csv (رشته‌ها). خروجی: (تعداد پیوت، ناهمخوانی strategy، ناهمخوانی wrapper)
+    """
+    def f(x):
+        try:
+            return float(x)
+        except (TypeError, ValueError):
+            return None
+    hist = [f(r.get("macd_histogram", "")) for r in rows]
+    n, bad_strategy, bad_wrapper = 0, [], []
+    for r in rows:
+        for need_red, pk, b1k, b2k, flag in (
+                (True, "pivot_high", "previous_pivot_high_index", "pivot_high_index", "macd_color_changed_highs"),
+                (False, "pivot_low", "previous_pivot_low_index", "pivot_low_index", "macd_color_changed_lows")):
+            if r.get(pk, "") == "" or r.get(b1k, "") == "" or r.get(b2k, "") == "":
+                continue
+            i, b1, b2 = int(float(r["bar_index"])), int(float(r[b1k])), int(float(r[b2k]))
+            exact, _ = raw_color_change_hl(hist, i, b1, b2, need_red)
+            n += 1
+            got = str(r.get(flag, "")).lower() == "true"
+            if exact != got:
+                bad_strategy.append((i, "H" if need_red else "L", b1, b2, exact, got))
+            if W is not None:
+                w = W._py_check_color_change(hist[:i + 1], i, b1, b2, need_red)
+                if w != exact:
+                    bad_wrapper.append((i, "H" if need_red else "L", b1, b2, exact, w))
+    log.info("─" * 100)
+    log.info(f"[CC-PARITY] تعریف Pine: بدون تلرانس، h<0 (قله) / h>0 (دره) | پیوت‌های بررسی‌شده={n}")
+    log.info(f"[CC-PARITY] (الف) strategy.py vs Pine: ناهمخوانی={len(bad_strategy)} {'✅' if not bad_strategy else '❌'}")
+    for b in bad_strategy[:show]:
+        log.info(f"     bar={b[0]} {b[1]} b1={b[2]} b2={b[3]} Pine={b[4]} strategy={b[5]}")
+    if W is not None:
+        log.info(f"[CC-PARITY] (ب) strategy_wrapper._py_check_color_change vs Pine: ناهمخوانی={len(bad_wrapper)} {'✅' if not bad_wrapper else '❌'}")
+        for b in bad_wrapper[:show]:
+            log.info(f"     bar={b[0]} {b[1]} b1={b[2]} b2={b[3]} Pine={b[4]} wrapper={b[5]}")
+    else:
+        log.info("[CC-PARITY] (ب) wrapper در دسترس نبود؛ فقط (الف) سنجیده شد")
+    return n, len(bad_strategy), len(bad_wrapper)
+
+
+# ═══════════════════════════════════════════════════════════════
+# مقایسه‌ی لاگ [HL] خودِ Pine با لاگ [HL] پایتون (تأیید نهایی checkColorChange با اعداد TradingView)
+# ═══════════════════════════════════════════════════════════════
+_HL_RE = re.compile(r"\[HL\]\s+(\d+)\|(\w+)\|(\d+)\|([-\d.eE]+)")
+
+
+def _parse_hl(path):
+    d = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = _HL_RE.search(line)
+            if m:
+                d[(int(m.group(1)), m.group(2).lower() == "true", int(m.group(3)))] = float(m.group(4))
+    return d
+
+
+def compare_hl(pine_log, py_log, tol=6e-11, max_show=10):
+    """
+    خطوط «[HL] bar|needRed|j|h» را بین لاگ Pine و لاگ پایتون می‌سنجد.
+    bar_index در TradingView با پایتون فرق دارد (تاریخچه‌ی بیشتر)؛ آفست ثابت خودکار پیدا می‌شود.
+    Pine مقدار h را با ۱۰ رقم اعشار چاپ می‌کند، پس اختلاف تا ~۵e-۱۱ گرد‌کردن است نه ناهمخوانی؛
+    ملاک اصلی «هم‌علامتی» است چون checkColorChange فقط به علامت h حساس است.
+    """
+    import numpy as np
+    P, Y = _parse_hl(pine_log), _parse_hl(py_log)
+    if not P or not Y:
+        print(f"خطوط [HL] پیدا نشد (Pine={len(P)} پایتون={len(Y)})")
+        return 1
+    pb = sorted({k[0] for k in P})
+    yb = sorted({k[0] for k in Y})
+    lo, hi = pb[0] - yb[-1], pb[-1] - yb[0]
+    ind_p = np.zeros(pb[-1] + 2, dtype=np.int8)
+    ind_p[pb] = 1
+    best, best_o = -1, 0
+    for o in range(lo, hi + 1):
+        ys = np.array(yb) + o
+        ys = ys[(ys >= 0) & (ys < len(ind_p))]
+        c = int(ind_p[ys].sum())
+        if c > best:
+            best, best_o = c, o
+    print(f"آفست خودکار (Pine = پایتون + {best_o}) | کندل‌های مشترک دارای [HL]: {best} از Pine={len(pb)} پایتون={len(yb)}")
+    common_bars = {b for b in yb if (b + best_o) in set(pb)}
+    n = same_sign = value_ok = 0
+    bad, only_py, only_pine = [], [], []
+    for (b, nr, j), h in Y.items():
+        if b not in common_bars:
+            continue
+        key = (b + best_o, nr, j)
+        if key not in P:
+            only_py.append((b, nr, j, h))
+            continue
+        n += 1
+        hp = P[key]
+        ss = (h > 0) == (hp > 0) and (h < 0) == (hp < 0)
+        same_sign += ss
+        value_ok += abs(h - hp) <= tol
+        if not ss:
+            bad.append((b, nr, j, h, hp))
+    for (b, nr, j), hp in P.items():
+        if (b - best_o) in common_bars and (b - best_o, nr, j) not in Y:
+            only_pine.append((b - best_o, nr, j, hp))
+    print(f"مقایسه‌ی {n} مقدار h: هم‌علامت={same_sign}/{n} | برابر در حد گرد‌کردن Pine={value_ok}/{n}")
+    print(f"فقط در پایتون={len(only_py)} | فقط در Pine={len(only_pine)}  (اگر ≠ ۰ یعنی حلقه‌ی j در یکی زودتر break شده یا بازه‌ی j فرق دارد)")
+    for b in bad[:max_show]:
+        print(f"   ✗ bar={b[0]} needRed={b[1]} j={b[2]} python={b[3]!r} pine={b[4]!r}")
+    for b in only_py[:max_show]:
+        print(f"   ← فقط پایتون: bar={b[0]} needRed={b[1]} j={b[2]} h={b[3]!r}")
+    for b in only_pine[:max_show]:
+        print(f"   → فقط Pine: bar={b[0]} needRed={b[1]} j={b[2]} h={b[3]!r}")
+    ok = (n > 0 and same_sign == n and not only_py and not only_pine)
+    print("نتیجه: " + ("checkColorChange در پایتون با Pine ۱۰۰٪ یکی است ✅" if ok else "ناهمخوانی ❌"))
+    return 0 if ok else 1
+
+
+# ═══════════════════════════════════════════════════════════════
 # مقایسه با خروجی TradingView / Pine
 # ═══════════════════════════════════════════════════════════════
 def norm_col(c):
@@ -854,6 +1179,11 @@ def main():
     ap.add_argument("--tol", type=float, default=1e-8)
     ap.add_argument("--na-as-zero", action="store_true", help="در مقایسه، خالی/NaN را برابر ۰ بگیر (برای plotshape)")
     ap.add_argument("--max-show", type=int, default=10)
+    ap.add_argument("--check-cc-only", help="فقط بررسی تطابق checkColorChange روی یک *_bars.csv (بدون اجرای استراتژی)")
+    ap.add_argument("--compare-divcheck", nargs=2, metavar=("PINE_LOG", "BARS_CSV"),
+                    help="مقایسه‌ی مرحله‌به‌مرحله‌ی [DIVCHECK] لاگ Pine با *_bars.csv پایتون (تشخیص ریشه‌ی اختلاف)")
+    ap.add_argument("--compare-hl", nargs=2, metavar=("PINE_LOG", "PY_PINE_FORMAT_LOG"),
+                    help="مقایسه‌ی خطوط [HL] لاگ Pine با فایل *_pine_format.log پایتون")
     ap.add_argument("--compare-only", help="فقط مقایسه‌ی یک *_bars.csv قبلی با --pine-csv (بدون اجرای استراتژی)")
     ap.add_argument("--quiet", action="store_true", help="روی کنسول فقط WARNING به بالا")
     ap.add_argument("--console-all", action="store_true", help="همه‌ی لاگ‌ها (هر کندل) روی کنسول هم چاپ شود")
@@ -863,6 +1193,32 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     symbol, tf = args.symbol.upper(), str(args.tf)
     prefix = f"{symbol}_{tf}m"
+
+    if args.compare_divcheck:
+        sys.exit(compare_divcheck(args.compare_divcheck[0], args.compare_divcheck[1]))
+
+    if args.compare_hl:
+        sys.exit(compare_hl(args.compare_hl[0], args.compare_hl[1]))
+
+    if args.check_cc_only:
+        logging.basicConfig(level=logging.INFO, format="%(message)s")
+        with open(args.check_cc_only, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.DictReader(f))
+        try:
+            W = _W()
+        except Exception as e:
+            log.warning(f"import strategy_wrapper ممکن نشد ({e}) — فقط strategy.py سنجیده می‌شود")
+            W = None
+        n, b1, b2 = cc_parity_report(rows, W)
+        if W is None:
+            verdict = ("فقط strategy.py سنجیده شد (wrapper سنجیده نشد) → تطابق ۱۰۰٪ برای کل مسیر «تأیید نشده» است ⚠️"
+                       if b1 == 0 else "ناهمخوانی در strategy.py ❌")
+            ok = False
+        else:
+            ok = (b1 == 0 and b2 == 0)
+            verdict = "تطابق ۱۰۰٪ ✅" if ok else "ناهمخوانی ❌"
+        print(f"\nنتیجه: پیوت‌ها={n} | strategy.py ناهمخوان={b1} | wrapper ناهمخوان={'—' if W is None else b2} → {verdict}")
+        sys.exit(0 if ok else 1)
 
     if args.compare_only:
         if not args.pine_csv:
@@ -951,6 +1307,7 @@ def main():
             for s in signals:
                 w.writerow({k: fnum(s[k]) for k in cols})
 
+        n_cc, bad_cc_s, bad_cc_w = cc_parity_report(rows, W)
         problems = 0
         if args.verify_last or args.verify_signals:
             problems = verify_with_real_wrapper(df, symbol, tf, rows, signals, args.verify_last, args.verify_signals)
@@ -974,7 +1331,7 @@ def main():
     log.info(f"مدت اجرا: {time.time() - t0:.1f}s | خروجی‌ها در: {out_dir.resolve()}")
     print(f"\n✅ پایان. فایل‌ها در {out_dir.resolve()} با پیشوند {prefix}_*")
 
-    rc = 2 if problems else 0
+    rc = 2 if (problems or bad_cc_s or bad_cc_w) else 0
     if args.pine_csv:
         rc = max(rc, compare_with_pine(rows, args.pine_csv, tf, out_dir, args.tol, args.pine_shift_bars, args.na_as_zero, args.max_show))
     sys.exit(rc)
