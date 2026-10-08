@@ -146,21 +146,23 @@ def main(
     def checkColorChange(barStart, barEnd, needRedPhase):
         found: bool = False
         if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
-            startOffset = bar_index - (barEnd - 1)
-            endOffset = bar_index - (barStart + 1)
+            startOffset = int(bar_index - (barEnd - 1))
+            endOffset   = int(bar_index - (barStart + 1))
             if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
                 for j in range(startOffset, endOffset + 1):
-                    h = pine_hl_lookup.get(bar_index, needRedPhase, j, histLine[j])
+                    h = histLine[j]
                     if needRedPhase and h < 0:
                         found = True
                         break
-                    if not needRedPhase and h > 0:
+                    if (not needRedPhase) and h > 0:
                         found = True
                         break
         return found
 
-    macdColorChangedForHighs = checkColorChange(ph_bar_1, ph_bar_2, True) if newPivotHigh and (not na(ph_bar_1)) else False
-    macdColorChangedForLows = checkColorChange(pl_bar_1, pl_bar_2, False) if newPivotLow and (not na(pl_bar_1)) else False
+    macdColorChangedForHighs = checkColorChange(ph_bar_1, ph_bar_2, True)  if newPivotHigh and (not na(ph_bar_1)) else False
+    macdColorChangedForLows  = checkColorChange(pl_bar_1, pl_bar_2, False) if newPivotLow  and (not na(pl_bar_1)) else False
+
+
 
 
     # ============================================================
@@ -182,22 +184,53 @@ def main(
     #
     # Verified: Recall 86.7% -> 90.0% (26/30 -> 27/30 matched).
     # ============================================================
+
+    def _pine_linreg_value(src_offset: int, length: int) -> float:
+        if src_offset < 0:
+            return float("nan")
+        n = float(length)
+        sum_x = 0.0
+        sum_y = 0.0
+        sum_xy = 0.0
+        sum_x2 = 0.0
+        for i in range(length):
+            y = close[src_offset + (length - 1 - i)]
+            if y != y:
+                return float("nan")
+            x = float(i)
+            sum_x += x
+            sum_y += y
+            sum_xy += x * y
+            sum_x2 += x * x
+        denom = n * sum_x2 - sum_x * sum_x
+        if denom == 0.0:
+            return float("nan")
+        slope = (n * sum_xy - sum_x * sum_y) / denom
+        intercept = (sum_y - slope * sum_x) / n
+        return intercept + slope * (n - 1.0)
+
+    def _pine_sma_at(src_offset: int, length: int) -> float:
+        s = 0.0
+        for i in range(length):
+            v = close[src_offset + i]
+            if v != v:
+                return float("nan")
+            s += v
+        return s / float(length)
+
     def isTrendingUp(refBar):
         result: bool = False
         if not na(refBar):
             offset = bar_index - refBar
             if offset >= 0 and offset + trendLookback < 5000:
-                _lk = pine_hl_lookup.get_trend(bar_index, "trendOkBear")
-                if _lk is not None:
-                    return _lk
                 off_int = int(offset)
                 L = int(trendLookback)
-                c_now = close[off_int]
-                c_prev = close[off_int + L]
-                slope = c_now - c_prev
-                avgPrice = c_now
-                slopePct = slope / avgPrice * 100 if avgPrice != 0 else 0.0
-                result = slopePct > trendSlopeMinPct
+                lr1 = _pine_linreg_value(off_int, L)
+                lr2 = _pine_linreg_value(off_int + L, L)
+                avgPrice = _pine_sma_at(off_int, L)
+                if lr1 == lr1 and lr2 == lr2 and avgPrice != 0:
+                    slopePct = ((lr1 - lr2) / avgPrice) * 100.0
+                    result = slopePct > trendSlopeMinPct
         return result
 
     def isTrendingDown(refBar):
@@ -205,17 +238,14 @@ def main(
         if not na(refBar):
             offset = bar_index - refBar
             if offset >= 0 and offset + trendLookback < 5000:
-                _lk = pine_hl_lookup.get_trend(bar_index, "trendOkBull")
-                if _lk is not None:
-                    return _lk
                 off_int = int(offset)
                 L = int(trendLookback)
-                c_now = close[off_int]
-                c_prev = close[off_int + L]
-                slope = c_now - c_prev
-                avgPrice = c_now
-                slopePct = slope / avgPrice * 100 if avgPrice != 0 else 0.0
-                result = slopePct < -trendSlopeMinPct
+                lr1 = _pine_linreg_value(off_int, L)
+                lr2 = _pine_linreg_value(off_int + L, L)
+                avgPrice = _pine_sma_at(off_int, L)
+                if lr1 == lr1 and lr2 == lr2 and avgPrice != 0:
+                    slopePct = ((lr1 - lr2) / avgPrice) * 100.0
+                    result = slopePct < -trendSlopeMinPct
         return result
 
     trendOkForBearish = isTrendingUp(ph_bar_1) if newPivotHigh and (not na(ph_bar_1)) else False
