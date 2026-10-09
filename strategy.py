@@ -16,24 +16,6 @@ logger = logging.getLogger(__name__)
 
 import pine_hl_lookup
 
-# ============================================================
-# Sparse-sampling state for checkColorChange (Pine-exact model).
-# In Pine, histLine[j] read INSIDE a conditionally-called function only
-# "sees" the samples recorded on bars where that function actually ran;
-# every other bar forward-fills the last recorded sample.
-# One independent sample list per call-site (HIGH / LOW).
-# ============================================================
-_SP = {"cc_high": [], "cc_low": []}
-
-
-def _sp_asof(samples, bar):
-    """Last recorded sample with bar <= `bar` (forward-fill, like Pine)."""
-    for b, v in reversed(samples):
-        if b <= bar:
-            return v
-    return float("nan")
-
-
 grp_pivot: str = "Pivot"
 grp_ind: str = "Indicators"
 grp_trend: str = "Trend"
@@ -72,11 +54,6 @@ def main(
 ):
     leftBars: int = 5
     rightBars = 3
-
-    # reset sparse state at the first bar of every run
-    if bar_index == 0:
-        _SP["cc_high"].clear()
-        _SP["cc_low"].clear()
 
     # PyneCore 6.9.2 — native RSI API
     rsiVal: Series[float] = ta.rsi(source=close, length=rsiLen)
@@ -160,19 +137,37 @@ def main(
 
     # ============================================================
     # checkColorChange — Pine-exact SPARSE model.
-    # Each call appends (bar_index, histLine) to its own call-site list;
+    # Samples are recorded ONLY on bars where the Pine function would run
+    # (newPivot and previous pivot exists), one list per call-site.
     # histLine[j] is read as "last sample recorded at bar <= bar_index-j".
+    # State lives in Persistent lists (PyneCore forbids module-level writes).
     # ============================================================
-    def checkColorChange(site, barStart, barEnd, needRedPhase):
+    cc_high_s: Persistent[list] = []
+    cc_low_s: Persistent[list] = []
+
+    runHighCC = newPivotHigh and (not na(ph_bar_1))
+    runLowCC = newPivotLow and (not na(pl_bar_1))
+    if runHighCC:
+        cc_high_s.append((int(bar_index), float(histLine)))
+    if runLowCC:
+        cc_low_s.append((int(bar_index), float(histLine)))
+
+    def _sp_asof(samples, bar):
+        r = float("nan")
+        for k in range(len(samples) - 1, -1, -1):
+            if samples[k][0] <= bar:
+                r = samples[k][1]
+                break
+        return r
+
+    def checkColorChange(samples, barStart, barEnd, needRedPhase):
         found: bool = False
-        s = _SP[site]
-        s.append((int(bar_index), float(histLine)))
         if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
             startOffset = int(bar_index - (barEnd - 1))
             endOffset   = int(bar_index - (barStart + 1))
             if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
                 for j in range(startOffset, endOffset + 1):
-                    h = _sp_asof(s, int(bar_index) - j)
+                    h = _sp_asof(samples, int(bar_index) - j)
                     if h != h:
                         continue
                     if needRedPhase and h < 0:
@@ -183,8 +178,8 @@ def main(
                         break
         return found
 
-    macdColorChangedForHighs = checkColorChange("cc_high", ph_bar_1, ph_bar_2, True)  if newPivotHigh and (not na(ph_bar_1)) else False
-    macdColorChangedForLows  = checkColorChange("cc_low",  pl_bar_1, pl_bar_2, False) if newPivotLow  and (not na(pl_bar_1)) else False
+    macdColorChangedForHighs = checkColorChange(cc_high_s, ph_bar_1, ph_bar_2, True)  if runHighCC else False
+    macdColorChangedForLows  = checkColorChange(cc_low_s,  pl_bar_1, pl_bar_2, False) if runLowCC  else False
 
 
     # ============================================================
