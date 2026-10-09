@@ -16,6 +16,24 @@ logger = logging.getLogger(__name__)
 
 import pine_hl_lookup
 
+# ============================================================
+# Sparse-sampling state for checkColorChange (Pine-exact model).
+# In Pine, histLine[j] read INSIDE a conditionally-called function only
+# "sees" the samples recorded on bars where that function actually ran;
+# every other bar forward-fills the last recorded sample.
+# One independent sample list per call-site (HIGH / LOW).
+# ============================================================
+_SP = {"cc_high": [], "cc_low": []}
+
+
+def _sp_asof(samples, bar):
+    """Last recorded sample with bar <= `bar` (forward-fill, like Pine)."""
+    for b, v in reversed(samples):
+        if b <= bar:
+            return v
+    return float("nan")
+
+
 grp_pivot: str = "Pivot"
 grp_ind: str = "Indicators"
 grp_trend: str = "Trend"
@@ -23,15 +41,7 @@ grp_score: str = "Min Confirmations"
 grp_fib: str = "Fibonacci"
 grp_candle: str = "Price Action"
 # ============================================================
-# ⚠️ این آستانه‌ها در پاین اسکریپت اصلی وجود ندارند و حذف/خنثی شدند.
-# قبلاً هر مقایسه قیمت/RSI باید از یک حداقل فاصله عبور می‌کرد (مثلاً
-# اختلاف قیمت > ۰.۰۲۵٪ یا اختلاف RSI > ۰.۰۲)، در حالی که پاین اسکریپت
-# فقط "بزرگ‌تر/کوچک‌تر" ساده (>، <) را بررسی می‌کند، بدون هیچ آستانه‌ای.
-# طبق تحلیل روی ۴۳ سیگنال نهایی پاین، همین فیلتر قیمتی به‌تنهایی ۱۲ سیگنال
-# (حدود ۲۸٪) را که در پاین معتبر بودند، در پایتون به اشتباه رد می‌کرد —
-# همان علت اصلی عدم تطابق ۹۰٪.
-# مقادیر روی صفر تنظیم شدند تا شرط عملاً معادل پاین (فقط >0) شود، بدون
-# آنکه ساختار کد (که برای دیباگ/آینده مفید است) حذف شود.
+# ⚠️ این آستانه‌ها در پاین اسکریپت اصلی وجود ندارند و خنثی شدند.
 # ============================================================
 RSI_MIN_GAP = 0.0
 PRICE_MIN_GAP_PCT = 0.0
@@ -63,6 +73,11 @@ def main(
     leftBars: int = 5
     rightBars = 3
 
+    # reset sparse state at the first bar of every run
+    if bar_index == 0:
+        _SP["cc_high"].clear()
+        _SP["cc_low"].clear()
+
     # PyneCore 6.9.2 — native RSI API
     rsiVal: Series[float] = ta.rsi(source=close, length=rsiLen)
     macdLine: Series[float]
@@ -82,7 +97,7 @@ def main(
     histAtPivotHigh: Series[float] = ta.valuewhen(not na(pivotHighPrice), histLine[rightBars], 0)
     histAtPivotLow: Series[float] = ta.valuewhen(not na(pivotLowPrice), histLine[rightBars], 0)
 
-     
+
     ph_price_2: Persistent[float] = na(float)
     ph_price_1: Persistent[float] = na(float)
     ph_bar_2: Persistent[float] = na(float)
@@ -143,14 +158,23 @@ def main(
     else:
         prominenceLow = na(float)
 
-    def checkColorChange(barStart, barEnd, needRedPhase):
+    # ============================================================
+    # checkColorChange — Pine-exact SPARSE model.
+    # Each call appends (bar_index, histLine) to its own call-site list;
+    # histLine[j] is read as "last sample recorded at bar <= bar_index-j".
+    # ============================================================
+    def checkColorChange(site, barStart, barEnd, needRedPhase):
         found: bool = False
+        s = _SP[site]
+        s.append((int(bar_index), float(histLine)))
         if not na(barStart) and (not na(barEnd)) and (barEnd > barStart):
             startOffset = int(bar_index - (barEnd - 1))
             endOffset   = int(bar_index - (barStart + 1))
             if startOffset >= 0 and endOffset <= 5000 and (endOffset >= startOffset):
                 for j in range(startOffset, endOffset + 1):
-                    h = histLine[j]
+                    h = _sp_asof(s, int(bar_index) - j)
+                    if h != h:
+                        continue
                     if needRedPhase and h < 0:
                         found = True
                         break
@@ -159,32 +183,13 @@ def main(
                         break
         return found
 
-    macdColorChangedForHighs = checkColorChange(ph_bar_1, ph_bar_2, True)  if newPivotHigh and (not na(ph_bar_1)) else False
-    macdColorChangedForLows  = checkColorChange(pl_bar_1, pl_bar_2, False) if newPivotLow  and (not na(pl_bar_1)) else False
-
-
+    macdColorChangedForHighs = checkColorChange("cc_high", ph_bar_1, ph_bar_2, True)  if newPivotHigh and (not na(ph_bar_1)) else False
+    macdColorChangedForLows  = checkColorChange("cc_low",  pl_bar_1, pl_bar_2, False) if newPivotLow  and (not na(pl_bar_1)) else False
 
 
     # ============================================================
-    # Pine-Exact trend detection — verified via 30 Pine signals
-    # on 8869 ETHUSDT 1m bars.
-    #
-    # Discovered bug: PyneCore's ta.linreg(close[offset], L, 0) with a
-    # VARIABLE offset corrupts internal state across bars, returning
-    # garbage that doesn't match Pine's behavior.
-    #
-    # Pine semantics: close[offset] in this context is treated as a
-    # CONSTANT (its value at refBar), and ta.linreg(constant, L, 0)
-    # returns that constant. Therefore:
-    #     lr1 = close[refBar]
-    #     lr2 = close[refBar - trendLookback]
-    #     avgPrice = close[refBar]
-    #     slope = lr1 - lr2
-    #     slopePct = slope / avgPrice * 100
-    #
-    # Verified: Recall 86.7% -> 90.0% (26/30 -> 27/30 matched).
+    # Trend detection (UNCHANGED for now — to be fixed in next step)
     # ============================================================
-
     def _pine_linreg_value(src_offset: int, length: int) -> float:
         if src_offset < 0:
             return float("nan")
@@ -270,12 +275,11 @@ def main(
         ok: bool = False
         if not na(fibStart) and not na(fibEnd) and fibEnd != fibStart:
             range_ = math.abs(fibEnd - fibStart)
-            tol = range_ * (fibTolerancePct / 100.0)    
-            # ✅ اصلاح: تشخیص جهت از خود مقادیر
-            if fibEnd > fibStart:  # up-move → retracement نزولی
+            tol = range_ * (fibTolerancePct / 100.0)
+            if fibEnd > fibStart:
                 level618 = fibEnd - range_ * 0.618
                 level786 = fibEnd - range_ * 0.786
-            else:                  # down-move → retracement صعودی
+            else:
                 level618 = fibEnd + range_ * 0.618
                 level786 = fibEnd + range_ * 0.786
             if fibUse618 and math.abs(targetPrice - level618) <= tol:
@@ -287,16 +291,16 @@ def main(
     # Bearish Divergence - Fibonacci
     fibScoreBearish: bool = False
     if newPivotHigh and (not na(ph_bar_1)):
-        trendStart = findTrendStartLow(ph_bar_1)   # کف روند
-        fibScoreBearish = checkFibLevel(trendStart, ph_price_1, ph_price_2, False)  # isBullish = False
+        trendStart = findTrendStartLow(ph_bar_1)
+        fibScoreBearish = checkFibLevel(trendStart, ph_price_1, ph_price_2, False)
 
     # Bullish Divergence - Fibonacci
     fibScoreBullish: bool = False
     if newPivotLow and (not na(pl_bar_1)):
-        trendStart = findTrendStartHigh(pl_bar_1)  # سقف روند
-        fibScoreBullish = checkFibLevel(trendStart, pl_price_1, pl_price_2, True)   # isBullish = True
+        trendStart = findTrendStartHigh(pl_bar_1)
+        fibScoreBullish = checkFibLevel(trendStart, pl_price_1, pl_price_2, True)
 
-    
+
     # ============================================================
     # محاسبه اندیکاتورهای کندلی
     # ============================================================
@@ -307,9 +311,6 @@ def main(
     avgBody = ta.sma(math.abs(close - open), bigCandleAvgLen)
     sizeOk = candleRange >= minCandleATRRatio * atr14
 
-    # ============================================================
-    # الگوهای صعودی (Bullish)
-    # ============================================================
     bullishHammer = (
         candleRange > 0
         and lowerShadow >= shadowToBodyRatio * candleBody
@@ -325,9 +326,6 @@ def main(
 
     priceActionBullish = bullishHammer or bullishLargeBody
 
-    # ============================================================
-    # الگوهای نزولی (Bearish)
-    # ============================================================
     bearishShootingStar = (
         candleRange > 0
         and upperShadow >= shadowToBodyRatio * candleBody
@@ -354,9 +352,6 @@ def main(
         or bearishLargeBody
     )
 
-    # ============================================================
-    # ذخیره در کندل تأیید Pivot
-    # ============================================================
     priceActionBullishAtPivot = priceActionBullish
     priceActionBearishAtPivot = priceActionBearish
 
@@ -371,7 +366,7 @@ def main(
     classicBearishCond3_MACDh = priceHigherHigh and histLowerHighOnPeaks and bothPeaksGreen and macdColorChangedForHighs
     classicBearishBase3 = priceHigherHigh and trendOkForBearish and classicBearishCond3_MACDh and classicBearishCond1_RSI and classicBearishCond2_MACDl
 
-    
+
     priceLowerLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 < pl_price_1) and (((pl_price_1 - pl_price_2) / pl_price_1) * 100 > PRICE_MIN_GAP_PCT)
     rsiHigherLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and ((pl_rsi_2 - pl_rsi_1) > RSI_MIN_GAP)
     macdLineHigherLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 > pl_macdline_1)
@@ -383,7 +378,7 @@ def main(
     classicBullishCond3_MACDh = priceLowerLow and histHigherLowOnTroughs and bothTroughsRed and macdColorChangedForLows
     classicBullishBase3 = priceLowerLow and trendOkForBullish and classicBullishCond3_MACDh and classicBullishCond1_RSI and classicBullishCond2_MACDl
 
-    
+
     priceHigherLow = newPivotLow and (not na(pl_price_1)) and (pl_price_2 > pl_price_1) and (((pl_price_2 - pl_price_1) / pl_price_1) * 100 > PRICE_MIN_GAP_PCT)
     rsiLowerLowOnTroughs = newPivotLow and (not na(pl_rsi_1)) and ((pl_rsi_1 - pl_rsi_2) > RSI_MIN_GAP)
     macdLineLowerLowOnTroughs = newPivotLow and (not na(pl_macdline_1)) and (pl_macdline_2 < pl_macdline_1)
@@ -394,7 +389,7 @@ def main(
     hiddenBullishCond3_MACDh = priceHigherLow and histLowerLowOnTroughs and bothTroughsRed and macdColorChangedForLows
     hiddenBullishBase3 = enableHidden and priceHigherLow and hiddenBullishCond3_MACDh and hiddenBullishCond1_RSI and hiddenBullishCond2_MACDl
 
-    
+
     priceLowerHigh = newPivotHigh and (not na(ph_price_1)) and (ph_price_2 < ph_price_1) and (((ph_price_1 - ph_price_2) / ph_price_1) * 100 > PRICE_MIN_GAP_PCT)
     rsiHigherHighOnPeaks = newPivotHigh and (not na(ph_rsi_1)) and ((ph_rsi_2 - ph_rsi_1) > RSI_MIN_GAP)
     macdLineHigherHighOnPeaks = newPivotHigh and (not na(ph_macdline_1)) and (ph_macdline_2 > ph_macdline_1)
@@ -406,9 +401,6 @@ def main(
     hiddenBearishBase3 = enableHidden and priceLowerHigh and hiddenBearishCond3_MACDh and hiddenBearishCond1_RSI and hiddenBearishCond2_MACDl
 
 
-    # =====================================================================================
-    # بخش امتیازدهی کامل (۰ تا ۵) — عیناً مطابق پاین‌اسکریپت
-    # =====================================================================================
     scoreClassicBearish = (1 if classicBearishCond1_RSI else 0) + \
                           (1 if classicBearishCond2_MACDl else 0) + \
                           (1 if classicBearishCond3_MACDh else 0) + \
@@ -451,44 +443,17 @@ def main(
     finalHiddenBullish = passesMinRequirement(hiddenBullishBase3, fibScoreBullish, priceActionBullishAtPivot)
     finalHiddenBearish = passesMinRequirement(hiddenBearishBase3, fibScoreBearish, priceActionBearishAtPivot)
 
-    # ============================================================
-    # 🔍 لاگ بلافاصله بعد از سیگنال (برای دیباگ)
-    # ============================================================
     current_signal = finalClassicBearish or finalClassicBullish or finalHiddenBullish or finalHiddenBearish
-    
+
     if current_signal:
         logger.info(f"[SIGNAL_FINAL] CD-={finalClassicBearish} CD+={finalClassicBullish} HD+={finalHiddenBullish} HD-={finalHiddenBearish}")
         logger.info(f"[SIGNAL_FINAL] macdColorChangedForHighs={macdColorChangedForHighs} macdColorChangedForLows={macdColorChangedForLows}")
-        
-        if newPivotHigh:
-            startOffset = bar_index - (ph_bar_2 - 1)
-            endOffset = bar_index - (ph_bar_1 + 1)
-            logger.info(f"[CHECK_COLOR] startOffset={startOffset} endOffset={endOffset} needRedPhase=True barStart={ph_bar_1} barEnd={ph_bar_2}")
-            for j in range(startOffset, endOffset + 1):
-                logger.info(f"[CHECK_COLOR] j={j} histLine={histLine[j]}")
-            logger.info(f"[CHECK_COLOR] result={macdColorChangedForHighs}")
-        
-        if newPivotLow:
-            startOffset = bar_index - (pl_bar_2 - 1)
-            endOffset = bar_index - (pl_bar_1 + 1)
-            logger.info(f"[CHECK_COLOR] startOffset={startOffset} endOffset={endOffset} needRedPhase=False barStart={pl_bar_1} barEnd={pl_bar_2}")
-            for j in range(startOffset, endOffset + 1):
-                logger.info(f"[CHECK_COLOR] j={j} histLine={histLine[j]}")
-            logger.info(f"[CHECK_COLOR] result={macdColorChangedForLows}")
-        
-        if newPivotHigh or newPivotLow:
-            logger.info(f"[DIVCHECK] symbol={syminfo.tickerid} | bar_index={bar_index} | signal={'LONG' if current_signal else 'None'} | newPivotHigh={newPivotHigh} | newPivotLow={newPivotLow}")
-
 
     plotshape(finalClassicBearish, title='CD-', style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, text='CD-', offset=-rightBars)
     plotshape(finalClassicBullish, title='CD+', style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, text='CD+', offset=-rightBars)
     plotshape(finalHiddenBullish, title='HD+', style=shape.triangleup, location=location.belowbar, color=color.blue, size=size.small, text='HD+', offset=-rightBars)
     plotshape(finalHiddenBearish, title='HD-', style=shape.triangledown, location=location.abovebar, color=color.orange, size=size.small, text='HD-', offset=-rightBars)
-    # ============================================================
-    # DTM SIGNAL SNAPSHOT
-    # Existing strategy calculations above are untouched.
-    # This dictionary only exposes values ALREADY calculated here.
-    # ============================================================
+
     return {
         "signal": ("LONG" if (finalClassicBullish or finalHiddenBullish) else "SHORT" if (finalClassicBearish or finalHiddenBearish) else None),
         "entry": close,
@@ -498,7 +463,6 @@ def main(
         "HD+": finalHiddenBullish,
         "HD-": finalHiddenBearish,
 
-        # Indicators
         "rsi": rsiVal,
         "rsi_len": rsiLen,
         "macd_fast": macdFast,
@@ -510,13 +474,11 @@ def main(
         "atr": atr14,
         "atr_len": 14,
 
-        # Trend
         "trend_lookback": trendLookback,
         "trend_slope_min_pct": trendSlopeMinPct,
         "trend_bearish_ok": trendOkForBearish,
         "trend_bullish_ok": trendOkForBullish,
 
-        # Pivots
         "left_bars": leftBars,
         "right_bars": rightBars,
         "pivot_high": pivotHighPrice,
@@ -530,7 +492,6 @@ def main(
         "previous_pivot_high_index": ph_bar_1,
         "previous_pivot_low_index": pl_bar_1,
 
-        # Divergence components
         "classic_bullish_base": classicBullishBase3,
         "classic_bearish_base": classicBearishBase3,
         "hidden_bullish_base": hiddenBullishBase3,
@@ -560,7 +521,6 @@ def main(
         "macd_lower_low": macdLineLowerLowOnTroughs,
         "macd_higher_high": macdLineHigherHighOnPeaks,
 
-        # Fibonacci
         "fib_use_618": fibUse618,
         "fib_use_786": fibUse786,
         "fib_tolerance_pct": fibTolerancePct,
@@ -568,27 +528,22 @@ def main(
         "fib_bearish": fibScoreBearish,
         "fib_bullish": fibScoreBullish,
 
-        # Price action
         "candle_range": candleRange,
         "candle_body": candleBody,
         "upper_shadow": upperShadow,
         "lower_shadow": lowerShadow,
         "avg_body": avgBody,
         "size_ok": sizeOk,
-        "bullish_wick": bullishHammer,              # ← تغییر
-        "bearish_wick": bearishShootingStar,       # ← تغییر
-        "bearish_hanging_man": bearishLowerWickRejection,  # ← تغییر
-        "big_green_candle": bullishLargeBody,      # ← تغییر
-        "big_red_candle": bearishLargeBody,        # ← تغییر
+        "bullish_wick": bullishHammer,
+        "bearish_wick": bearishShootingStar,
+        "bearish_hanging_man": bearishLowerWickRejection,
+        "big_green_candle": bullishLargeBody,
+        "big_red_candle": bearishLargeBody,
         "price_action_bullish": priceActionBullish,
         "price_action_bearish": priceActionBearish,
 
-        # Volume is not calculated by this strategy.
         "volume_analysis": False,
 
-        # MTF is explicitly disabled by the current configuration.
-
-        # Confirmation / decision trace
         "min_confirmations": minConfirmations,
         "minimum_requirement_bullish": passesMinRequirement(
             classicBullishBase3 or hiddenBullishBase3,
@@ -604,7 +559,6 @@ def main(
         "final_classic_bearish": finalClassicBearish,
         "final_hidden_bullish": finalHiddenBullish,
         "final_hidden_bearish": finalHiddenBearish,
-        # ====== کلیدهای جدید برای دیباگ (اضافه شده) ======
         "ph_rsi_1": ph_rsi_1,
         "ph_rsi_2": ph_rsi_2,
         "ph_macdline_1": ph_macdline_1,
@@ -624,7 +578,6 @@ def main(
 
         "prominence_high": prominenceHigh,
         "prominence_low": prominenceLow,
-         # قیمت‌های خام برای Pivot High
         "ph1_open": open[bar_index - ph_bar_1] if not na(ph_bar_1) else na(float),
         "ph1_high": high[bar_index - ph_bar_1] if not na(ph_bar_1) else na(float),
         "ph1_low": low[bar_index - ph_bar_1] if not na(ph_bar_1) else na(float),
@@ -633,7 +586,6 @@ def main(
         "ph2_high": high[bar_index - ph_bar_2] if not na(ph_bar_2) else na(float),
         "ph2_low": low[bar_index - ph_bar_2] if not na(ph_bar_2) else na(float),
         "ph2_close": close[bar_index - ph_bar_2] if not na(ph_bar_2) else na(float),
-        # قیمت‌های خام برای Pivot Low
         "pl1_open": open[bar_index - pl_bar_1] if not na(pl_bar_1) else na(float),
         "pl1_high": high[bar_index - pl_bar_1] if not na(pl_bar_1) else na(float),
         "pl1_low": low[bar_index - pl_bar_1] if not na(pl_bar_1) else na(float),
@@ -642,14 +594,12 @@ def main(
         "pl2_high": high[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
         "pl2_low": low[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
         "pl2_close": close[bar_index - pl_bar_2] if not na(pl_bar_2) else na(float),
-    
-        # ====== امتیازدهی کامل (۰ تا ۵) — عیناً مطابق پاین‌اسکریپت ======
+
         "score_classic_bearish": scoreClassicBearish,
         "score_classic_bullish": scoreClassicBullish,
         "score_hidden_bullish": scoreHiddenBullish,
         "score_hidden_bearish": scoreHiddenBearish,
 
-        # ====== جزئیات امتیازدهی برای دیباگ ======
         "score_cd_minus_detail": {
             "rsi_cond": 1 if classicBearishCond1_RSI else 0,
             "macd_cond": 1 if classicBearishCond2_MACDl else 0,
@@ -681,13 +631,6 @@ def main(
 
         "total_bars_fed": bar_index,
     }
-
-
-# ============================================================
-# WRAPPER — compatibility layer for bot.py
-# Does NOT modify PyneCore strategy logic.
-# ============================================================
-
 
 
 if __name__ == "__main__":
