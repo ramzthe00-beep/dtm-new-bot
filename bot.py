@@ -31,6 +31,13 @@ API_SECRET = os.getenv("API_SECRET")
 BASE_URL = os.getenv("BASE_URL", "https://apiv2.thetruetrade.io")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
+
+# ============================================================
+# 🎛️ پرچم‌های فعال/غیرفعال‌سازی CT
+# ============================================================
+ENABLE_CT_STANDALONE = False   # اجرای مستقل CT (ct_trader)
+ENABLE_DTM_CT_FILTER = False   # فیلتر CT روی سیگنال‌های DTM
+
 # ============================================================
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
@@ -45,29 +52,15 @@ CHECK_INTERVAL = {
     "5": 300,
 }
 
-# فاصله‌ی استراحت بین سیکل‌های حلقه‌ی اصلی. قبلاً ۳۰ ثانیه بود؛ چون هر سیکل خودش ده‌ها ثانیه کار
-# می‌کند (throttle صرافی)، سیکل‌ها از ۶۰ ثانیه بیشتر می‌شد و بعضی کندل‌های ۱ دقیقه‌ای اصلاً
-# بررسی نمی‌شدند (استراتژی فقط «آخرین کندل بسته‌شده» را می‌بیند).
 LOOP_IDLE_SECONDS = float(os.getenv("LOOP_IDLE_SECONDS", "5"))
 
 LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75}
 TARGET_RISK = 2.0
-# 🔧 قبلاً فقط ۵ نماد اینجا بود؛ برای BTCUSDT (tick=0.1) و SOLUSDT مقدار پیش‌فرض 0.01 استفاده می‌شد و
-# قیمت SL/TP روی تیک اشتباه رند می‌شد. حالا از همان جدول ۶۳ مارکت TheTrueTrade (در strategy_wrapper) می‌آید.
-# مقادیر ۵ نماد قبلی دقیقاً همان‌اند.
 TICK_SIZES = {sym: info["mintick"] for sym, info in SYMBOL_TICK_INFO.items()}
 
 
 def _precision_from_tick(tick):
-    """
-    تعداد رقم اعشار را مستقیماً از اندازه‌ی تیک (TICK_SIZES) محاسبه می‌کند،
-    تا PRICE_PRECISION هرگز با TICK_SIZES ناهماهنگ نشود.
-    علت باگ قبلی «Stop Loss: 0.00 / Take Profit: 0.00» برای ارزهای ۶ رقمی
-    (مثل PUMPUSDT) دقیقاً همین بود: تیک آن 0.000001 (۶ رقم اعشار) بود اما
-    PRICE_PRECISION آن به‌اشتباه روی 2 هارد-کد شده بود، پس هر قیمتی مثل
-    0.0039 هنگام رند شدن به ۲ رقم اعشار می‌شد 0.00 و همان مقدار نامعتبر هم
-    در پیام تلگرام نمایش داده می‌شد و هم داخل بدنه‌ی سفارش به صرافی ارسال می‌شد.
-    """
+    """تعداد رقم اعشار را مستقیماً از اندازه‌ی تیک محاسبه می‌کند."""
     s = f"{tick:.10f}".rstrip("0")
     return len(s.split(".")[1]) if "." in s else 0
 
@@ -78,6 +71,7 @@ logger = logging.getLogger("BOT")
 
 logger.info("=" * 60)
 logger.info("BOT STARTING...")
+logger.info("ENABLE_CT_STANDALONE=%s | ENABLE_DTM_CT_FILTER=%s", ENABLE_CT_STANDALONE, ENABLE_DTM_CT_FILTER)
 logger.info("=" * 60)
 
 # ============================================================
@@ -88,18 +82,9 @@ RISK_FREE_FEE_MODE = os.getenv("RISK_FREE_FEE_MODE", "open")
 RISK_FREE_FEE_DEFAULT = float(os.getenv("RISK_FREE_FEE_DEFAULT", "0.30"))
 RISK_FREE_PENDING = {}
 
-# 🆕 آیا ریسک‌فری در همه‌ی تایم‌فریم‌هایی که ربات روی آن‌ها معامله می‌کند فعال شود،
-# یا فقط روی یک تایم‌فریم مشخص؟
-#   RISK_FREE_ALL_TIMEFRAMES=1  → روی همه‌ی TIMEFRAMES (پیش‌فرض، رفتار قبلی)
-#   RISK_FREE_ALL_TIMEFRAMES=0  → فقط روی تایم‌فریم RISK_FREE_TIMEFRAME (مثلاً "5")
 RISK_FREE_ALL_TIMEFRAMES = os.getenv("RISK_FREE_ALL_TIMEFRAMES", "1") == "1"
 RISK_FREE_TIMEFRAME = os.getenv("RISK_FREE_TIMEFRAME", TIMEFRAMES[0] if TIMEFRAMES else "1")
 
-# 🆕 حداقل «cost» (سرمایه/کولترال) قابل قبول برای ثبت سفارش.
-# صرافی هر سفارشی با cost کمتر از این مقدار را با خطای
-# "Collateral is below the minimum allowed" رد می‌کند. عدد دقیقِ صرافی در
-# مستندات ذکر نشده — این فقط یک مقدار پیش‌فرض احتیاطی است؛ آن را طبق حداقل
-# واقعی TheTrueTrade تنظیم کنید (متغیر محیطی MIN_ORDER_COST_USDT در Railway).
 MIN_ORDER_COST_USDT = float(os.getenv("MIN_ORDER_COST_USDT", "1"))
 
 # ============================================================
@@ -122,41 +107,40 @@ def throttle_truetrade():
 def send_telegram(text):
     """ارسال پیام به تلگرام با مدیریت خطای 429 (Rate Limit) و retry خودکار"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    
+
     max_attempts = 3
     for attempt in range(max_attempts):
         try:
             r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=30)
-            
+
             if r.status_code == 429:
-                # استخراج زمان انتظار از پاسخ تلگرام
                 try:
                     data = r.json()
                     retry_after = data.get("parameters", {}).get("retry_after", 10)
                 except Exception:
                     retry_after = 10
-                
+
                 if attempt == max_attempts - 1:
                     logger.error(f"[TELEGRAM] Rate limit after {max_attempts} attempts: {r.status_code} {r.text[:300]}")
                     return False
-                
+
                 wait = min(retry_after + 2, 30)
                 logger.warning(f"[TELEGRAM] Rate limit, retry in {wait}s (attempt {attempt+1}/{max_attempts})")
                 time.sleep(wait)
                 continue
-            
+
             if r.status_code == 200:
                 return True
             else:
                 logger.error(f"[TELEGRAM] Failed to send message: {r.status_code} {r.text[:300]}")
                 return False
-                
+
         except Exception as e:
             logger.error(f"[TELEGRAM] Exception: {e}")
             if attempt == max_attempts - 1:
                 return False
             time.sleep(2 ** attempt)
-    
+
     return False
 
 def send_telegram_long(text):
@@ -164,12 +148,12 @@ def send_telegram_long(text):
     text = str(text)
     if len(text) <= 4000:
         return send_telegram(text)
-    
+
     parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
     ok = True
     for i, part in enumerate(parts):
         ok = send_telegram(part) and ok
-        time.sleep(1.0)  # افزایش فاصله بین بخش‌ها برای جلوگیری از Rate Limit
+        time.sleep(1.0)
     return ok
 
 class PublicData:
@@ -328,11 +312,11 @@ class PrivateExchange:
         self.last_positions_payload = None  # برای ریسک فری
         self.connected = False
         self._cached_balance = None
-        
+
     def _sign(self, method, uri, ts):
         payload = f"{ts}{method.upper()}{uri}"
         return hmac.new(self.api_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    
+
     def _request(self, method, uri, data=None):
         self._last_response = None
         url = f"{self.base}{uri}"
@@ -441,7 +425,7 @@ class PrivateExchange:
             return True
         except Exception:
             return False
-    
+
     def fetch_balance(self):
         try:
             data = self._request("GET", "/futures/assets")
@@ -464,15 +448,15 @@ class PrivateExchange:
             else:
                 logger.error(f"[BALANCE] Failed to fetch balance and no cache available: {e}")
                 return 0.0
-    
+
     def _round_price(self, price, symbol):
         tick = TICK_SIZES.get(symbol.upper(), 0.01)
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
         return round(round(float(price)/tick)*tick, prec)
-    
+
     def create_order(self, symbol, side, capital, leverage, take_profit=None, stop_loss=None):
         prec = PRICE_PRECISION.get(symbol.upper(), 2)
-        
+
         side_upper = str(side).upper().strip()
         if side_upper in ("BUY", "LONG"):
             api_side = "LONG"
@@ -480,7 +464,7 @@ class PrivateExchange:
             api_side = "SHORT"
         else:
             api_side = side_upper
-        
+
         od = {
             "symbol": symbol.upper(),
             "side": api_side,
@@ -489,7 +473,7 @@ class PrivateExchange:
             "cost": f"{capital:.{prec}f}",
             "walletType": "debit"
         }
-        
+
         if take_profit is not None and not math.isnan(take_profit) and take_profit > 0:
             rounded_tp = self._round_price(take_profit, symbol)
             if rounded_tp > 0:
@@ -513,14 +497,14 @@ class PrivateExchange:
                     f"at precision={prec} (tick={TICK_SIZES.get(symbol.upper())}) — "
                     f"omitting field instead of sending an invalid 0.00 to the exchange"
                 )
-        
+
         logger.info(
             "[ORDER REQUEST] %s %s\n%s",
             symbol.upper(),
             api_side,
             json.dumps(od, ensure_ascii=False, indent=2)
         )
-        
+
         request_msg = (
             f"📤 ORDER REQUEST\n"
             f"━━━━━━━━━━━━━━━━━━\n"
@@ -535,18 +519,18 @@ class PrivateExchange:
         )
         if not send_telegram_long(request_msg):
             logger.error("[TELEGRAM] Failed to send ORDER REQUEST")
-        
+
         try:
             result = self._request("POST", "/futures/positions", od)
             position_id = result.get("positionId") if isinstance(result, dict) else None
-            
+
             logger.info(
                 "[ORDER SUCCESS] %s %s\n%s",
                 symbol.upper(),
                 api_side,
                 json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result)
             )
-            
+
             success_msg = (
                 f"✅ ORDER SUCCESS\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -558,22 +542,22 @@ class PrivateExchange:
             )
             if not send_telegram_long(success_msg):
                 logger.error("[TELEGRAM] Failed to send ORDER SUCCESS")
-            
+
             return result
-            
+
         except Exception as e:
             response = self._last_response
-            
+
             if response is not None:
                 http_status = response.status_code
                 raw_response = response.text
-                
+
                 try:
                     parsed_json = response.json()
                     parsed_text = json.dumps(parsed_json, ensure_ascii=False, indent=2)
                 except Exception:
                     parsed_text = "(Response is not valid JSON)"
-                
+
                 complete_error = (
                     f"HTTP STATUS: {http_status}\n"
                     f"━━━━━━━━━━━━━━━━━━\n"
@@ -583,9 +567,9 @@ class PrivateExchange:
                 )
             else:
                 complete_error = "NO HTTP RESPONSE RECEIVED"
-            
+
             local_exception = repr(e)
-            
+
             logger.error(
                 "[ORDER FAILED] %s %s\n"
                 "━━━━━━━━━━━━━━━━━━\n"
@@ -613,7 +597,7 @@ class PrivateExchange:
                 complete_error,
                 local_exception
             )
-            
+
             failed_msg = (
                 f"❌ ORDER FAILED\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
@@ -632,7 +616,7 @@ class PrivateExchange:
             )
             if not send_telegram_long(failed_msg):
                 logger.error("[TELEGRAM] Failed to send ORDER FAILED")
-            
+
             return None
 
     # ============================================================
@@ -642,14 +626,13 @@ class PrivateExchange:
         """
         تغییر استاپ‌لاس پوزیشن باز (ریسک فری).
         PATCH /futures/positions/{id}/tpsl
-        طبق مستندات TheTrueTrade
         """
         symbol = str(pos.get("symbol", "")).upper()
         prec = PRICE_PRECISION.get(symbol, 2)
         sl_str = f"{self._round_price(stop_loss, symbol):.{prec}f}"
 
         body = {"stopLoss": sl_str}
-        
+
         tp = pos.get("takeProfit")
         if tp:
             try:
@@ -662,7 +645,7 @@ class PrivateExchange:
 
         uri = f"/futures/positions/{pos.get('id')}/tpsl"
         logger.info(f"[RISK-FREE] update SL request: PATCH {uri} {body}")
-        
+
         try:
             return self._request("PATCH", uri, body)
         except Exception as e:
@@ -783,7 +766,7 @@ def startup_diagnostic(exchange, public):
 
     try:
         send_telegram("🧪 DTM startup diagnostic started")
-        time.sleep(1)  # ⏳ صبر ۱ ثانیه برای جلوگیری از Rate Limit
+        time.sleep(1)
         telegram_ok = True
     except Exception:
         telegram_ok = False
@@ -854,16 +837,16 @@ def startup_diagnostic(exchange, public):
         create_order_ok = False
 
     from datetime import datetime, timezone, timedelta
-    
+
     IRAN_TZ = timezone(timedelta(hours=3, minutes=30))
     UTC_TZ = timezone.utc
-    
+
     def _now_iran():
         return datetime.now(UTC_TZ).astimezone(IRAN_TZ)
-    
+
     now_iran = _now_iran()
     time_str = now_iran.strftime("%Y-%m-%d %H:%M:%S")
-    
+
     report_lines = [
         "🚀 راه‌اندازی ربات DTM",
         "─────────────────────────────────────────",
@@ -872,7 +855,7 @@ def startup_diagnostic(exchange, public):
         f"📱 تلگرام: {'✅' if telegram_ok else '❌'} | صرافی: {'✅' if exchange_ok else '❌'}",
         "─────────────────────────────────────────",
     ]
-    
+
     if market_status_list:
         report_lines.append(f"📊 بازارهای فعال: {market_ok}/{total_checks}")
         line1 = "   " + " ".join(market_status_list[:4]) if len(market_status_list) >= 4 else "   " + " ".join(market_status_list)
@@ -882,35 +865,40 @@ def startup_diagnostic(exchange, public):
             report_lines.append(line2)
     else:
         report_lines.append(f"📊 بازارهای فعال: ۰/{total_checks} ❌")
-    
+
     report_lines.append("─────────────────────────────────────────")
-    
+
     if strategy_import_ok:
         report_lines.append(f"📈 استراتژی: {'✅ فعال' if strategy_ok else '⚠️ قابل‌اجرا اما بدون سیگنال'}")
     else:
         report_lines.append("📈 استراتژی: ❌ غیرفعال")
-    
+
     if strategy_ok:
         report_lines.append(f"🧪 تست {test_symbol}: سیگنال={test_signal} | ورود={test_entry}")
     else:
         report_lines.append("🧪 تست استراتژی: ❌ انجام نشد")
-    
+
     report_lines.append("─────────────────────────────────────────")
-    
+
     leverage_str = " ".join([f"{k}={v}" for k, v in LEVERAGE_MAP.items()])
     report_lines.append(f"⚙️ تنظیمات: ریسک={TARGET_RISK}٪")
     report_lines.append(f"🔧 اهرم: {leverage_str}")
     report_lines.append(f"💼 سرمایه پایه: {trade_ledger.BASE_CAPITAL} USDT")
-    
-    # 🎯 وضعیت CT Trader (ترکیب‌های فعال از FINAL_RULES)
-    try:
-        import ct_trader as _ctt
-        _combos = " ".join(f"{s_.replace('USDT', '')}@{_ctt._tf_label(t_)}" for s_, t_ in _ctt._active_combos())
-        report_lines.append(
-            f"🎯 CT Trader: {_combos} " + ("✅" if _ctt._FILTER_AVAILABLE else "❌ فیلتر لود نشد (همه‌ی سیگنال‌ها رد می‌شوند)")
-        )
-    except Exception as _ce:
-        report_lines.append(f"🎯 CT Trader: ❌ ({_ce})")
+    report_lines.append(
+        f"🎛️ فیلتر CT روی DTM: {'✅ فعال' if ENABLE_DTM_CT_FILTER else '⛔ غیرفعال'} | "
+        f"CT مستقل: {'✅ فعال' if ENABLE_CT_STANDALONE else '⛔ غیرفعال'}"
+    )
+
+    # 🎯 وضعیت CT Trader (فقط وقتی CT مستقل فعال است)
+    if ENABLE_CT_STANDALONE:
+        try:
+            import ct_trader as _ctt
+            _combos = " ".join(f"{s_.replace('USDT', '')}@{_ctt._tf_label(t_)}" for s_, t_ in _ctt._active_combos())
+            report_lines.append(
+                f"🎯 CT Trader: {_combos} " + ("✅" if _ctt._FILTER_AVAILABLE else "❌ فیلتر لود نشد (همه‌ی سیگنال‌ها رد می‌شوند)")
+            )
+        except Exception as _ce:
+            report_lines.append(f"🎯 CT Trader: ❌ ({_ce})")
 
     if trade_ledger.BASE_CAPITAL < MIN_ORDER_COST_USDT:
         report_lines.append(
@@ -921,9 +909,9 @@ def startup_diagnostic(exchange, public):
 
     report_lines.append("─────────────────────────────────────────")
     report_lines.append(f"✅ راه‌اندازی کامل شد | زمان: {time_str}")
-    
+
     final_report = "\n".join(report_lines)
-    
+
     logger.info(
         "[STARTUP DIAGNOSTIC]\n%s",
         final_report
@@ -931,7 +919,7 @@ def startup_diagnostic(exchange, public):
 
     try:
         send_telegram_long(final_report)
-        time.sleep(1)  # ⏳ صبر ۱ ثانیه برای جلوگیری از Rate Limit
+        time.sleep(1)
         logger.info(
             "[STARTUP DIAGNOSTIC] TELEGRAM SENT"
         )
@@ -957,7 +945,7 @@ def _is_open_position(p):
 
 def risk_free_monitor(exchange):
     """
-    🛡️ پایش ریسک فری — در هر سیکل ۳۰ ثانیه‌ای، درست بعد از test_connection صدا زده می‌شود.
+    🛡️ پایش ریسک فری — در هر سیکل، درست بعد از test_connection صدا زده می‌شود.
     """
     if not RISK_FREE_ENABLED or not RISK_FREE_PENDING:
         return
@@ -1119,14 +1107,14 @@ def loop():
 
     try:
         startup_diagnostic(exchange, public)
-        time.sleep(2)  # ⏳ صبر ۲ ثانیه بعد از استارت‌آپ برای جلوگیری از Rate Limit
+        time.sleep(2)
     except Exception as e:
         logger.exception("[STARTUP DIAGNOSTIC] FATAL ERROR: %s", e)
 
     send_telegram(f"🤖 ربات شروع شد - تایم‌فریم‌های DTM: {' و '.join(TIMEFRAMES)} دقیقه")
     logger.info("Worker bot started with timeframes: %s", TIMEFRAMES)
 
-    BASE_CAPITAL = trade_ledger.BASE_CAPITAL   # 🔧 منبع واحد (۱٫۵) — با ledger و ct_trader هماهنگ
+    BASE_CAPITAL = trade_ledger.BASE_CAPITAL
     BALANCE_USE_RATIO = 0.70
 
     last_processed_boundary = {tf: 0 for tf in TIMEFRAMES}
@@ -1192,36 +1180,41 @@ def loop():
                         )
 
                         # ============================================================
-                        # 🎯 CT FILTER — تأیید از تایم‌فریم بالاتر
+                        # 🎯 CT FILTER — فقط وقتی ENABLE_DTM_CT_FILTER=True
                         # ============================================================
                         if sig and entry is not None:
-                            ct_allowed = False
-                            ct_result = None
-                            try:
-                                from ct_signal_filter import check_ct_filter, format_ct_filter_log
-                                ct_result = check_ct_filter(public, symbol, sig, timeframe)
-                                logger.info(format_ct_filter_log(symbol, sig, timeframe, ct_result))
-                                ct_allowed = ct_result.get('allowed', False)
-                            except Exception as ct_err:
-                                logger.exception(
-                                    f"[CT-FILTER] {symbol} {timeframe}: fatal error: {ct_err}"
-                                )
-                                # در صورت خطا → محافظه‌کارانه reject
+                            if ENABLE_DTM_CT_FILTER:
                                 ct_allowed = False
+                                ct_result = None
+                                try:
+                                    from ct_signal_filter import check_ct_filter, format_ct_filter_log
+                                    ct_result = check_ct_filter(public, symbol, sig, timeframe)
+                                    logger.info(format_ct_filter_log(symbol, sig, timeframe, ct_result))
+                                    ct_allowed = ct_result.get('allowed', False)
+                                except Exception as ct_err:
+                                    logger.exception(
+                                        f"[CT-FILTER] {symbol} {timeframe}: fatal error: {ct_err}"
+                                    )
+                                    ct_allowed = False
 
-                            if not ct_allowed:
-                                reason = ct_result.get('reason', 'unknown') if ct_result else 'ct_error'
+                                if not ct_allowed:
+                                    reason = ct_result.get('reason', 'unknown') if ct_result else 'ct_error'
+                                    logger.info(
+                                        f"[{timeframe}m][{symbol}] سیگنال {sig} "
+                                        f"توسط CT تأیید نشد (reason={reason}) → skip (نه ledger، نه سفارش)"
+                                    )
+                                    continue
+
                                 logger.info(
                                     f"[{timeframe}m][{symbol}] سیگنال {sig} "
-                                    f"توسط CT تأیید نشد (reason={reason}) → skip (نه ledger، نه سفارش)"
+                                    f"توسط CT تأیید شد → ادامه به ثبت و ارسال سفارش"
                                 )
-                                continue
+                            else:
+                                logger.info(
+                                    f"[{timeframe}m][{symbol}] سیگنال {sig} → فیلتر CT غیرفعال، "
+                                    f"ادامه به ثبت و ارسال سفارش"
+                                )
 
-                            # ✅ CT تأیید کرد → حالا ثبت در ledger
-                            logger.info(
-                                f"[{timeframe}m][{symbol}] سیگنال {sig} "
-                                f"توسط CT تأیید شد → ادامه به ثبت و ارسال سفارش"
-                            )
                             trade_ledger.record_signal(
                                 symbol=symbol,
                                 timeframe=timeframe,
@@ -1234,11 +1227,11 @@ def loop():
                                 order_placed=None,
                                 risk_free_pct=risk_free_pct,
                             )
-                            # ✅ ارسال پیام سیگنال به تلگرام (فقط بعد از تأیید CT)
+                            # ✅ ارسال پیام سیگنال به تلگرام
                             if signal_msg:
                                 try:
                                     send_telegram_long(signal_msg)
-                                    logger.info(f"[{timeframe}m][{symbol}] سیگنال تأییدشده به تلگرام ارسال شد")
+                                    logger.info(f"[{timeframe}m][{symbol}] سیگنال به تلگرام ارسال شد")
                                 except Exception as _te:
                                     logger.error(f"[{timeframe}m][{symbol}] send signal to telegram failed: {_te}")
 
@@ -1470,24 +1463,25 @@ def loop():
                         continue
 
             # ============================================================
-            # 🆕 CT Trader — اجرای مستقل CT و معامله (بعد از حلقه timeframe)
+            # 🆕 CT Trader — اجرای مستقل CT (فقط وقتی ENABLE_CT_STANDALONE=True)
             # ============================================================
-            logger.debug("[CT-CALL] ==== ABOUT TO CALL process_ct_signals ====")
-            try:
-                import ct_trader
-                logger.debug("[CT-CALL] ct_trader imported OK")
-                ct_trader.process_ct_signals(
-                    public=public,
-                    exchange=exchange,
-                    ledger=trade_ledger,
-                    leverage_map=LEVERAGE_MAP,
-                    send_telegram_fn=send_telegram_long,
-                    base_capital=BASE_CAPITAL,
-                    min_order_cost=MIN_ORDER_COST_USDT,
-                )
-                logger.debug("[CT-CALL] process_ct_signals RETURNED OK")
-            except Exception as e:
-                logger.exception(f"[CT-TRADER] top-level error: {e}")
+            if ENABLE_CT_STANDALONE:
+                logger.debug("[CT-CALL] ==== ABOUT TO CALL process_ct_signals ====")
+                try:
+                    import ct_trader
+                    logger.debug("[CT-CALL] ct_trader imported OK")
+                    ct_trader.process_ct_signals(
+                        public=public,
+                        exchange=exchange,
+                        ledger=trade_ledger,
+                        leverage_map=LEVERAGE_MAP,
+                        send_telegram_fn=send_telegram_long,
+                        base_capital=BASE_CAPITAL,
+                        min_order_cost=MIN_ORDER_COST_USDT,
+                    )
+                    logger.debug("[CT-CALL] process_ct_signals RETURNED OK")
+                except Exception as e:
+                    logger.exception(f"[CT-TRADER] top-level error: {e}")
 
             STOP_EVENT.wait(LOOP_IDLE_SECONDS)
 
@@ -1502,9 +1496,12 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, _handle_shutdown)
 
     # ============================================================
-    # 🆕 callback برای گزارش CT (در گزارش‌های روزانه/پایان‌روز/ماهانه)
+    # callback برای گزارش CT (در گزارش‌های روزانه/پایان‌روز/ماهانه)
+    # وقتی CT مستقل غیرفعال است None برمی‌گرداند.
     # ============================================================
     def _ct_report_callback():
+        if not ENABLE_CT_STANDALONE:
+            return None
         try:
             from ct_startup_report import build_ct_startup_report
             p = PublicData()
