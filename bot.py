@@ -42,7 +42,7 @@ ENABLE_DTM_CT_FILTER = False   # فیلتر CT روی سیگنال‌های DTM
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
-TIMEFRAMES = ["1" , "5"]
+TIMEFRAMES = ["1"]
 HISTORY_BARS = 500  # fallback
 PINE_START_BARS = 8700  # Pine-Exact parity
 PINE_HIST_TOLERANCE = 0.03  # mirror HIST_TOLERANCE
