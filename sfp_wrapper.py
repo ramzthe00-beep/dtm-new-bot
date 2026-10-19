@@ -8,9 +8,10 @@ Wrapper استراتژی SFP (همان نقشِ strategy_wrapper.py برای DTM
 - قاعده‌ی ورود: وقتی کندل SFP «بسته» شد (HIT_H / HIT_L)، در کندل بعدی سیگنال داده می‌شود.
     ورود   : close کندل SFP (≈ open کندل بعدی؛ در اجرا مثل DTM روی قیمت لنگر درصدی اعمال می‌شود)
     استاپ  : بالای شدوی کندل SFP (شورت) / پایین شدوی کندل SFP (لانگ) + بافر (همان بافر DTM)
-    تارگت  : فیبوناچی از «خط چین سوئینگ» تا «انتهای شدوی کندل SFP»، سطح 2.618
-             شورت: target = H - 2.618 * (H - S)      لانگ: target = L + 2.618 * (S - L)
-             (H/L = انتهای شدو، S = قیمت سوئینگ = خط چین)
+    تارگت  : فیبوناچی از «خط چین» (همان خط oppos که منطق SFP قبل از کندل SFP می‌کشد؛ پایین‌ترین low / بالاترین high
+             بین سوئینگ و کندل SFP) تا «انتهای شدوی کندل SFP»؛ سطح 0 = انتهای شدو، سطح 1 = خط چین، تارگت = سطح 2.618
+             شورت: target = H - 2.618 * (H - D)      لانگ: target = L + 2.618 * (D - L)
+             (H/L = انتهای شدو، D = خط چین)
              اگر R:R < 2 شد، تارگت دورتر برده می‌شود تا R:R = 2 شود.
 - خروجی calculate_sfp_signals هم‌شکل calculate_signals در DTM است (۷ مقدار).
 """
@@ -84,11 +85,11 @@ def closed_candles_only(df, timeframe, now_ts=None, safety_buffer_sec=COMPLETION
 # ═══════════════════════════════════════════════════════════
 # استاپ / تارگت
 # ═══════════════════════════════════════════════════════════
-def compute_sfp_stop_target(direction, entry, swing, wick, mintick, buffer_ticks):
+def compute_sfp_stop_target(direction, entry, dashed, wick, mintick, buffer_ticks):
     """
     direction: 'SHORT' (SFP نزولی، swing = قله) یا 'LONG' (SFP صعودی، swing = دره)
     entry    : close کندل SFP
-    swing    : قیمت خط چین سوئینگ
+    dashed   : قیمت خط چین (oppos)
     wick     : انتهای شدوی کندل SFP (high برای SHORT، low برای LONG)
     خروجی    : dict یا None
     """
@@ -98,7 +99,7 @@ def compute_sfp_stop_target(direction, entry, swing, wick, mintick, buffer_ticks
         risk = stop - entry
         if risk <= 0:
             return None
-        raw_target = wick - SFP_FIB_EXT * (wick - swing)
+        raw_target = wick - SFP_FIB_EXT * (wick - dashed)
         rr_raw = (entry - raw_target) / risk
         if rr_raw >= SFP_MIN_RR:
             target, rr, adjusted = raw_target, rr_raw, False
@@ -109,7 +110,7 @@ def compute_sfp_stop_target(direction, entry, swing, wick, mintick, buffer_ticks
         risk = entry - stop
         if risk <= 0:
             return None
-        raw_target = wick + SFP_FIB_EXT * (swing - wick)
+        raw_target = wick + SFP_FIB_EXT * (dashed - wick)
         rr_raw = (raw_target - entry) / risk
         if rr_raw >= SFP_MIN_RR:
             target, rr, adjusted = raw_target, rr_raw, False
@@ -154,10 +155,11 @@ def run_sfp_signals(df, symbol, timeframe, length=SFP_LENGTH):
         bearish = e["kind"] == "HIT_H"
         direction = "SHORT" if bearish else "LONG"
         swing = float(e["sw"])
+        dashed = float(e["oppos"])   # خط چین
         wick = h[n] if bearish else l[n]
         entry = c[n]
 
-        calc = compute_sfp_stop_target(direction, entry, swing, wick, mintick, bt)
+        calc = compute_sfp_stop_target(direction, entry, dashed, wick, mintick, bt)
         if calc is None:
             logger.warning(f"[SFP] {symbol} bar={n} {direction}: invalid stop/target — skipped")
             continue
@@ -170,7 +172,7 @@ def run_sfp_signals(df, symbol, timeframe, length=SFP_LENGTH):
             "entry": entry, "stop": calc["stop"], "target": calc["target"],
             "rr": calc["rr"], "rr_raw": calc["rr_raw"], "raw_target": calc["raw_target"],
             "target_adjusted": calc["target_adjusted"],
-            "swing": swing, "wick": wick, "swing_bar": e["bx"],
+            "swing": swing, "dashed": dashed, "wick": wick, "swing_bar": e["bx"],
             "bar_index": n, "bars_total": len(df),
         })
     return signals
@@ -220,7 +222,7 @@ def build_sfp_message(sig, symbol, timeframe, trade_id, mintick, sizing=None):
 🎯 هدف: {target:.{pp}f} ({target_distance:.{pp}f}+ | {target_pct:.2f}%)
 ⭐ نسبت ریسک: 1 : {rr:.2f} ({rr_status})
 📌 نوع: {type_fa}
-📐 خط چین سوئینگ: {sig['swing']:.{pp}f} | انتهای شدو: {sig['wick']:.{pp}f}
+📐 خط چین: {sig['dashed']:.{pp}f} | انتهای شدو: {sig['wick']:.{pp}f}
 🧮 تارگت: {tgt_note}
 """
     if sizing:
