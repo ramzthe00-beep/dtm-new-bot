@@ -38,6 +38,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 ENABLE_CT_STANDALONE = False   # اجرای مستقل CT (ct_trader)
 ENABLE_DTM_CT_FILTER = False   # فیلتر CT روی سیگنال‌های DTM
 ENABLE_SFP = os.getenv("ENABLE_SFP", "1") == "1"   # ترید خودکار استراتژی SFP (sfp_trader)
+ENABLE_DTM_SFP_FILTER = os.getenv("ENABLE_DTM_SFP_FILTER", "1") == "1"   # فیلتر SFP روی سیگنال‌های DTM
 
 # ============================================================
 # تنظیمات تایم‌فریم‌های چندگانه
@@ -74,8 +75,8 @@ logger = logging.getLogger("BOT")
 
 logger.info("=" * 60)
 logger.info("BOT STARTING...")
-logger.info("ENABLE_CT_STANDALONE=%s | ENABLE_DTM_CT_FILTER=%s | ENABLE_SFP=%s",
-            ENABLE_CT_STANDALONE, ENABLE_DTM_CT_FILTER, ENABLE_SFP)
+logger.info("ENABLE_CT_STANDALONE=%s | ENABLE_DTM_CT_FILTER=%s | ENABLE_SFP=%s | ENABLE_DTM_SFP_FILTER=%s",
+            ENABLE_CT_STANDALONE, ENABLE_DTM_CT_FILTER, ENABLE_SFP, ENABLE_DTM_SFP_FILTER)
 logger.info("=" * 60)
 
 # ============================================================
@@ -889,6 +890,9 @@ def startup_diagnostic(exchange, public):
     report_lines.append(f"🔧 اهرم: {leverage_str}")
     report_lines.append(f"💼 سرمایه پایه: {trade_ledger.BASE_CAPITAL} USDT")
     report_lines.append(
+        f"🎛️ فیلتر SFP روی DTM: {'✅ فعال' if ENABLE_DTM_SFP_FILTER else '⛔ غیرفعال'}"
+    )
+    report_lines.append(
         f"🎛️ فیلتر CT روی DTM: {'✅ فعال' if ENABLE_DTM_CT_FILTER else '⛔ غیرفعال'} | "
         f"CT مستقل: {'✅ فعال' if ENABLE_CT_STANDALONE else '⛔ غیرفعال'}"
     )
@@ -1188,6 +1192,41 @@ def loop():
                         # 🎯 CT FILTER — فقط وقتی ENABLE_DTM_CT_FILTER=True
                         # ============================================================
                         if sig and entry is not None:
+                            # ========================================================
+                            # 🎯 SFP FILTER — فقط وقتی ENABLE_DTM_SFP_FILTER=True
+                            # SFP هم‌جهت در بازه‌ی ±۳ کندل از پیوت واگرایی
+                            # ========================================================
+                            if ENABLE_DTM_SFP_FILTER:
+                                sfp_allowed = False
+                                sfp_result = None
+                                try:
+                                    from sfp_signal_filter import (
+                                        check_sfp_filter, format_sfp_filter_log,
+                                        format_sfp_filter_telegram_line,
+                                    )
+                                    sfp_result = check_sfp_filter(df, symbol, sig, timeframe, signal_bar_ts_ms)
+                                    logger.info(format_sfp_filter_log(symbol, sig, timeframe, sfp_result))
+                                    sfp_allowed = sfp_result.get('allowed', False)
+                                except Exception as sfp_err:
+                                    logger.exception(
+                                        f"[SFP-FILTER] {symbol} {timeframe}: fatal error: {sfp_err}"
+                                    )
+                                    sfp_allowed = False
+
+                                if not sfp_allowed:
+                                    reason = sfp_result.get('reason', 'unknown') if sfp_result else 'sfp_error'
+                                    logger.info(
+                                        f"[{timeframe}m][{symbol}] سیگنال {sig} "
+                                        f"توسط SFP تأیید نشد (reason={reason}) → skip (نه ledger، نه سفارش)"
+                                    )
+                                    continue
+
+                                logger.info(
+                                    f"[{timeframe}m][{symbol}] سیگنال {sig} توسط SFP تأیید شد"
+                                )
+                                if signal_msg:
+                                    signal_msg = signal_msg + "\n" + format_sfp_filter_telegram_line(sfp_result)
+
                             if ENABLE_DTM_CT_FILTER:
                                 ct_allowed = False
                                 ct_result = None
