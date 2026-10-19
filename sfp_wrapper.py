@@ -45,12 +45,12 @@ def _buffer_ticks(symbol):
     """بافر استاپ بر حسب tick — عین جدول DTM در strategy_wrapper.calculate_signals."""
     s = symbol.upper()
     if s in ("BNBUSDT", "ETHUSDT"):
-        return 9
+        return 1
     if s in ("LTCUSDT", "DOGEUSDT"):
-        return 3
+        return 1
     if s == "PUMPUSDT":
         return 1
-    return 5
+    return 1
 
 
 def _tick_info(symbol):
