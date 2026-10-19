@@ -45,7 +45,15 @@ ENABLE_DTM_SFP_FILTER = os.getenv("ENABLE_DTM_SFP_FILTER", "1") == "1"   # فی�
 # ============================================================
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
 TIMEFRAMES = ["1"]
-SFP_SYMBOLS = list(SYMBOLS)        # نمادهای SFP (پیش‌فرض: همان نمادهای DTM)
+SFP_SYMBOLS = [
+    "BNBUSDT",
+    "DOGEUSDT",
+    "SOLUSDT",
+    "XRPUSDT",
+    "UNIUSDT",
+    "PUMPUSDT",   # ⚠️ اسم دقیق قرارداد را چک کن (پایین توضیح دادم)
+]
+#SFP_SYMBOLS = list(SYMBOLS)        # نمادهای SFP (پیش‌فرض: همان نمادهای DTM)
 SFP_TIMEFRAMES = list(TIMEFRAMES)  # تایم‌فریم‌های SFP (پیش‌فرض: همان تایم‌فریم‌های DTM)
 HISTORY_BARS = 500  # fallback
 PINE_START_BARS = 8700  # Pine-Exact parity
