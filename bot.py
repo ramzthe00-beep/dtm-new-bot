@@ -37,12 +37,15 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 # ============================================================
 ENABLE_CT_STANDALONE = False   # اجرای مستقل CT (ct_trader)
 ENABLE_DTM_CT_FILTER = False   # فیلتر CT روی سیگنال‌های DTM
+ENABLE_SFP = os.getenv("ENABLE_SFP", "1") == "1"   # ترید خودکار استراتژی SFP (sfp_trader)
 
 # ============================================================
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
 TIMEFRAMES = ["1"]
+SFP_SYMBOLS = list(SYMBOLS)        # نمادهای SFP (پیش‌فرض: همان نمادهای DTM)
+SFP_TIMEFRAMES = list(TIMEFRAMES)  # تایم‌فریم‌های SFP (پیش‌فرض: همان تایم‌فریم‌های DTM)
 HISTORY_BARS = 500  # fallback
 PINE_START_BARS = 8700  # Pine-Exact parity
 PINE_HIST_TOLERANCE = 0.03  # mirror HIST_TOLERANCE
@@ -71,7 +74,8 @@ logger = logging.getLogger("BOT")
 
 logger.info("=" * 60)
 logger.info("BOT STARTING...")
-logger.info("ENABLE_CT_STANDALONE=%s | ENABLE_DTM_CT_FILTER=%s", ENABLE_CT_STANDALONE, ENABLE_DTM_CT_FILTER)
+logger.info("ENABLE_CT_STANDALONE=%s | ENABLE_DTM_CT_FILTER=%s | ENABLE_SFP=%s",
+            ENABLE_CT_STANDALONE, ENABLE_DTM_CT_FILTER, ENABLE_SFP)
 logger.info("=" * 60)
 
 # ============================================================
@@ -1111,7 +1115,8 @@ def loop():
     except Exception as e:
         logger.exception("[STARTUP DIAGNOSTIC] FATAL ERROR: %s", e)
 
-    send_telegram(f"🤖 ربات شروع شد - تایم‌فریم‌های DTM: {' و '.join(TIMEFRAMES)} دقیقه")
+    send_telegram(f"🤖 ربات شروع شد - تایم‌فریم‌های DTM: {' و '.join(TIMEFRAMES)} دقیقه"
+                  + (f" | SFP: {' و '.join(SFP_TIMEFRAMES)} دقیقه" if ENABLE_SFP else ""))
     logger.info("Worker bot started with timeframes: %s", TIMEFRAMES)
 
     BASE_CAPITAL = trade_ledger.BASE_CAPITAL
@@ -1461,6 +1466,28 @@ def loop():
                     except Exception as e:
                         logger.exception(f"Error processing {symbol} {timeframe}m: {e}")
                         continue
+
+            # ============================================================
+            # 🆕 SFP Trader — ترید خودکار SFP (فقط وقتی ENABLE_SFP=True)
+            # ============================================================
+            if ENABLE_SFP:
+                try:
+                    import sfp_trader
+                    sfp_trader.process_sfp_signals(
+                        public=public,
+                        exchange=exchange,
+                        ledger=trade_ledger,
+                        leverage_map=LEVERAGE_MAP,
+                        send_telegram_fn=send_telegram_long,
+                        symbols=SFP_SYMBOLS,
+                        timeframes=SFP_TIMEFRAMES,
+                        base_capital=BASE_CAPITAL,
+                        min_order_cost=MIN_ORDER_COST_USDT,
+                        balance_use_ratio=BALANCE_USE_RATIO,
+                        dtm_timeframes=TIMEFRAMES,
+                    )
+                except Exception as e:
+                    logger.exception(f"[SFP-TRADER] top-level error: {e}")
 
             # ============================================================
             # 🆕 CT Trader — اجرای مستقل CT (فقط وقتی ENABLE_CT_STANDALONE=True)
