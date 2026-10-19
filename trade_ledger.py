@@ -98,7 +98,7 @@ def _write_all(rows):
 # ---------------------------------------------------------------------------
 def record_signal(symbol, timeframe, direction, entry, stop, target,
                    entry_time_ms, leverage=None, order_placed=None,
-                   order_reason="", risk_free_pct=None):
+                   order_reason="", risk_free_pct=None, id_suffix=""):
     entry = _safe_float(entry)
     stop = _safe_float(stop)
     target = _safe_float(target)
@@ -116,7 +116,7 @@ def record_signal(symbol, timeframe, direction, entry, stop, target,
         entry_time_ms = int(datetime.now(UTC_TZ).timestamp() * 1000)
 
     row = {
-        "id": f"{symbol}_{timeframe}_{entry_time_ms}",
+        "id": f"{symbol}_{timeframe}_{entry_time_ms}{id_suffix}",  # id_suffix: جلوگیری از برخورد id استراتژی‌های مختلف روی یک کندل
         "symbol": symbol,
         "timeframe": timeframe,
         "direction": direction,
