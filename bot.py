@@ -51,6 +51,7 @@ SFP_SYMBOLS = [
     "SOLUSDT",
     "XRPUSDT",
     "UNIUSDT",
+    "ENAUSDT",
     "PUMPUSDT",   # ⚠️ اسم دقیق قرارداد را چک کن (پایین توضیح دادم)
 ]
 #SFP_SYMBOLS = list(SYMBOLS)        # نمادهای SFP (پیش‌فرض: همان نمادهای DTM)
