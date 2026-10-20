@@ -391,75 +391,18 @@ def _in_range(row, start_ms, end_ms):
     return start_ms <= row["entry_time_ms"] < end_ms
 
 
-def _build_report(rows, title):
-    total = len(rows)
-    wins = [r for r in rows if r["status"] == "WIN"]
-    losses = [r for r in rows if r["status"] == "LOSS"]
-    opens = [r for r in rows if r["status"] == "OPEN"]
-
-    closed = wins + losses
-    win_rate = (len(wins) / len(closed) * 100) if closed else 0.0
-
-    total_pnl = sum(r["pnl_usd"] for r in closed if r.get("pnl_usd") is not None)
-
-    # تفکیک ریسک فری
-    risk_free_wins = [r for r in wins if r.get("exit_reason") == "RISK_FREE_STOP"]
-    target_wins = [r for r in wins if r.get("exit_reason") == "TARGET"]
-
-    lines = [
-        f"📊 {title}",
-        "━━━━━━━━━━━━━━━━━━━━",
-        f"تعداد کل سیگنال‌ها: {total}",
-        f"برنده (TP): {len(wins)}",
-        f"  └─ ریسک فری: {len(risk_free_wins)}",
-        f"  └─ تارگت: {len(target_wins)}",
-        f"بازنده (SL): {len(losses)}",
-        f"هنوز باز: {len(opens)}",
-        f"نرخ برد: {win_rate:.1f}٪ (از {len(closed)} معاملهٔ بسته‌شده)",
-        f"سود/زیان فرضی کل: {total_pnl:+.2f}$ "
-        f"(بر اساس سرمایهٔ پایهٔ {BASE_CAPITAL:.0f}$، بدون توجه به موجودی/اجرای واقعی صرافی)",
-    ]
-
-    if closed:
-        lines.append("━━━━━━━━━━━━━━━━━━━━")
-        lines.append("📈 جزئیات معاملات بسته‌شده (بر اساس تایم‌فریم):")
-        
-        # گروه‌بندی بر اساس تایم‌فریم
-        tf_groups = {}
-        for r in sorted(closed, key=lambda x: x["entry_time_ms"]):
-            tf = r.get("timeframe", "1")
-            if tf not in tf_groups:
-                tf_groups[tf] = []
-            tf_groups[tf].append(r)
-        
-        # نمایش هر گروه
-        for tf in sorted(tf_groups.keys(), key=lambda x: int(x)):
-            items = tf_groups[tf]
-            tf_wins = sum(1 for r in items if r["status"] == "WIN")
-            tf_losses = sum(1 for r in items if r["status"] == "LOSS")
-            tf_pnl = sum(r.get("pnl_usd", 0) for r in items if r.get("pnl_usd") is not None)
-            
-            lines.append(f"\n  🕐 تایم‌فریم {tf} دقیقه:")
-            lines.append(f"     برد: {tf_wins} | باخت: {tf_losses} | سود: {tf_pnl:+.2f}$")
-            lines.append("     ────────────────────")
-            
-            for r in items:  # 🆕 همه‌ی معاملات این تایم‌فریم، بدون محدودیت تعداد
-                t = _ms_to_iran(r["entry_time_ms"])
-                t_str = t.strftime("%Y-%m-%d %H:%M") if t else "?"
-                emoji = "✅" if r["status"] == "WIN" else "❌"
-                if r.get("exit_reason") == "RISK_FREE_STOP":
-                    emoji = "🛡️"  # ریسک فری
-                pnl = r.get("pnl_usd")
-                pnl_str = f"{pnl:+.2f}$" if pnl is not None else "—"
-                lines.append(
-                    f"     {emoji} {t_str} | {r['symbol']} {r['direction']} | {pnl_str}"
-                )
-
-    return "\n".join(lines)
+def _build_report(rows, title, subtitle=None, icon="📊"):
+    """ساخت گزارش حرفه‌ای (HTML) — منطق نمایش در tg_messages.py"""
+    import tg_messages as tgm
+    return tgm.build_report_card(rows, title, subtitle, icon, BASE_CAPITAL)
 
 
-def report_for_day(date_iran=None):
-    """گزارش یک روز مشخص (پیش‌فرض: امروز) به وقت ایران."""
+def report_for_day(date_iran=None, kind="day"):
+    """
+    گزارش یک روز مشخص (پیش‌فرض: امروز) به وقت ایران.
+    kind: "noon" (گزارش نیمروز) | "midnight" (گزارش کامل روز) | "day" (عمومی)
+    """
+    import tg_messages as tgm
     if date_iran is None:
         date_iran = _now_iran()
     start_local = date_iran.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -470,8 +413,12 @@ def report_for_day(date_iran=None):
     with _lock:
         rows = _read_all()
     day_rows = [r for r in rows if _in_range(r, start_ms, end_ms)]
-    title = f"گزارش روز {start_local.strftime('%Y-%m-%d')}"
-    return _build_report(day_rows, title)
+
+    if kind == "noon":
+        return tgm.noon_report_card(day_rows, date_iran, BASE_CAPITAL)
+    if kind == "midnight":
+        return tgm.midnight_report_card(day_rows, start_local, BASE_CAPITAL)
+    return _build_report(day_rows, f"گزارش روز {start_local.strftime('%Y-%m-%d')}")
 
 
 def report_for_month(year, month):
@@ -487,8 +434,9 @@ def report_for_month(year, month):
     with _lock:
         rows = _read_all()
     month_rows = [r for r in rows if _in_range(r, start_ms, end_ms)]
+    import tg_messages as tgm
     title = f"گزارش ماه {year}-{month:02d}"
-    return _build_report(month_rows, title)
+    return tgm.period_report_card(month_rows, title, BASE_CAPITAL, icon="🗓")
 
 
 def report_current_and_previous_month():
@@ -537,88 +485,71 @@ def _send_ct_report(ct_report_fn, send_telegram_fn, context_label=""):
 
 
 def scheduler_loop(send_telegram_fn, stop_event=None,
-                    daily_times=("08:00", "13:00", "21:00"),
-                    end_of_day_time="23:55",
-                    ct_report_fn=None):
+                    noon_time="12:00",
+                    end_of_day_time="00:00",
+                    ct_report_fn=None,
+                    daily_times=None):
     """
-    زمان‌بند گزارش‌ها — یک Thread جدا
+    زمان‌بند گزارش‌ها — یک Thread جدا (به وقت تهران)
 
-    Args:
-        send_telegram_fn: تابع ارسال به تلگرام
-        stop_event: threading.Event برای توقف
-        daily_times: زمان‌های گزارش صبح/ظهر/شب
-        end_of_day_time: زمان گزارش پایان روز
-        ct_report_fn: 🆕 تابعی که گزارش CT رو می‌سازه (بدون آرگومان) و رشته برمی‌گردونه.
-                       اگه None باشه، گزارش CT ارسال نمی‌شه.
+    فقط دو گزارش روزانه:
+      ☀️ ۱۲:۰۰ ظهر  → گزارش نیمروز (از ۰۰:۰۰ همان روز تا ظهر)
+      🌙 ۰۰:۰۰ نیمه‌شب → گزارش کامل روزِ تمام‌شده (کل روز قبل)
+    + گزارش ماهانه (روز اول هر ماه ۰۹:۰۰)
+
+    daily_times: فقط برای سازگاری با نسخه‌ی قبلی پذیرفته می‌شود و نادیده گرفته می‌شود.
     """
-    logger.info("[LEDGER] scheduler_loop started")
-    
+    logger.info("[LEDGER] scheduler_loop started (noon=%s, midnight=%s)", noon_time, end_of_day_time)
+
     if stop_event is None or not hasattr(stop_event, 'is_set'):
         import threading
         stop_event = threading.Event()
         logger.warning("[LEDGER] stop_event was invalid, created new Event")
-    
+
     while True:
         try:
             if stop_event.is_set():
                 break
-                
+
             now = _now_iran()
             hhmm = now.strftime("%H:%M")
             date_str = now.strftime("%Y-%m-%d")
 
-            # ═══════════════════════════════════════════════════════════
-            # گزارش‌های صبح/ظهر/شب (به همراه CT)
-            # ═══════════════════════════════════════════════════════════
-            if hhmm in daily_times:
-                key = f"daily_{hhmm}"
-                tag = f"{date_str}_{hhmm}"
-                if _should_send(key, tag):
+            # ☀️ گزارش نیمروز
+            if hhmm == noon_time:
+                key = "noon"
+                if _should_send(key, date_str):
                     try:
-                        report = report_for_day(now)
-                        send_telegram_fn(report)
-                        _last_sent[key] = tag
-                        logger.info(f"[LEDGER] Daily report sent ({hhmm})")
+                        send_telegram_fn(report_for_day(now, kind="noon"))
+                        _last_sent[key] = date_str
+                        logger.info(f"[LEDGER] Noon report sent ({hhmm})")
                     except Exception as e:
-                        logger.error(f"[LEDGER] daily report error: {e}")
+                        logger.error(f"[LEDGER] noon report error: {e}")
+                    _send_ct_report(ct_report_fn, send_telegram_fn, context_label="noon")
 
-                    # 🆕 گزارش CT بعد از گزارش روزانه
-                    _send_ct_report(ct_report_fn, send_telegram_fn, context_label=f"daily_{hhmm}")
-
-            # ═══════════════════════════════════════════════════════════
-            # گزارش پایان روز (به همراه CT)
-            # ═══════════════════════════════════════════════════════════
+            # 🌙 گزارش کامل روز (نیمه‌شب؛ مربوط به روز قبل)
             if hhmm == end_of_day_time:
                 key = "end_of_day"
-                tag = date_str
-                if _should_send(key, tag):
+                if _should_send(key, date_str):
                     try:
-                        report = report_for_day(now)
-                        send_telegram_fn("🌙 گزارش پایان روز\n\n" + report)
-                        _last_sent[key] = tag
-                        logger.info(f"[LEDGER] End-of-day report sent ({hhmm})")
+                        send_telegram_fn(report_for_day(now - timedelta(days=1), kind="midnight"))
+                        _last_sent[key] = date_str
+                        logger.info(f"[LEDGER] Full-day report sent ({hhmm})")
                     except Exception as e:
-                        logger.error(f"[LEDGER] end-of-day report error: {e}")
-
-                    # 🆕 گزارش CT بعد از پایان روز
+                        logger.error(f"[LEDGER] full-day report error: {e}")
                     _send_ct_report(ct_report_fn, send_telegram_fn, context_label="end_of_day")
 
-            # ═══════════════════════════════════════════════════════════
-            # گزارش ابتدای ماه (به همراه CT)
-            # ═══════════════════════════════════════════════════════════
+            # 🗓 گزارش ابتدای ماه
             if now.day == 1 and hhmm == "09:00":
                 key = "monthly"
                 tag = now.strftime("%Y-%m")
                 if _should_send(key, tag):
                     try:
-                        report = report_current_and_previous_month()
-                        send_telegram_fn("🗓️ گزارش ماهانه\n\n" + report)
+                        send_telegram_fn("🗓️ <b>گزارش ماهانه</b>\n\n" + report_current_and_previous_month())
                         _last_sent[key] = tag
                         logger.info(f"[LEDGER] Monthly report sent ({tag})")
                     except Exception as e:
                         logger.error(f"[LEDGER] monthly report error: {e}")
-
-                    # 🆕 گزارش CT بعد از گزارش ماهانه
                     _send_ct_report(ct_report_fn, send_telegram_fn, context_label="monthly")
 
         except Exception as e:
