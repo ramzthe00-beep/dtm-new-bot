@@ -315,12 +315,13 @@ def get_last_n_signals(df, symbol, timeframe, n=5, inputs=None):
 # فرمت گزارش برای تلگرام
 # ═══════════════════════════════════════════════════════════════
 def format_signals_report(symbol, timeframe, signals):
-    """فرمت کردن لیست سیگنال‌ها برای نمایش در تلگرام."""
+    """فرمت کردن لیست سیگنال‌ها برای نمایش در تلگرام (HTML)."""
+    from tg_style import b, code, LINE
     if not signals:
-        return f"📊 {symbol} {timeframe}m — بدون سیگنال"
+        return f"📊 {b(symbol)} {timeframe}m — بدون سیگنال 😴"
 
-    lines = [f"📊 {symbol} {timeframe}m — {len(signals)} سیگنال آخر:"]
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines = [f"🎯 {b('CT')} · {b(symbol)} · ⏱ {b(str(timeframe) + 'm')}",
+             f"📜 {len(signals)} سیگنال آخر", LINE]
 
     for i, s in enumerate(signals, 1):
         if s['time_iran'] is None:
@@ -332,9 +333,10 @@ def format_signals_report(symbol, timeframe, signals):
         risk = abs(s['entry'] - s['stop']) if s['stop'] else 0
         rr = (abs(s['target'] - s['entry']) / risk) if risk > 0 else 0
 
-        lines.append(f"{i}. {emoji} {s['kind']} | {time_str}")
+        lines.append(f"{i}. {emoji} {b(s['kind'])} · {time_str}")
         lines.append(
-            f"   entry={s['entry']:.4f} SL={s['stop']:.4f} TP={s['target']:.4f} R:R={rr:.2f}"
+            f"   📍 {code(format(s['entry'], '.4f'))} · 🛑 {code(format(s['stop'], '.4f'))} · "
+            f"🎯 {code(format(s['target'], '.4f'))} · ⚖️ {b('1:' + format(rr, '.2f'))}"
         )
 
     return "\n".join(lines)
