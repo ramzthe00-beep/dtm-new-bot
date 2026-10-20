@@ -187,9 +187,10 @@ def _execute(sig, symbol, tf, df_signal, public, exchange, ledger, leverage_map,
 
     if balance is None or balance <= 0:
         _safe_send(send_fn, build_sfp_message(sig, symbol, tf, trade_id, mintick))
-        _safe_send(send_fn,
-                   f"⚠️ سیگنال SFP {direction} برای {symbol} ({tf_label}) تأیید شد ولی سفارش ارسال نشد\n"
-                   f"موجودی: {balance} | استاپ: {stop} | ورود: {entry}")
+        import tg_messages as tgm
+        _safe_send(send_fn, tgm.not_executed_card(
+            "SFP", direction, symbol, tf_label, "موجودی صفر یا نامشخص",
+            [f"💰 موجودی: {tgm.code(balance)}", f"🛑 استاپ: {tgm.code(stop)}", f"📍 ورود: {tgm.code(entry)}"]))
         return
 
     sz = compute_sizing(direction, entry, stop, target, balance, base_capital,
@@ -218,11 +219,12 @@ def _execute(sig, symbol, tf, df_signal, public, exchange, ledger, leverage_map,
 
     if sz["capital"] < min_order_cost:
         logger.warning(f"[SFP-SKIP-LOW-BALANCE] {symbol} {direction}: {sz['capital']:.4f} < {min_order_cost}")
-        _safe_send(send_fn,
-                   f"⚠️ سیگنال SFP {direction} برای {symbol} ({tf_label}) اجرا نشد\n"
-                   f"سرمایه محاسبه‌شده: {sz['capital']:.4f} USDT\n"
-                   f"حداقل مجاز فعلی (تنظیم‌شده): {min_order_cost} USDT\n"
-                   f"موجودی فعلی حساب: {balance:.4f} USDT")
+        import tg_messages as tgm
+        _safe_send(send_fn, tgm.not_executed_card(
+            "SFP", direction, symbol, tf_label, "سرمایه کمتر از حداقل سفارش",
+            [f"💵 سرمایه محاسبه‌شده: {tgm.code(format(sz['capital'], '.4f'))} USDT",
+             f"📏 حداقل مجاز: {tgm.code(min_order_cost)} USDT",
+             f"💰 موجودی: {tgm.code(format(balance, '.4f'))} USDT"]))
         return
 
     # لنگر اجرا: درصدهای استاپ/تارگت روی قیمت لحظه‌ای اعمال می‌شود (عین DTM)
@@ -246,7 +248,10 @@ def _execute(sig, symbol, tf, df_signal, public, exchange, ledger, leverage_map,
         logger.info(f"[SFP-TRADER] {symbol} {tf_label}: order {'placed ✅' if result is not None else 'failed ❌'}")
     except Exception as e:
         logger.exception(f"[SFP-TRADER] {symbol} {tf_label}: create_order exception: {e}")
-        _safe_send(send_fn, f"❌ خطا در ارسال سفارش SFP {direction} {symbol} ({tf_label}): {e}")
+        import tg_messages as tgm
+        _safe_send(send_fn, tgm.alert_card(
+            "error", "خطا در ارسال سفارش SFP",
+            [f"🪙 {tgm.b(symbol)} · {tgm.b(direction)} · ⏱ {tgm.b(tf_label)}", f"🧯 {tgm.code(str(e)[:400])}"]))
 
 
 # ───────────────────────── پردازش یک (نماد، تایم‌فریم) ─────────────────────────
