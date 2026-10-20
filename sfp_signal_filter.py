@@ -94,8 +94,10 @@ def format_sfp_filter_log(symbol, dtm_direction, dtm_timeframe, result):
 
 
 def format_sfp_filter_telegram_line(result):
+    """خط تأیید فیلتر برای ضمیمه‌ی پیام سیگنال DTM (HTML)."""
     s = result.get("sfp_signal")
     if not (result.get("allowed") and s):
         return ""
-    return (f"✅ تأیید SFP: {s['kind']} در {s['time_iran'].strftime('%H:%M')} تهران "
-            f"({_offset_text(result.get('offset'))})\n")
+    import tg_messages as tgm
+    detail = f"{s['kind']} · {s['time_iran'].strftime('%H:%M')} تهران · {_offset_text(result.get('offset'))}"
+    return tgm.filter_confirm_line("SFP", detail) + "\n"
