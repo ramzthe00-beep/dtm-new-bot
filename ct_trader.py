@@ -193,55 +193,23 @@ def _safe_send(send_telegram_fn, text):
 def _send_signal_telegram(send_telegram_fn, symbol, tf_label, sig, entry, stop, target,
                            stop_pct, target_pct, rr, capital, leverage, mode,
                            actual_stop_dollar, actual_profit_dollar, trade_id, balance):
+    import tg_messages as tgm
     direction = sig['direction']
-    emoji = "🟢" if direction == "LONG" else "🔴"
-    direction_fa = "خرید" if direction == "LONG" else "فروش"
-
-    if rr >= 3:
-        rr_status = "عالی 🚀"
-    elif rr >= 2:
-        rr_status = "خوب ✅"
-    elif rr >= 1:
-        rr_status = "متوسط ⚠️"
-    else:
-        rr_status = "ضعیف ❌"
-
     signal_type_fa = {
         "Anni-L": "Anni-L (آنی - لانگ)",
         "Anni-S": "Anni-S (آنی - شورت)",
         "Aati-L": "Aati-L (آتی - لانگ)",
         "Aati-S": "Aati-S (آتی - شورت)",
     }.get(sig['kind'], sig['kind'])
-
-    now_utc_str = datetime.now(UTC_TZ).strftime("%H:%M:%S")
-    now_ir_str = datetime.now(IRAN_TZ).strftime("%H:%M:%S")
-
-    stop_distance = abs(stop - entry)
-    target_distance = abs(target - entry)
     pp = _price_prec(entry)
-
-    profit_str = f"{actual_profit_dollar:.4f}" if actual_profit_dollar is not None else "N/A"
-
-    msg = f"""
-{emoji} سیگنال CT {direction_fa} ({direction}) - {symbol} - {tf_label}
-─────────────────────────────────────────
-🆔 شماره: {trade_id}
-🕐 زمان: {now_utc_str} UTC ({now_ir_str} تهران)
-─────────────────────────────────────────
-📊 ورود: {entry:.{pp}f}
-🛑 حد ضرر: {stop:.{pp}f} ({stop_distance:.{pp}f}- | {stop_pct*100:.3f}%)
-🎯 هدف: {target:.{pp}f} ({target_distance:.{pp}f}+ | {target_pct*100:.3f}%)
-⭐ نسبت ریسک: 1 : {rr:.2f} ({rr_status})
-📌 نوع: {signal_type_fa}
-─────────────────────────────────────────
-💰 موجودی: {balance:.4f} USDT
-📊 حالت اهرم: {mode} | اهرم: {leverage}x
-💵 سرمایه ارسالی: {capital:.4f} USDT
-📉 استاپ دلاری: ${actual_stop_dollar:.4f}
-📈 سود دلاری: ${profit_str}
-─────────────────────────────────────────
-🔒 وضعیت: {'✅ معتبر' if rr >= 2 else '⚠️ ریسک بالا'}
-"""
+    sizing = {
+        "balance": balance, "capital": capital, "leverage": leverage, "mode": mode,
+        "actual_stop_dollar": actual_stop_dollar, "actual_profit_dollar": actual_profit_dollar,
+    }
+    msg = tgm.signal_card(
+        "CT", direction, symbol, tf_label, entry, stop, target, pp,
+        trade_id=trade_id, type_label=signal_type_fa, rr=rr, sizing=sizing, min_rr=2.0,
+    )
     _safe_send(send_telegram_fn, msg)
 
 
@@ -313,11 +281,10 @@ def _execute_ct_trade(
     exec_anchor_price, anchor_src = _fetch_anchor_price(public, symbol)
     if exec_anchor_price is None:
         logger.error(f"[CT-TRADER] {symbol} {tf_label}: cannot fetch anchor price — trade NOT placed")
-        _safe_send(
-            send_telegram_fn,
-            f"⚠️ سیگنال CT {kind} برای {symbol} ({tf_label}) تأیید شد ولی قیمت لحظه‌ای "
-            f"دریافت نشد؛ سفارش ارسال نشد."
-        )
+        import tg_messages as tgm
+        _safe_send(send_telegram_fn, tgm.not_executed_card(
+            "CT", direction, symbol, tf_label, "قیمت لحظه‌ای دریافت نشد",
+            [f"🔬 نوع: {tgm.b(kind)}", "🔁 سفارش ارسال نشد؛ سیگنال بعدی عادی ادامه دارد."]))
         return
 
     if direction == "LONG":
@@ -361,11 +328,10 @@ def _execute_ct_trade(
 
     if balance is None or balance <= 0:
         logger.warning(f"[CT-TRADER] {symbol} {tf_label}: balance<=0 ({balance})")
-        _safe_send(
-            send_telegram_fn,
-            f"⚠️ سیگنال CT {kind} برای {symbol} ({tf_label}) تأیید شد ولی موجودی قابل‌استفاده "
-            f"صفر/نامشخص است ({balance}); سفارش ارسال نشد."
-        )
+        import tg_messages as tgm
+        _safe_send(send_telegram_fn, tgm.not_executed_card(
+            "CT", direction, symbol, tf_label, "موجودی صفر یا نامشخص",
+            [f"🔬 نوع: {tgm.b(kind)}", f"💰 موجودی: {tgm.code(balance)}"]))
         return
 
     # محاسبه‌ی capital (همان فرمول قبلی/DTM)
@@ -419,13 +385,13 @@ def _execute_ct_trade(
             f"[CT-SKIP-LOW-BALANCE] {symbol} {kind} {direction}: "
             f"capital {capital:.4f} USDT < min {min_order_cost} USDT"
         )
-        _safe_send(
-            send_telegram_fn,
-            f"⚠️ سیگنال CT {kind} برای {symbol} ({tf_label}) اجرا نشد\n"
-            f"سرمایه محاسبه‌شده: {capital:.4f} USDT\n"
-            f"حداقل مجاز: {min_order_cost} USDT\n"
-            f"موجودی: {balance:.4f} USDT"
-        )
+        import tg_messages as tgm
+        _safe_send(send_telegram_fn, tgm.not_executed_card(
+            "CT", direction, symbol, tf_label, "سرمایه کمتر از حداقل سفارش",
+            [f"🔬 نوع: {tgm.b(kind)}",
+             f"💵 سرمایه محاسبه‌شده: {tgm.code(format(capital, '.4f'))} USDT",
+             f"📏 حداقل مجاز: {tgm.code(min_order_cost)} USDT",
+             f"💰 موجودی: {tgm.code(format(balance, '.4f'))} USDT"]))
         return
 
     # ارسال سفارش
@@ -446,7 +412,10 @@ def _execute_ct_trade(
 
     except Exception as e:
         logger.exception(f"[CT-TRADER] {symbol} {tf_label}: create_order exception: {e}")
-        _safe_send(send_telegram_fn, f"❌ خطا در ارسال سفارش CT {kind} {symbol} ({tf_label}): {e}")
+        import tg_messages as tgm
+        _safe_send(send_telegram_fn, tgm.alert_card(
+            "error", f"خطا در ارسال سفارش CT {kind}",
+            [f"🪙 {tgm.b(symbol)} · ⏱ {tgm.b(tf_label)}", f"🧯 {tgm.code(str(e)[:400])}"]))
 
 
 # ═══════════════════════════════════════════════════════════
