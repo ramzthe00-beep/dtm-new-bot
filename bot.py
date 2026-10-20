@@ -54,7 +54,7 @@ SFP_SYMBOLS = [
     "ENAUSDT",
     "PUMPUSDT",   # ⚠️ اسم دقیق قرارداد را چک کن (پایین توضیح دادم)
 ]
-#SFP_SYMBOLS = list(SYMBOLS)        # نمادهای SFP (پیش‌فرض: همان نمادهای DTM)
+
 SFP_TIMEFRAMES = list(TIMEFRAMES)  # تایم‌فریم‌های SFP (پیش‌فرض: همان تایم‌فریم‌های DTM)
 HISTORY_BARS = 500  # fallback
 PINE_START_BARS = 8700  # Pine-Exact parity
@@ -118,6 +118,9 @@ def throttle_truetrade():
             now = time.monotonic()
         _truetrade_last_req = now
 
+import tg_messages as tgm
+from tg_style import plain_fallback, split_message, code as code_
+
 def send_telegram(text):
     """ارسال پیام به تلگرام با مدیریت خطای 429 (Rate Limit) و retry خودکار"""
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -125,7 +128,22 @@ def send_telegram(text):
     max_attempts = 3
     for attempt in range(max_attempts):
         try:
-            r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=30)
+            r = requests.post(
+                url,
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text), "parse_mode": "HTML",
+                      "disable_web_page_preview": True},
+                timeout=30,
+            )
+
+            # اگر تلگرام HTML را نپذیرفت، همان پیام را به‌صورت متن ساده بفرست (پیامی گم نشود)
+            if r.status_code == 400 and "parse" in r.text.lower():
+                logger.warning("[TELEGRAM] HTML parse failed — resending as plain text")
+                r = requests.post(
+                    url,
+                    json={"chat_id": TELEGRAM_CHAT_ID, "text": plain_fallback(text),
+                          "disable_web_page_preview": True},
+                    timeout=30,
+                )
 
             if r.status_code == 429:
                 try:
@@ -160,10 +178,10 @@ def send_telegram(text):
 def send_telegram_long(text):
     """ارسال پیام بلند به تلگرام با چند بخش و مدیریت Rate Limit"""
     text = str(text)
-    if len(text) <= 4000:
+    if len(text) <= 3800:
         return send_telegram(text)
 
-    parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
+    parts = split_message(text, 3800)   # تقسیم روی مرز خط (تگ‌های HTML نمی‌شکنند)
     ok = True
     for i, part in enumerate(parts):
         ok = send_telegram(part) and ok
@@ -519,17 +537,10 @@ class PrivateExchange:
             json.dumps(od, ensure_ascii=False, indent=2)
         )
 
-        request_msg = (
-            f"📤 ORDER REQUEST\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"Symbol: {symbol.upper()}\n"
-            f"Side: {api_side}\n"
-            f"Leverage: {int(leverage)}\n"
-            f"Cost: {capital:.{prec}f}\n"
-            f"Stop Loss: {od.get('stopLoss', 'N/A')}\n"
-            f"Take Profit: {od.get('takeProfit', 'N/A')}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"Body:\n{json.dumps(od, ensure_ascii=False, indent=2)}"
+        request_msg = tgm.order_request_card(
+            symbol.upper(), api_side, int(leverage), f"{capital:.{prec}f}",
+            od.get('stopLoss', 'N/A'), od.get('takeProfit', 'N/A'),
+            json.dumps(od, ensure_ascii=False, indent=2),
         )
         if not send_telegram_long(request_msg):
             logger.error("[TELEGRAM] Failed to send ORDER REQUEST")
@@ -545,14 +556,9 @@ class PrivateExchange:
                 json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result)
             )
 
-            success_msg = (
-                f"✅ ORDER SUCCESS\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Symbol: {symbol.upper()}\n"
-                f"Side: {api_side}\n"
-                f"Position ID: {position_id}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Response:\n{json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result)}"
+            success_msg = tgm.order_success_card(
+                symbol.upper(), api_side, position_id,
+                json.dumps(result, ensure_ascii=False, indent=2) if isinstance(result, (dict, list)) else str(result),
             )
             if not send_telegram_long(success_msg):
                 logger.error("[TELEGRAM] Failed to send ORDER SUCCESS")
@@ -612,21 +618,10 @@ class PrivateExchange:
                 local_exception
             )
 
-            failed_msg = (
-                f"❌ ORDER FAILED\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Symbol: {symbol.upper()}\n"
-                f"Side: {api_side}\n"
-                f"Leverage: {int(leverage)}\n"
-                f"Cost: {capital:.{prec}f}\n"
-                f"Stop Loss: {od.get('stopLoss', 'N/A')}\n"
-                f"Take Profit: {od.get('takeProfit', 'N/A')}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Request Body:\n{json.dumps(od, ensure_ascii=False, indent=2)}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"🔴 COMPLETE EXCHANGE ERROR:\n{complete_error}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"LOCAL EXCEPTION: {local_exception}"
+            failed_msg = tgm.order_failed_card(
+                symbol.upper(), api_side, int(leverage), f"{capital:.{prec}f}",
+                od.get('stopLoss', 'N/A'), od.get('takeProfit', 'N/A'),
+                json.dumps(od, ensure_ascii=False, indent=2), complete_error, local_exception,
             )
             if not send_telegram_long(failed_msg):
                 logger.error("[TELEGRAM] Failed to send ORDER FAILED")
@@ -779,7 +774,7 @@ def startup_diagnostic(exchange, public):
         return text
 
     try:
-        send_telegram("🧪 DTM startup diagnostic started")
+        send_telegram(tgm.startup_ping_card())
         time.sleep(1)
         telegram_ok = True
     except Exception:
@@ -861,71 +856,43 @@ def startup_diagnostic(exchange, public):
     now_iran = _now_iran()
     time_str = now_iran.strftime("%Y-%m-%d %H:%M:%S")
 
-    report_lines = [
-        "🚀 راه‌اندازی ربات DTM",
-        "─────────────────────────────────────────",
-        f"🔓 حالت: معامله فعال | سفارش: ✅ ارسال می‌شود",
-        f"💰 موجودی: {balance:.4f} USDT" if balance else "💰 موجودی: ❌ نامشخص",
-        f"📱 تلگرام: {'✅' if telegram_ok else '❌'} | صرافی: {'✅' if exchange_ok else '❌'}",
-        "─────────────────────────────────────────",
-    ]
-
-    if market_status_list:
-        report_lines.append(f"📊 بازارهای فعال: {market_ok}/{total_checks}")
-        line1 = "   " + " ".join(market_status_list[:4]) if len(market_status_list) >= 4 else "   " + " ".join(market_status_list)
-        line2 = "   " + " ".join(market_status_list[4:]) if len(market_status_list) > 4 else ""
-        report_lines.append(line1)
-        if line2:
-            report_lines.append(line2)
-    else:
-        report_lines.append(f"📊 بازارهای فعال: ۰/{total_checks} ❌")
-
-    report_lines.append("─────────────────────────────────────────")
-
-    if strategy_import_ok:
-        report_lines.append(f"📈 استراتژی: {'✅ فعال' if strategy_ok else '⚠️ قابل‌اجرا اما بدون سیگنال'}")
-    else:
-        report_lines.append("📈 استراتژی: ❌ غیرفعال")
-
-    if strategy_ok:
-        report_lines.append(f"🧪 تست {test_symbol}: سیگنال={test_signal} | ورود={test_entry}")
-    else:
-        report_lines.append("🧪 تست استراتژی: ❌ انجام نشد")
-
-    report_lines.append("─────────────────────────────────────────")
-
-    leverage_str = " ".join([f"{k}={v}" for k, v in LEVERAGE_MAP.items()])
-    report_lines.append(f"⚙️ تنظیمات: ریسک={TARGET_RISK}٪")
-    report_lines.append(f"🔧 اهرم: {leverage_str}")
-    report_lines.append(f"💼 سرمایه پایه: {trade_ledger.BASE_CAPITAL} USDT")
-    report_lines.append(
-        f"🎛️ فیلتر SFP روی DTM: {'✅ فعال' if ENABLE_DTM_SFP_FILTER else '⛔ غیرفعال'}"
-    )
-    report_lines.append(
-        f"🎛️ فیلتر CT روی DTM: {'✅ فعال' if ENABLE_DTM_CT_FILTER else '⛔ غیرفعال'} | "
-        f"CT مستقل: {'✅ فعال' if ENABLE_CT_STANDALONE else '⛔ غیرفعال'}"
-    )
-
-    # 🎯 وضعیت CT Trader (فقط وقتی CT مستقل فعال است)
+    # ── جمع‌آوری وضعیت برای کارت استارتاپ (قالب حرفه‌ای در tg_messages) ──
+    _ct_combos = None
+    _ct_filter_ok = True
     if ENABLE_CT_STANDALONE:
         try:
             import ct_trader as _ctt
-            _combos = " ".join(f"{s_.replace('USDT', '')}@{_ctt._tf_label(t_)}" for s_, t_ in _ctt._active_combos())
-            report_lines.append(
-                f"🎯 CT Trader: {_combos} " + ("✅" if _ctt._FILTER_AVAILABLE else "❌ فیلتر لود نشد (همه‌ی سیگنال‌ها رد می‌شوند)")
-            )
+            _ct_combos = " ".join(f"{s_.replace('USDT', '')}@{_ctt._tf_label(t_)}" for s_, t_ in _ctt._active_combos())
+            _ct_filter_ok = bool(_ctt._FILTER_AVAILABLE)
         except Exception as _ce:
-            report_lines.append(f"🎯 CT Trader: ❌ ({_ce})")
+            _ct_combos = f"خطا: {_ce}"
+            _ct_filter_ok = False
 
+    _warnings = []
     if trade_ledger.BASE_CAPITAL < MIN_ORDER_COST_USDT:
-        report_lines.append(
-            f"⚠️ هشدار: سرمایه پایه ({trade_ledger.BASE_CAPITAL}) کمتر از MIN_ORDER_COST_USDT "
+        _warnings.append(
+            f"سرمایه پایه ({trade_ledger.BASE_CAPITAL}) کمتر از MIN_ORDER_COST_USDT "
             f"({MIN_ORDER_COST_USDT}) است؛ تا وقتی این متغیر محیطی را پایین نیاورید، "
             f"سفارش‌ها با پیام «اجرا نشد» رد می‌شوند."
         )
+    if ENABLE_CT_STANDALONE and not _ct_filter_ok:
+        _warnings.append("فیلتر CT لود نشد؛ همه‌ی سیگنال‌های CT رد می‌شوند.")
 
-    report_lines.append("─────────────────────────────────────────")
-    report_lines.append(f"✅ راه‌اندازی کامل شد | زمان: {time_str}")
+    report_lines = [tgm.startup_report_card(dict(
+        balance=balance, telegram_ok=telegram_ok, exchange_ok=exchange_ok,
+        position_api_ok=position_api_ok, create_order_ok=create_order_ok,
+        market_ok=market_ok, market_total=total_checks,
+        market_list=market_status_list,
+        strategy_import_ok=strategy_import_ok, strategy_ok=strategy_ok,
+        test_symbol=test_symbol if strategy_ok else None, test_signal=test_signal,
+        symbols=SYMBOLS, timeframes=TIMEFRAMES, sfp_timeframes=SFP_TIMEFRAMES,
+        leverage_map=LEVERAGE_MAP, base_capital=trade_ledger.BASE_CAPITAL,
+        min_order_cost=MIN_ORDER_COST_USDT, balance_use_ratio=0.70,
+        enable_sfp=ENABLE_SFP, enable_dtm_sfp_filter=ENABLE_DTM_SFP_FILTER,
+        enable_dtm_ct_filter=ENABLE_DTM_CT_FILTER, enable_ct_standalone=ENABLE_CT_STANDALONE,
+        ct_combos=_ct_combos, ct_filter_ok=_ct_filter_ok,
+        warnings=_warnings, time_str=time_str,
+    ))]
 
     final_report = "\n".join(report_lines)
 
@@ -1100,20 +1067,9 @@ def risk_free_monitor(exchange):
 
         rec["state"] = "done"
 
-        msg = (
-            f"🛡️ ریسک فری فعال شد\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"Symbol: {symbol} | {side}\n"
-            f"Position ID: {pos.get('id')}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🎯 Trigger: {trigger:.{prec}f}\n"
-            f"💹 Mark: {mark:.{prec}f}\n"
-            f"💰 Entry: {entry_actual:.{prec}f} | Size: {size}\n"
-            f"💸 کارمزد مبنا: {fee_total:.4f} USDT\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"🛑 استاپ قبلی: {old_sl}\n"
-            f"🛡️ استاپ جدید (ریسک فری): {new_sl:.{prec}f}\n"
-            f"اگر استاپ جدید خورده شود ≈ کارمزد بازپس‌گرفته شده ✅"
+        msg = tgm.risk_free_card(
+            symbol, side, pos.get('id'), trigger, mark, entry_actual, size,
+            fee_total, old_sl, new_sl, prec,
         )
         send_telegram_long(msg)
         logger.info(f"[RISK-FREE] {symbol} {side} | SL {old_sl} -> {new_sl:.{prec}f} | DONE")
@@ -1128,8 +1084,7 @@ def loop():
     except Exception as e:
         logger.exception("[STARTUP DIAGNOSTIC] FATAL ERROR: %s", e)
 
-    send_telegram(f"🤖 ربات شروع شد - تایم‌فریم‌های DTM: {' و '.join(TIMEFRAMES)} دقیقه"
-                  + (f" | SFP: {' و '.join(SFP_TIMEFRAMES)} دقیقه" if ENABLE_SFP else ""))
+    send_telegram(tgm.engine_online_card(TIMEFRAMES, SFP_TIMEFRAMES, ENABLE_SFP))
     logger.info("Worker bot started with timeframes: %s", TIMEFRAMES)
 
     BASE_CAPITAL = trade_ledger.BASE_CAPITAL
@@ -1140,7 +1095,10 @@ def loop():
     while not STOP_EVENT.is_set():
         try:
             if not exchange.test_connection():
-                send_telegram("⚠️ اتصال صرافی قطع است")
+                send_telegram(tgm.alert_card(
+                    "stop", "اتصال صرافی قطع است",
+                    ["🏦 تست اتصال ناموفق بود؛ سفارش‌گذاری و پایش ریسک‌فری موقتاً متوقف شد.",
+                     "🔁 تلاش مجدد هر ۶۰ ثانیه ادامه دارد."]))
                 STOP_EVENT.wait(60)
                 continue
 
@@ -1296,10 +1254,9 @@ def loop():
                                 f"[{timeframe}m][{symbol}] سیگنال {sig} تأیید شد ولی سفارش ارسال نشد: "
                                 f"balance={balance} stop={stop_price} entry={entry}"
                             )
-                            send_telegram(
-                                f"⚠️ سیگنال {sig} برای {symbol} ({timeframe}m) تأیید شد ولی سفارش ارسال نشد\n"
-                                f"موجودی: {balance} | استاپ: {stop_price} | ورود: {entry}"
-                            )
+                            send_telegram(tgm.not_executed_card(
+                                "DTM", sig, symbol, f"{timeframe}m", "موجودی یا داده‌ی سیگنال نامعتبر",
+                                [f"💰 موجودی: {code_(balance)}", f"🛑 استاپ: {code_(stop_price)}", f"📍 ورود: {code_(entry)}"]))
                             continue
 
                         allowed_leverage = LEVERAGE_MAP.get(symbol, 50)
@@ -1374,13 +1331,12 @@ def loop():
                                 f"{capital:.4f} USDT کمتر از حداقل مجاز ({MIN_ORDER_COST_USDT} "
                                 f"USDT) است — سفارش ارسال نشد (صرافی حتماً رد می‌کرد)."
                             )
-                            send_telegram(
-                                f"⚠️ سیگنال {sig} برای {symbol} ({timeframe}m) اجرا نشد\n"
-                                f"سرمایه محاسبه‌شده: {capital:.4f} USDT\n"
-                                f"حداقل مجاز فعلی (تنظیم‌شده): {MIN_ORDER_COST_USDT} USDT\n"
-                                f"موجودی فعلی حساب: {balance:.4f} USDT\n"
-                                f"❗️ تا افزایش موجودی، این سیگنال‌ها معامله نمی‌شوند."
-                            )
+                            send_telegram(tgm.not_executed_card(
+                                "DTM", sig, symbol, f"{timeframe}m", "سرمایه کمتر از حداقل سفارش صرافی",
+                                [f"💵 سرمایه محاسبه‌شده: {code_(format(capital, '.4f'))} USDT",
+                                 f"📏 حداقل مجاز: {code_(MIN_ORDER_COST_USDT)} USDT",
+                                 f"💰 موجودی حساب: {code_(format(balance, '.4f'))} USDT",
+                                 "❗ تا افزایش موجودی، این سیگنال‌ها معامله نمی‌شوند."]))
                             continue
 
                         exec_stop_price = stop_price
