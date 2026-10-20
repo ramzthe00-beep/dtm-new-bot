@@ -126,7 +126,12 @@ def _send_telegram(text):
         TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
         TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text)}, timeout=15)
+        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text),
+                                     "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=15)
+        if r.status_code == 400 and "parse" in r.text.lower():   # HTML رد شد → متن ساده
+            from tg_style import plain_fallback
+            r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain_fallback(text),
+                                         "disable_web_page_preview": True}, timeout=15)
         return r.ok
     except Exception as e:
         logger.error(f"Failed to send telegram: {e}")
@@ -521,7 +526,8 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1", silent=False):
         if len(candles) < 50:
             msg = f"Too few candles: {len(candles)}"
             logger.warning(msg)
-            _send_telegram(f"⚠️ WARNING: {msg}")
+            import tg_messages as _tgm
+            _send_telegram(_tgm.warning_candles_card(symbol if isinstance(symbol, str) else "?", len(candles)))
             return None, None, None, None, None, None, None
 
         symbol = symbol.upper()
@@ -740,7 +746,13 @@ def calculate_signals(df, symbol="BNBUSDT", timeframe="1", silent=False):
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
             logger.warning(error_msg)
-            _send_telegram(error_msg)
+            import tg_messages as _tgm
+            _send_telegram(_tgm.alert_card(
+                "error", "خروجی معتبر از موتور استراتژی دریافت نشد",
+                [f"🪙 {_tgm.b(symbol)} · 🕯 {len(candles)} کندل",
+                 f"📊 نتایج: {result_count} · دیکشنری خالی: {empty_count}",
+                 "🔎 اگر خالی‌ها زیاد است، خطای داخلی main() در strategy.py رخ داده (مثلاً index خارج از محدوده).",
+                 "🧾 جزئیات کامل در لاگ سرور ثبت شد."]))
             return None, None, None, None, None, None, None
 
         # اگر کندل آخر خروجی معتبر نداشت (خطای داخلی main)، هرگز از مقادیر کندل قبلی
@@ -769,7 +781,11 @@ Type: {type(last_values).__name__}
 Value: {str(last_values)[:500]}
 """
             logger.warning(error_msg)
-            _send_telegram(error_msg)
+            import tg_messages as _tgm
+            _send_telegram(_tgm.alert_card(
+                "warn", "خروجی غیرمنتظره از استراتژی",
+                [f"🧩 نوع: {_tgm.code(type(last_values).__name__)}",
+                 f"📦 مقدار: {_tgm.code(str(last_values)[:300])}"]))
 
         if signal not in ("LONG", "SHORT"):
             signal = None
@@ -1102,21 +1118,12 @@ Value: {str(last_values)[:500]}
             stars = "⭐" * score + "☆" * (5 - score)
 
             _pp = _price_prec(tick_info["mintick"])
-            result_msg = f"""
-{emoji} سیگنال {direction} ({signal}) - {symbol} - {timeframe} دقیقه
-─────────────────────────────────────────
-🆔 شماره: {trade_id}
-🕐 زمان: {now_utc.strftime('%H:%M:%S')} UTC ({now_tehran.strftime('%H:%M:%S')} تهران)
-─────────────────────────────────────────
-📊 ورود: {entry:.{_pp}f}
-🛑 حد ضرر: {stop_price:.{_pp}f} ({stop_distance:.{_pp}f}- | {stop_pct:.2f}%)
-🎯 هدف: {target_price:.{_pp}f} ({target_distance:.{_pp}f}+ | {target_pct:.2f}%)
-⭐ نسبت ریسک: 1 : {rr_value:.2f} ({rr_status})
-📌 نوع: {signal_type_fa}
-🏆 امتیاز: {score}/5 {stars}
-─────────────────────────────────────────
-🔒 وضعیت: {'✅ معتبر' if rr_value and rr_value >= MIN_RR else '⚠️ ریسک بالا'}
-"""
+            import tg_messages as _tgm
+            _tf_lbl = f"{timeframe}m"
+            result_msg = _tgm.signal_card(
+                "DTM", signal, symbol, _tf_lbl, entry, stop_price, target_price, _pp,
+                trade_id=trade_id, type_label=signal_type_fa, rr=rr_value, score=score, min_rr=MIN_RR,
+            )
             logger.info(result_msg)
             if not silent:
                 _send_telegram(result_msg)
@@ -1133,24 +1140,8 @@ Value: {str(last_values)[:500]}
 
     except Exception as e:
         tb = traceback.format_exc()
-        error_msg = f"""
-❌ FATAL ERROR in calculate_signals
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📌 ERROR TYPE: {type(e).__name__}
-📌 ERROR MESSAGE: {str(e)}
-
-📋 FULL TRACEBACK:
-{tb}
-
-🔧 POSSIBLE CAUSES:
-  1. ScriptRunner initialization failed
-  2. Strategy.py has syntax errors
-  3. PyneCore version mismatch
-  4. Input parameters are incorrect
-  5. Symbol info is invalid
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
+        import tg_messages as _tgm
+        error_msg = _tgm.fatal_error_card("calculate_signals", type(e).__name__, str(e), tb)
         logger.error(error_msg)
         _send_telegram(error_msg)
         return None, None, None, None, None, None, None
