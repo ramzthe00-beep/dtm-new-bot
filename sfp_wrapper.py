@@ -45,12 +45,12 @@ def _buffer_ticks(symbol):
     """بافر استاپ بر حسب tick — عین جدول DTM در strategy_wrapper.calculate_signals."""
     s = symbol.upper()
     if s in ("BNBUSDT", "ETHUSDT"):
-        return 1
+        return 9
     if s in ("LTCUSDT", "DOGEUSDT"):
-        return 1
+        return 3
     if s == "PUMPUSDT":
         return 1
-    return 1
+    return 5
 
 
 def _tick_info(symbol):
@@ -182,62 +182,25 @@ def run_sfp_signals(df, symbol, timeframe, length=SFP_LENGTH):
 # پیام تلگرام (قالب DTM + جزئیات SFP + بخش سایزینگ)
 # ═══════════════════════════════════════════════════════════
 def build_sfp_message(sig, symbol, timeframe, trade_id, mintick, sizing=None):
-    emoji = "🟢" if sig["direction"] == "LONG" else "🔴"
-    direction_fa = "خرید" if sig["direction"] == "LONG" else "فروش"
-    entry, stop, target, rr = sig["entry"], sig["stop"], sig["target"], sig["rr"]
+    import tg_messages as tgm
+    from tg_style import code, b
     pp = price_prec(mintick)
-
-    stop_distance = abs(stop - entry)
-    target_distance = abs(target - entry)
-    stop_pct = stop_distance / entry * 100 if entry else 0
-    target_pct = target_distance / entry * 100 if entry else 0
-
-    if rr >= 4:
-        rr_status = "عالی 🚀"
-    elif rr >= 3:
-        rr_status = "خوب ✅"
-    elif rr >= 2:
-        rr_status = "متوسط ⚠️"
-    else:
-        rr_status = "ضعیف ❌"
-
+    tf_label = f"{timeframe}m" if str(timeframe).isdigit() and int(timeframe) < 60 else f"{int(timeframe) // 60}h"
     type_fa = ("SFP-L (شکست‌ساختگی کف - صعودی)" if sig["direction"] == "LONG"
                else "SFP-S (شکست‌ساختگی سقف - نزولی)")
-    now_utc = datetime.now(UTC_TZ)
-    now_ir = now_utc.astimezone(IRAN_TZ)
     sig_ir = sig["time_iran"].strftime("%H:%M")
-
-    tgt_note = (f"تعدیل‌شده به R=2 (فیبو 2.618 = {sig['raw_target']:.{pp}f}، R={sig['rr_raw']:.2f})"
-                if sig["target_adjusted"] else f"فیبو 2.618 (R={sig['rr_raw']:.2f})")
-
-    msg = f"""
-{emoji} سیگنال SFP {direction_fa} ({sig['direction']}) - {symbol} - {timeframe} دقیقه
-─────────────────────────────────────────
-🆔 شماره: {trade_id}
-🕐 زمان: {now_utc.strftime('%H:%M:%S')} UTC ({now_ir.strftime('%H:%M:%S')} تهران)
-🕯 کندل SFP: {sig_ir} تهران (بسته شد، ورود در کندل بعد)
-─────────────────────────────────────────
-📊 ورود: {entry:.{pp}f}
-🛑 حد ضرر: {stop:.{pp}f} ({stop_distance:.{pp}f}- | {stop_pct:.2f}%)
-🎯 هدف: {target:.{pp}f} ({target_distance:.{pp}f}+ | {target_pct:.2f}%)
-⭐ نسبت ریسک: 1 : {rr:.2f} ({rr_status})
-📌 نوع: {type_fa}
-📐 خط چین: {sig['dashed']:.{pp}f} | انتهای شدو: {sig['wick']:.{pp}f}
-🧮 تارگت: {tgt_note}
-"""
-    if sizing:
-        profit_str = f"{sizing['actual_profit_dollar']:.4f}" if sizing.get("actual_profit_dollar") else "N/A"
-        msg += f"""─────────────────────────────────────────
-💰 موجودی: {sizing['balance']:.4f} USDT
-📊 حالت اهرم: {sizing['mode']} | اهرم: {sizing['leverage']}x
-💵 سرمایه ارسالی: {sizing['capital']:.4f} USDT
-📉 استاپ دلاری: ${sizing['actual_stop_dollar']:.4f}
-📈 سود دلاری: ${profit_str}
-"""
-    msg += f"""─────────────────────────────────────────
-🔒 وضعیت: {'✅ معتبر' if rr >= SFP_MIN_RR else '⚠️ ریسک بالا'}
-"""
-    return msg
+    tgt_note = (f"تعدیل‌شده به R=2 (فیبو 2.618 = {sig['raw_target']:.{pp}f}، R خام={sig['rr_raw']:.2f})"
+                if sig["target_adjusted"] else f"سطح فیبو 2.618 (R={sig['rr_raw']:.2f})")
+    extra = [
+        f"🕯 کندل SFP: {b(sig_ir)} تهران {code('(بسته شد؛ ورود در کندل بعد)')}",
+        f"📐 خط چین: {code(f'{sig['dashed']:.{pp}f}')} · انتهای شدو: {code(f'{sig['wick']:.{pp}f}')}",
+        f"🧮 تارگت: {tgt_note}",
+    ]
+    return tgm.signal_card(
+        "SFP", sig["direction"], symbol, tf_label, sig["entry"], sig["stop"], sig["target"], pp,
+        trade_id=trade_id, type_label=type_fa, rr=sig["rr"], extra_lines=extra,
+        sizing=sizing, min_rr=SFP_MIN_RR,
+    )
 
 
 # ═══════════════════════════════════════════════════════════
