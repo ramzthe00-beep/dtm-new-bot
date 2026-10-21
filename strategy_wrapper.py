@@ -1117,6 +1117,7 @@ Value: {str(last_values)[:500]}
             result_msg = _tgm.signal_card(
                 "DTM", signal, symbol, _tf_lbl, entry, stop_price, target_price, _pp,
                 trade_id=trade_id, type_label=signal_type_fa, rr=rr_value, score=score, min_rr=MIN_RR,
+                rf_pct=risk_free_pct,
             )
             logger.info(result_msg)
             if not silent:
