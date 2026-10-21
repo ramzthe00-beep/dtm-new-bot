@@ -193,7 +193,7 @@ def build_sfp_message(sig, symbol, timeframe, trade_id, mintick, sizing=None):
                 if sig["target_adjusted"] else f"سطح فیبو 2.618 (R={sig['rr_raw']:.2f})")
     extra = [
         f"🕯 کندل SFP: {b(sig_ir)} تهران {code('(بسته شد؛ ورود در کندل بعد)')}",
-        f"📐 خط چین: {code(f'{sig['dashed']:.{pp}f}')} · انتهای شدو: {code(f'{sig['wick']:.{pp}f}')}",
+        f"📐 خط چین: {code(format(sig['dashed'], f'.{pp}f'))} · انتهای شدو: {code(format(sig['wick'], f'.{pp}f'))}",
         f"🧮 تارگت: {tgt_note}",
     ]
     return tgm.signal_card(
