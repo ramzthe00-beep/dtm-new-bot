@@ -124,6 +124,19 @@ def send_telegram(text):
         logger.error(f"[TELEGRAM] Exception: {e}")
         return False
 
+def _on_ledger_event(event, row, fresh):
+    """اعلان نتیجه‌ی معامله (تارگت / استاپ / سربه‌سر). ریسک‌فری واقعی کارت خودش را دارد؛ رویداد فرضی اعلان نمی‌شود."""
+    if not fresh or event == "RISK_FREE":
+        return
+    try:
+        send_telegram(tgm.trade_update_card(event, row))
+    except Exception as e:
+        logger.error(f"[LEDGER-EVENT] telegram error: {e}")
+
+
+trade_ledger.set_event_callback(_on_ledger_event)
+
+
 def send_telegram_long(text):
     """ارسال پیام بلند به تلگرام با چند بخش و مدیریت Rate Limit"""
     if isinstance(text, tg_rich.Card):      # Card خودش تقسیم و fallback را مدیریت می‌کند
