@@ -172,6 +172,8 @@ def _execute(sig, symbol, tf, df_signal, public, exchange, ledger, leverage_map,
             leverage=leverage_map.get(symbol, 50),
             order_placed=None, order_reason="SFP", risk_free_pct=None,
             id_suffix=f"_{sig['kind']}",
+            extra={"kind": sig["kind"], "dashed": sig["dashed"], "wick": sig["wick"],
+                   "raw_target": sig["raw_target"]},
         )
     except Exception as e:
         logger.error(f"[SFP-TRADER] {symbol}: record_signal failed: {e}")
@@ -378,6 +380,14 @@ def process_sfp_signals(public, exchange, ledger, leverage_map, send_telegram_fn
         if loaded:
             _last_processed_signal_ms.update(loaded)
             logger.info(f"[SFP-TRADER] LOADED {len(loaded)} state entries")
+
+    if hasattr(ledger, "set_event_callback") and not ledger.has_event_callback():
+        import tg_messages as _tgm
+
+        def _on_event(ev, row, fresh):          # اعلان نتیجه‌ی معامله (فقط رویدادهای تازه)
+            if fresh and ev != "RISK_FREE":
+                _safe_send(send_telegram_fn, _tgm.trade_update_card(ev, row))
+        ledger.set_event_callback(_on_event)
 
     base_cap = base_capital if (base_capital and base_capital > 0) else SFP_BASE_CAPITAL
     now_ts = time.time()
