@@ -98,7 +98,7 @@ def _write_all(rows):
 # ---------------------------------------------------------------------------
 def record_signal(symbol, timeframe, direction, entry, stop, target,
                    entry_time_ms, leverage=None, order_placed=None,
-                   order_reason="", risk_free_pct=None, id_suffix=""):
+                   order_reason="", risk_free_pct=None, id_suffix="", extra=None):
     entry = _safe_float(entry)
     stop = _safe_float(stop)
     target = _safe_float(target)
@@ -139,7 +139,12 @@ def record_signal(symbol, timeframe, direction, entry, stop, target,
         "rf_pct": risk_free_pct,     # 🆕 درصد فعال‌سازی ریسک‌فری (از strategy_wrapper) —
                                       # برای شبیه‌سازی مستقلِ ریسک‌فری در update_open_trades
                                       # صرف‌نظر از اینکه سفارش واقعاً روی صرافی اجرا شده یا نه.
+        "mfe_r": 0.0,                # بیشترین حرکت به نفع معامله (بر حسب R)
+        "mae_r": 0.0,                # بیشترین حرکت علیه معامله (بر حسب R)
     }
+    if extra:                        # اطلاعات اختصاصی استراتژی (kind, dashed, wick, ...) برای پیام‌های تلگرام
+        for k_, v_ in dict(extra).items():
+            row.setdefault(k_, v_)
 
     with _lock:
         rows = _read_all()
@@ -247,6 +252,29 @@ def update_open_trade_stop(symbol, timeframe, direction, entry_time_ms, new_stop
 # بررسی معاملات باز نسبت به کندل‌های تازه (تشخیص برخورد استاپ/تارگت)
 # قانون محافظه‌کارانه: اگر در یک کندل هم استاپ هم تارگت لمس شد، استاپ برنده است.
 # ---------------------------------------------------------------------------
+_event_cb = None
+
+
+def set_event_callback(fn):
+    """fn(event, row, fresh): event ∈ {RISK_FREE, TARGET, STOP_LOSS, RISK_FREE_STOP}. fresh=False یعنی رویداد قدیمی (بازیابی) و نباید اعلان شود."""
+    global _event_cb
+    _event_cb = fn
+
+
+def has_event_callback():
+    return _event_cb is not None
+
+
+def _emit(events):
+    if not events or _event_cb is None:
+        return
+    for ev, row, fresh in events:
+        try:
+            _event_cb(ev, row, fresh)
+        except Exception as e:
+            logger.error(f"[LEDGER] event callback error ({ev}): {e}")
+
+
 def open_rows_info(symbol, timeframe):
     """(تعداد معاملات باز، قدیمی‌ترین last_checked_ms) برای یک نماد/تایم‌فریم — برای تصمیم‌گیری درباره‌ی بازیابی تاریخچه."""
     with _lock:
@@ -272,6 +300,8 @@ def update_open_trades(symbol, timeframe, df):
     except (TypeError, ValueError):
         tf_ms = 0
     now_ms = int(datetime.now(UTC_TZ).timestamp() * 1000)
+
+    events = []
 
     with _lock:
         rows = _read_all()
@@ -305,6 +335,16 @@ def update_open_trades(symbol, timeframe, df):
                     if candle_ms + tf_ms > now_ms:
                         break
 
+                    # 📐 ردیابی MFE/MAE (بر حسب R اولیه) — برای پیام‌های پیشرفت معامله
+                    _risk0 = abs(r["entry"] - r.get("initial_stop", r.get("stop")))
+                    if _risk0 > 0:
+                        if r["direction"] == "LONG":
+                            _fav, _adv = (high - r["entry"]) / _risk0, (r["entry"] - low) / _risk0
+                        else:
+                            _fav, _adv = (r["entry"] - low) / _risk0, (high - r["entry"]) / _risk0
+                        r["mfe_r"] = round(max(r.get("mfe_r", 0.0), _fav), 3)
+                        r["mae_r"] = round(max(r.get("mae_r", 0.0), _adv), 3)
+
                     # ============================================================
                     # 🆕 شبیه‌سازی مستقلِ ریسک‌فری (بدون نیاز به اجرای واقعی سفارش
                     # روی صرافی). قبلاً r["risk_free"] فقط از طریق
@@ -335,6 +375,7 @@ def update_open_trades(symbol, timeframe, df):
                             r["stop"] = entry_px  # تقریب سربه‌سر (بدون کارمزد)
                             r["risk_free"] = True
                             r["risk_free_armed_ms"] = candle_ms
+                            events.append(("RISK_FREE", dict(r), _is_fresh(candle_ms, tf_ms, now_ms)))
                             logger.info(
                                 f"[LEDGER] ریسک‌فری فرضی فعال شد: {r['id']} | "
                                 f"trigger={rf_trigger} | stop -> {entry_px} (سربه‌سر)"
@@ -382,6 +423,7 @@ def update_open_trades(symbol, timeframe, df):
                         r["pnl_usd"] = pnl_usd
                         r["pnl_r"] = pnl_r
                         changed = True
+                        events.append((r["exit_reason"], dict(r), _is_fresh(candle_ms, tf_ms, now_ms)))
                         break  # این معامله بسته شد؛ کندل‌های بعدی برایش بی‌معنا هستند
 
                 if r["last_checked_ms"] != last_checked:
@@ -393,6 +435,13 @@ def update_open_trades(symbol, timeframe, df):
 
         if changed:
             _write_all(rows)
+
+    _emit(events)          # خارج از قفل: اعلان تلگرام نباید دفترچه را قفل نگه دارد
+
+
+def _is_fresh(candle_ms, tf_ms, now_ms):
+    """رویداد تازه = کندل رویداد اخیراً بسته شده (بازیابی معاملات قدیمی نباید اعلان بسازد)."""
+    return (now_ms - (candle_ms + tf_ms)) <= max(5 * tf_ms, 300_000)
 
 
 # ---------------------------------------------------------------------------
