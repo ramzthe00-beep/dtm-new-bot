@@ -247,6 +247,17 @@ def update_open_trade_stop(symbol, timeframe, direction, entry_time_ms, new_stop
 # بررسی معاملات باز نسبت به کندل‌های تازه (تشخیص برخورد استاپ/تارگت)
 # قانون محافظه‌کارانه: اگر در یک کندل هم استاپ هم تارگت لمس شد، استاپ برنده است.
 # ---------------------------------------------------------------------------
+def open_rows_info(symbol, timeframe):
+    """(تعداد معاملات باز، قدیمی‌ترین last_checked_ms) برای یک نماد/تایم‌فریم — برای تصمیم‌گیری درباره‌ی بازیابی تاریخچه."""
+    with _lock:
+        rows = _read_all()
+    opens = [r for r in rows
+             if r.get("symbol") == symbol and r.get("timeframe") == timeframe and r.get("status") == "OPEN"]
+    if not opens:
+        return 0, None
+    return len(opens), min(r.get("last_checked_ms", r["entry_time_ms"]) for r in opens)
+
+
 def update_open_trades(symbol, timeframe, df):
     """
     df: دیتافریم OHLCV (همان چیزی که هر چرخهٔ bot.py برای این symbol/timeframe می‌گیرد).
@@ -415,7 +426,13 @@ def report_for_day(date_iran=None, kind="day"):
     day_rows = [r for r in rows if _in_range(r, start_ms, end_ms)]
 
     if kind == "noon":
-        return tgm.noon_report_card(day_rows, date_iran, BASE_CAPITAL)
+        # معاملاتِ دیروز که هنگام گزارش نیمه‌شب هنوز باز بودند و بعد از ۰۰:۰۰ بسته شدند
+        day_ms = 24 * 3600 * 1000
+        carry = [r for r in rows
+                 if start_ms - day_ms <= r["entry_time_ms"] < start_ms
+                 and r.get("status") in ("WIN", "LOSS")
+                 and (r.get("exit_time_ms") or 0) >= start_ms]
+        return tgm.noon_report_card(day_rows, date_iran, BASE_CAPITAL, carry_rows=carry)
     if kind == "midnight":
         return tgm.midnight_report_card(day_rows, start_local, BASE_CAPITAL)
     return _build_report(day_rows, f"گزارش روز {start_local.strftime('%Y-%m-%d')}")
@@ -451,7 +468,7 @@ def report_current_and_previous_month():
 
     r1 = report_for_month(y1, m1)
     r2 = report_for_month(y2, m2)
-    return r1 + "\n\n" + ("═" * 22) + "\n\n" + r2
+    return r1 + r2          # Card + Card (با جداکننده)
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +562,7 @@ def scheduler_loop(send_telegram_fn, stop_event=None,
                 tag = now.strftime("%Y-%m")
                 if _should_send(key, tag):
                     try:
-                        send_telegram_fn("🗓️ <b>گزارش ماهانه</b>\n\n" + report_current_and_previous_month())
+                        send_telegram_fn(report_current_and_previous_month())
                         _last_sent[key] = tag
                         logger.info(f"[LEDGER] Monthly report sent ({tag})")
                     except Exception as e:
