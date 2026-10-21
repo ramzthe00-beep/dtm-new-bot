@@ -125,14 +125,8 @@ def _send_telegram(text):
         import requests
         TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8514469828:AAFC76EiVA7I4TFiX08jJ5N6-eKtOLMKitE")
         TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text),
-                                     "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=15)
-        if r.status_code == 400 and "parse" in r.text.lower():   # HTML رد شد → متن ساده
-            from tg_style import plain_fallback
-            r = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain_fallback(text),
-                                         "disable_web_page_preview": True}, timeout=15)
-        return r.ok
+        import tg_rich
+        return tg_rich.deliver(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, text)
     except Exception as e:
         logger.error(f"Failed to send telegram: {e}")
         return False
