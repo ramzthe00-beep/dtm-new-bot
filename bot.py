@@ -45,16 +45,7 @@ ENABLE_DTM_SFP_FILTER = os.getenv("ENABLE_DTM_SFP_FILTER", "1") == "1"   # فی�
 # ============================================================
 SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
 TIMEFRAMES = ["1"]
-SFP_SYMBOLS = [
-    "BNBUSDT",
-    "DOGEUSDT",
-    "SOLUSDT",
-    "XRPUSDT",
-    "UNIUSDT",
-    "ENAUSDT",
-    "PUMPUSDT",   # ⚠️ اسم دقیق قرارداد را چک کن (پایین توضیح دادم)
-]
-
+SFP_SYMBOLS = list(SYMBOLS)        # نمادهای SFP (پیش‌فرض: همان نمادهای DTM)
 SFP_TIMEFRAMES = list(TIMEFRAMES)  # تایم‌فریم‌های SFP (پیش‌فرض: همان تایم‌فریم‌های DTM)
 HISTORY_BARS = 500  # fallback
 PINE_START_BARS = 8700  # Pine-Exact parity
@@ -119,64 +110,24 @@ def throttle_truetrade():
         _truetrade_last_req = now
 
 import tg_messages as tgm
+import tg_rich
 from tg_style import plain_fallback, split_message, code as code_
 
 def send_telegram(text):
-    """ارسال پیام به تلگرام با مدیریت خطای 429 (Rate Limit) و retry خودکار"""
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            r = requests.post(
-                url,
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": str(text), "parse_mode": "HTML",
-                      "disable_web_page_preview": True},
-                timeout=30,
-            )
-
-            # اگر تلگرام HTML را نپذیرفت، همان پیام را به‌صورت متن ساده بفرست (پیامی گم نشود)
-            if r.status_code == 400 and "parse" in r.text.lower():
-                logger.warning("[TELEGRAM] HTML parse failed — resending as plain text")
-                r = requests.post(
-                    url,
-                    json={"chat_id": TELEGRAM_CHAT_ID, "text": plain_fallback(text),
-                          "disable_web_page_preview": True},
-                    timeout=30,
-                )
-
-            if r.status_code == 429:
-                try:
-                    data = r.json()
-                    retry_after = data.get("parameters", {}).get("retry_after", 10)
-                except Exception:
-                    retry_after = 10
-
-                if attempt == max_attempts - 1:
-                    logger.error(f"[TELEGRAM] Rate limit after {max_attempts} attempts: {r.status_code} {r.text[:300]}")
-                    return False
-
-                wait = min(retry_after + 2, 30)
-                logger.warning(f"[TELEGRAM] Rate limit, retry in {wait}s (attempt {attempt+1}/{max_attempts})")
-                time.sleep(wait)
-                continue
-
-            if r.status_code == 200:
-                return True
-            else:
-                logger.error(f"[TELEGRAM] Failed to send message: {r.status_code} {r.text[:300]}")
-                return False
-
-        except Exception as e:
-            logger.error(f"[TELEGRAM] Exception: {e}")
-            if attempt == max_attempts - 1:
-                return False
-            time.sleep(2 ** attempt)
-
-    return False
+    """
+    ارسال پیام به تلگرام (Card یا رشته‌ی HTML).
+    مسیر ارسال: Rich Message (Bot API 10.x) → HTML کلاسیک → متن ساده، با مدیریت 429 و retry.
+    """
+    try:
+        return tg_rich.deliver(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, text)
+    except Exception as e:
+        logger.error(f"[TELEGRAM] Exception: {e}")
+        return False
 
 def send_telegram_long(text):
     """ارسال پیام بلند به تلگرام با چند بخش و مدیریت Rate Limit"""
+    if isinstance(text, tg_rich.Card):      # Card خودش تقسیم و fallback را مدیریت می‌کند
+        return send_telegram(text)
     text = str(text)
     if len(text) <= 3800:
         return send_telegram(text)
@@ -894,7 +845,8 @@ def startup_diagnostic(exchange, public):
         warnings=_warnings, time_str=time_str,
     ))]
 
-    final_report = "\n".join(report_lines)
+    report_card = report_lines[0]
+    final_report = report_card.plain()
 
     logger.info(
         "[STARTUP DIAGNOSTIC]\n%s",
@@ -902,7 +854,7 @@ def startup_diagnostic(exchange, public):
     )
 
     try:
-        send_telegram_long(final_report)
+        send_telegram(report_card)
         time.sleep(1)
         logger.info(
             "[STARTUP DIAGNOSTIC] TELEGRAM SENT"
@@ -1192,7 +1144,11 @@ def loop():
                                     f"[{timeframe}m][{symbol}] سیگنال {sig} توسط SFP تأیید شد"
                                 )
                                 if signal_msg:
-                                    signal_msg = signal_msg + "\n" + format_sfp_filter_telegram_line(sfp_result)
+                                    _sfp_line = format_sfp_filter_telegram_line(sfp_result)
+                                    if hasattr(signal_msg, "add_note"):
+                                        signal_msg.add_note(_sfp_line)
+                                    else:
+                                        signal_msg = signal_msg + "\n" + _sfp_line
 
                             if ENABLE_DTM_CT_FILTER:
                                 ct_allowed = False
@@ -1489,6 +1445,7 @@ def loop():
                         min_order_cost=MIN_ORDER_COST_USDT,
                         balance_use_ratio=BALANCE_USE_RATIO,
                         dtm_timeframes=TIMEFRAMES,
+                        dtm_symbols=SYMBOLS,
                     )
                 except Exception as e:
                     logger.exception(f"[SFP-TRADER] top-level error: {e}")
