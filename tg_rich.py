@@ -21,13 +21,15 @@ import time
 
 import requests
 
+import tg_emoji
 from tg_style import LINE, plain_fallback, split_message
 
 logger = logging.getLogger("TELEGRAM")
 
 # ───────────────────────── تنظیمات ─────────────────────────
 def rich_enabled():
-    return os.getenv("TG_RICH", "1") == "1"
+    # پیش‌فرض خاموش: HTML کلاسیک دقیقاً همان چیدمانِ خطیِ کانال‌های سیگنال را می‌دهد. روشن‌کردن: TG_RICH=1
+    return os.getenv("TG_RICH", "0") == "1"
 
 
 _rich_dead = False
@@ -69,7 +71,11 @@ def parse_inline(fragment):
                 stack[-1][2].append("\n")
             # تگ‌های ناشناخته نادیده گرفته می‌شوند
         else:
-            stack[-1][2].append(_html.unescape(tok))
+            txt = tg_emoji.split_text_rich(_html.unescape(tok))
+            if isinstance(txt, list):
+                stack[-1][2].extend(txt)
+            else:
+                stack[-1][2].append(txt)
     while len(stack) > 1:                       # تگ‌های بسته‌نشده
         nm, attrs, children = stack.pop()
         stack[-1][2].append(_make_node(nm, attrs, children))
@@ -165,9 +171,11 @@ class Card:
                 out.append(b[1])
             elif k == "title":
                 _, emoji, text, sub = b
-                out.append(f"{emoji} <b>{to_classic(text)}</b>")
+                out.append(f"<b>{emoji} {to_classic(text)}</b>")
                 if sub:
-                    out.append(f"<i>{to_classic(sub)}</i>")
+                    out.append(to_classic(sub))
+            elif k == "lines":
+                out.extend(to_classic(x) for x in b[1])
             elif k == "h":
                 out.append(f"<b>{to_classic(b[1])}</b>")
             elif k == "kv":
@@ -176,7 +184,7 @@ class Card:
             elif k == "p":
                 out.append(to_classic(b[1]))
             elif k == "hr":
-                out.append(LINE)
+                pass                      # در نمای کلاسیک جداکننده نداریم؛ فاصله‌ی خط خالی کافی است
             elif k == "pre":
                 out.append(f"<pre>{_html.escape(str(b[1]), quote=False)}</pre>")
             elif k == "details":
@@ -189,10 +197,11 @@ class Card:
                 _, header, rows, _aligns, caption = b
                 if caption:
                     out.append(f"<b>{to_classic(caption)}</b>")
-                if header:
-                    out.append(" │ ".join(f"<b>{to_classic(h)}</b>" for h in header))
                 for r in rows:
-                    out.append(" │ ".join(to_classic(c) for c in r))
+                    out.append(" · ".join(to_classic(c) for c in r if str(c).strip()))
+            elif k == "progress":
+                for label, price, pct_txt, status in b[1]:
+                    out.append(f"{label}: {to_classic(price)} → {to_classic(pct_txt)} {status}")
             elif k == "kpi":
                 out.append("  ·  ".join(f"{to_classic(l)}: <b>{to_classic(v)}</b>" for l, v in b[1]))
             elif k == "quote":
@@ -202,7 +211,18 @@ class Card:
         return out
 
     def html(self):
-        return "\n".join(self._html_lines(self.blocks))
+        chunks, prev_flow = [], False
+        for blk in self.blocks:
+            ls = self._html_lines([blk])
+            if not ls:
+                continue
+            flow = blk[0] in ("p", "lines")          # خطوط پشت‌سرهم یک «پاراگراف» می‌شوند (بدون خط خالی اضافه)
+            if flow and prev_flow and chunks:
+                chunks[-1] += "\n" + "\n".join(ls)
+            else:
+                chunks.append("\n".join(ls))
+            prev_flow = flow
+        return "\n\n".join(chunks)
 
     def plain(self):
         return plain_fallback(self.html())
@@ -223,8 +243,12 @@ class Card:
                 cells = [[_cell(f"{icon} {label}", align="right"), _cell(value, align="left")]
                          for icon, label, value in b[1]]
                 out.append({"type": "table", "cells": cells, "is_compact": True, "is_striped": True})
+            elif k == "lines":
+                out.extend({"type": "paragraph", "text": parse_inline(x)} for x in b[1])
             elif k == "p":
-                out.append({"type": "paragraph", "text": parse_inline(b[1])})
+                for part in str(b[1]).split("\n"):
+                    if part.strip():
+                        out.append({"type": "paragraph", "text": parse_inline(part)})
             elif k == "hr":
                 out.append({"type": "divider"})
             elif k == "pre":
@@ -250,6 +274,11 @@ class Card:
                 if caption:
                     t["caption"] = parse_inline(caption)
                 out.append(t)
+            elif k == "progress":
+                cells = [[_cell(label, align="right"), _cell(price, align="center"),
+                          _cell(pct_txt, align="center"), _cell(status, align="center")]
+                         for label, price, pct_txt, status in b[1]]
+                out.append({"type": "table", "cells": cells, "is_compact": True})
             elif k == "kpi":
                 items = b[1]
                 cells = [[_cell(l, header=True, align="center") for l, _v in items],
@@ -296,21 +325,39 @@ def _api(token, method, payload, timeout=30):
 
 def _send_classic(token, chat_id, html_text, markup):
     base = {"chat_id": chat_id, "link_preview_options": {"is_disabled": True}}
-    body = dict(base, text=html_text, parse_mode="HTML")
-    if markup:
-        body["reply_markup"] = {"inline_keyboard": markup}
-    ok, st, tx = _api(token, "sendMessage", body)
+
+    def attempt(text, mk, parse=True):
+        body = dict(base, text=text)
+        if parse:
+            body["parse_mode"] = "HTML"
+        if mk:
+            body["reply_markup"] = {"inline_keyboard": mk}
+        return _api(token, "sendMessage", body), body
+
+    # ۱) با ایموجی سفارشی (اگر تنظیم و فعال باشد)
+    if tg_emoji.enabled():
+        (ok, st, tx), _b = attempt(tg_emoji.apply_classic(html_text), tg_emoji.apply_buttons(markup))
+        if ok:
+            return True
+        low = tx.lower()
+        if st == 400 and ("emoji" in low or "entit" in low or "premium" in low or "icon" in low):
+            tg_emoji.disable(f"({tx[:120]})")      # مثلاً صاحب ربات Premium ندارد → ارسال ساده
+        elif st != 400:
+            logger.error(f"[TELEGRAM] sendMessage failed: {st} {tx[:200]}")
+            return False
+
+    # ۲) ایموجی معمولی
+    (ok, st, tx), body = attempt(html_text, markup)
     if ok:
         return True
     if st == 400 and markup and ("button" in tx.lower() or "markup" in tx.lower() or "copy" in tx.lower()):
         logger.warning("[TELEGRAM] buttons rejected — resending without buttons")
-        body.pop("reply_markup", None)
-        ok, st, tx = _api(token, "sendMessage", body)
+        (ok, st, tx), body = attempt(html_text, None)
         if ok:
             return True
     if st == 400 and "parse" in tx.lower():
         logger.warning("[TELEGRAM] HTML parse failed — resending as plain text")
-        ok, st, tx = _api(token, "sendMessage", dict(base, text=plain_fallback(html_text)))
+        (ok, st, tx), _b = attempt(plain_fallback(html_text), None, parse=False)
         if ok:
             return True
     logger.error(f"[TELEGRAM] sendMessage failed: {st} {tx[:300]}")
@@ -320,6 +367,7 @@ def _send_classic(token, chat_id, html_text, markup):
 def deliver(token, chat_id, msg):
     """msg: Card یا رشته‌ی HTML کلاسیک. True اگر ارسال شد."""
     global _rich_dead, _rich_fail_streak
+    tg_emoji.load(token)
     card = msg if isinstance(msg, Card) else Card.from_html(msg)
     markup = card.buttons
 
@@ -327,8 +375,14 @@ def deliver(token, chat_id, msg):
     if card.rich_ok and rich_enabled() and not _rich_dead:
         body = {"chat_id": chat_id, "rich_message": card.rich()}
         if markup:
-            body["reply_markup"] = {"inline_keyboard": markup}
+            body["reply_markup"] = {"inline_keyboard": tg_emoji.apply_buttons(markup)}
         ok, st, tx = _api(token, "sendRichMessage", body)
+        if not ok and st == 400 and "emoji" in tx.lower() and tg_emoji.enabled():
+            tg_emoji.disable(f"({tx[:120]})")
+            body["rich_message"] = card.rich()
+            if markup:
+                body["reply_markup"] = {"inline_keyboard": markup}
+            ok, st, tx = _api(token, "sendRichMessage", body)
         if ok:
             _rich_fail_streak = 0
             return True
