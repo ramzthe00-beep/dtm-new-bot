@@ -315,28 +315,21 @@ def get_last_n_signals(df, symbol, timeframe, n=5, inputs=None):
 # فرمت گزارش برای تلگرام
 # ═══════════════════════════════════════════════════════════════
 def format_signals_report(symbol, timeframe, signals):
-    """فرمت کردن لیست سیگنال‌ها برای نمایش در تلگرام (HTML)."""
-    from tg_style import b, code, LINE
+    """فرمت کردن لیست سیگنال‌ها برای نمایش در تلگرام (سبک کانال سیگنال، HTML)."""
+    from tg_style import b, code
     if not signals:
-        return f"📊 {b(symbol)} {timeframe}m — بدون سیگنال 😴"
+        return f"<b>🏹 {symbol} | CT SCAN 🎯</b>\n\n😴 بدون سیگنال ({timeframe}m)"
 
-    lines = [f"🎯 {b('CT')} · {b(symbol)} · ⏱ {b(str(timeframe) + 'm')}",
-             f"📜 {len(signals)} سیگنال آخر", LINE]
-
+    lines = [f"<b>🏹 {symbol} | CT SCAN 🎯</b>", f"⏱ {timeframe}m · {len(signals)} سیگنال آخر", ""]
     for i, s in enumerate(signals, 1):
-        if s['time_iran'] is None:
-            time_str = "?"
-        else:
-            time_str = s['time_iran'].strftime("%Y-%m-%d %H:%M")
-
-        emoji = "🟢" if s['direction'] == 'LONG' else "🔴"
+        time_str = "?" if s['time_iran'] is None else s['time_iran'].strftime("%Y-%m-%d %H:%M")
+        dot = "🟢" if s['direction'] == 'LONG' else "🔴"
         risk = abs(s['entry'] - s['stop']) if s['stop'] else 0
         rr = (abs(s['target'] - s['entry']) / risk) if risk > 0 else 0
-
-        lines.append(f"{i}. {emoji} {b(s['kind'])} · {time_str}")
+        lines.append(f"{dot} {b(s['kind'])} · {time_str}")
         lines.append(
-            f"   📍 {code(format(s['entry'], '.4f'))} · 🛑 {code(format(s['stop'], '.4f'))} · "
+            f"📍 {code(format(s['entry'], '.4f'))} · 🛑 {code(format(s['stop'], '.4f'))} · "
             f"🎯 {code(format(s['target'], '.4f'))} · ⚖️ {b('1:' + format(rr, '.2f'))}"
         )
-
-    return "\n".join(lines)
+        lines.append("")
+    return "\n".join(lines).rstrip()
