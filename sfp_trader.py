@@ -255,23 +255,78 @@ def _execute(sig, symbol, tf, df_signal, public, exchange, ledger, leverage_map,
 
 
 # ───────────────────────── پردازش یک (نماد، تایم‌فریم) ─────────────────────────
+
+def _fetch_exec_history(public, symbol, tf, bars):
+    """کندل‌های اجرایی (thetruetrade) با countback بزرگ‌تر — برای بازیابی معاملاتی که مدتی بررسی نشده‌اند."""
+    try:
+        now = int(time.time())
+        from_ts = now - bars * int(tf) * 60 * 2 - 60
+        uri = (f"/futures/udf/history?symbol={symbol.upper()}&resolution={tf}"
+               f"&from={from_ts}&to={now}&countback={bars}")
+        r = public.session.get(f"{public.base}{uri}", timeout=25)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("s") != "ok" or not data.get("t"):
+            return None
+        import pandas as pd
+        df = pd.DataFrame({
+            "open": pd.to_numeric(data["o"], errors="coerce"), "high": pd.to_numeric(data["h"], errors="coerce"),
+            "low": pd.to_numeric(data["l"], errors="coerce"), "close": pd.to_numeric(data["c"], errors="coerce"),
+        }, index=pd.to_datetime(data["t"], unit="s", utc=True)).sort_index()
+        df = df[~df.index.duplicated(keep="last")].dropna()
+        return df
+    except Exception as e:
+        logger.warning(f"[SFP-TRADER] {symbol}: history catch-up fetch failed: {e}")
+        return None
+
+
+def _update_ledger_for(symbol, tf, tf_ms, public, ledger):
+    """
+    به‌روزرسانی نتیجه‌ی معاملات باز (تارگت/استاپ) این نماد.
+    فقط وقتی معامله‌ی باز دارد fetch می‌کند؛ اگر قدیمی‌ترین معامله‌ی باز از پنجره‌ی ۵۰۰ کندلی بیرون
+    افتاده باشد، تاریخچه‌ی بلندتر می‌گیرد تا نتیجه از همان لحظه‌ی ورود بررسی شود.
+    """
+    tf_label = _tf_label(tf)
+    try:
+        count, oldest_ms = (ledger.open_rows_info(symbol, tf)
+                            if hasattr(ledger, "open_rows_info") else (1, None))
+        if count == 0:
+            return
+        df_exec = public.fetch_ohlcv(symbol, tf)
+        if df_exec is None or df_exec.empty:
+            logger.warning(f"[SFP-TRADER] {symbol} {tf_label}: exec data empty — ledger not updated")
+            return
+        if oldest_ms is not None:
+            first_ms = int(df_exec.index[0].timestamp() * 1000)
+            if oldest_ms < first_ms:
+                need = int((time.time() * 1000 - oldest_ms) / tf_ms) + 10
+                bars = min(need, 1500)
+                longer = _fetch_exec_history(public, symbol, tf, bars)
+                if longer is not None and not longer.empty:
+                    got_first = int(longer.index[0].timestamp() * 1000)
+                    if got_first > oldest_ms + 2 * tf_ms:
+                        logger.warning(f"[SFP-TRADER] {symbol} {tf_label}: history only reaches back "
+                                       f"{(time.time()*1000 - got_first)/3600000:.1f}h; older open trades may resolve late")
+                    df_exec = longer
+                    logger.info(f"[SFP-TRADER] {symbol} {tf_label}: catch-up with {len(longer)} candles "
+                                f"for {count} open trade(s)")
+        ledger.update_open_trades(symbol, tf, df_exec)
+    except Exception as e:
+        logger.error(f"[SFP-TRADER] {symbol} {tf_label}: update_open_trades: {e}")
+
+
 def _process_one(symbol, tf, public, exchange, ledger, leverage_map, send_fn,
                  base_capital, min_order_cost, balance_use_ratio, update_ledger):
     tf_label = _tf_label(tf)
     tf_ms = int(tf) * 60 * 1000
 
+    if update_ledger:  # فقط برای جفت‌هایی که حلقه‌ی DTM خودش به‌روز نمی‌کند (مثلاً نمادهای فقط-SFP)
+        _update_ledger_for(symbol, tf, tf_ms, public, ledger)   # مستقل از داده‌ی Binance
+
     df = public.fetch_ohlcv_binance(symbol, tf)
     if df is None or df.empty:
         logger.warning(f"[SFP-TRADER] {symbol} {tf_label}: no data (will retry)")
         return False
-
-    if update_ledger:  # فقط وقتی حلقه‌ی DTM این تایم‌فریم را خودش به‌روز نمی‌کند
-        try:
-            df_exec = public.fetch_ohlcv(symbol, tf)
-            if df_exec is not None and not df_exec.empty:
-                ledger.update_open_trades(symbol, tf, df_exec)
-        except Exception as e:
-            logger.error(f"[SFP-TRADER] {symbol} {tf_label}: update_open_trades: {e}")
 
     signals = run_sfp_signals(df, symbol, tf)
     signals.sort(key=lambda s: s["time_ms"])
@@ -314,7 +369,7 @@ def _process_one(symbol, tf, public, exchange, ledger, leverage_map, send_fn,
 
 def process_sfp_signals(public, exchange, ledger, leverage_map, send_telegram_fn,
                         symbols, timeframes, base_capital=None, min_order_cost=5.0,
-                        balance_use_ratio=SFP_BALANCE_USE_RATIO, dtm_timeframes=()):
+                        balance_use_ratio=SFP_BALANCE_USE_RATIO, dtm_timeframes=(), dtm_symbols=None):
     """از حلقه‌ی اصلی bot.py در هر چرخه صدا زده می‌شود؛ هر (نماد، تایم‌فریم) یک‌بار به‌ازای هر کندل بسته."""
     global _state_loaded
     if not _state_loaded:
@@ -343,7 +398,9 @@ def process_sfp_signals(public, exchange, ledger, leverage_map, send_telegram_fn
                 done = _process_one(symbol, tf, public, exchange, ledger, leverage_map,
                                     send_telegram_fn, base_cap, min_order_cost,
                                     balance_use_ratio,
-                                    update_ledger=(str(tf) not in {str(x) for x in dtm_timeframes}))
+                                    update_ledger=not (dtm_symbols is not None
+                                                       and str(tf) in {str(x) for x in dtm_timeframes}
+                                                       and symbol in set(dtm_symbols)))
                 if done or _boundary_attempts[att] >= SFP_MAX_ATTEMPTS_PER_BOUNDARY:
                     if not done:
                         logger.error(f"[SFP-TRADER] {symbol} {_tf_label(tf)}: giving up on boundary {boundary}")
