@@ -41,7 +41,7 @@ def pre(x, limit=1400):
     return f"<pre>{esc(t)}</pre>"
 
 
-_TAG_RE = re.compile(r"</?(b|i|u|s|code|pre|a|tg-spoiler)(\s[^>]*)?>", re.IGNORECASE)
+_TAG_RE = re.compile(r"</?(b|i|u|s|code|pre|a|tg-spoiler|tg-emoji|tg-time|blockquote|mark)(\s[^>]*)?>", re.IGNORECASE)
 
 
 def plain_fallback(text):
@@ -102,7 +102,7 @@ def money(x, digits=2):
 
 
 def pct(x, digits=1):
-    return f"{x:.{digits}f}٪"
+    return f"{x:.{digits}f}%"
 
 
 def price_prec_from_tick(mintick):
