@@ -37,7 +37,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7402770612")
 # ============================================================
 ENABLE_CT_STANDALONE = False   # اجرای مستقل CT (ct_trader)
 ENABLE_DTM_CT_FILTER = False   # فیلتر CT روی سیگنال‌های DTM
-ENABLE_SFP = os.getenv("ENABLE_SFP", "1") == "1"   # ترید خودکار استراتژی SFP (sfp_trader)
+ENABLE_SFP = False   # اجرای مستقل SFP غیرفعال شد
+
+## ENABLE_SFP = os.getenv("ENABLE_SFP", "1") == "1"   # ترید خودکار استراتژی SFP (sfp_trader)
 ENABLE_DTM_SFP_FILTER = os.getenv("ENABLE_DTM_SFP_FILTER", "1") == "1"   # فیلتر SFP روی سیگنال‌های DTM
 
 # ============================================================
