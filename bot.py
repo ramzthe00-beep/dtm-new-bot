@@ -1055,7 +1055,7 @@ def loop():
     logger.info("Worker bot started with timeframes: %s", TIMEFRAMES)
 
     BASE_CAPITAL = trade_ledger.BASE_CAPITAL
-    BALANCE_USE_RATIO = 0.70
+    BALANCE_USE_RATIO = 0.90
 
     last_processed_boundary = {tf: 0 for tf in TIMEFRAMES}
 
