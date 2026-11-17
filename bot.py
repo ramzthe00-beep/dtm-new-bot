@@ -300,6 +300,59 @@ class PublicData:
         return pd.DataFrame()
 
 
+# ============================================================
+# 📡 استعلام پوزیشن‌های فعال — مطابق مستندات TheTrueTrade
+#   GET /futures/positions
+#   پارامترهای مستند: symbol, active, start, end, page
+#   active=true  →  فقط پوزیشن‌های باز
+#   (امضا: timestamp + METHOD + uri شامل query string، بدون body)
+# ============================================================
+POSITIONS_ACTIVE_URI = "/futures/positions?active=true"
+POSITIONS_MAX_EXTRA_PAGES = 5
+_POSITIONS_SHAPE_WARNED = False
+
+
+def _extract_positions(payload):
+    """
+    پاسخ GET /futures/positions را نرمال می‌کند. هر دو شکل را می‌پذیرد:
+      • آرایه‌ی ساده (مثال مستندات):          [ {...}, ... ]
+      • دیکشنریِ صفحه‌بندی‌شده:               {"items": [...], "meta": {"currentPage", "totalPages"}}
+    خروجی: (items, current_page, total_pages) — total_pages=None یعنی نامشخص.
+    """
+    global _POSITIONS_SHAPE_WARNED
+    if isinstance(payload, list):
+        return [p for p in payload if isinstance(p, dict)], 1, None
+    if isinstance(payload, dict):
+        for k in ("items", "data", "positions"):
+            if isinstance(payload.get(k), list):
+                meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+                try:
+                    cur = int(meta.get("currentPage", 1))
+                except (TypeError, ValueError):
+                    cur = 1
+                try:
+                    tot = int(meta["totalPages"]) if meta.get("totalPages") is not None else None
+                except (TypeError, ValueError):
+                    tot = None
+                return [p for p in payload[k] if isinstance(p, dict)], cur, tot
+    if not _POSITIONS_SHAPE_WARNED:
+        _POSITIONS_SHAPE_WARNED = True
+        logger.warning(
+            "[POSITIONS] شکل پاسخ GET /futures/positions شناخته نشد (نه آرایه، نه دیکشنری با "
+            "items/data/positions) — ریسک‌فری تا اصلاح این مورد کار نمی‌کند. payload=%s",
+            str(payload)[:300],
+        )
+    return [], 1, 1
+
+
+def _same_price(a, b, tick):
+    """دو قیمت (رشته/عدد) را با تلرانس نیم‌تیک مقایسه می‌کند."""
+    try:
+        return abs(float(a) - float(b)) < (float(tick) * 0.5 + 1e-12)
+    except (TypeError, ValueError):
+        return False
+
+
 class PrivateExchange:
     def __init__(self):
         self.api_key = API_KEY
@@ -328,6 +381,9 @@ class PrivateExchange:
 
         max_attempts = 3
         for attempt in range(max_attempts):
+            # مستندات: سرور درخواست‌هایی را که timestamp‌شان بیش از ۳۰ ثانیه با ساعت سرور
+            # اختلاف دارد رد می‌کند؛ پس throttle (که ممکن است بخوابد) قبل از ساخت timestamp می‌آید.
+            throttle_truetrade()
             ts = str(int(time.time() * 1000))
             sig = self._sign(method, uri, ts)
 
@@ -337,8 +393,6 @@ class PrivateExchange:
                 "X-Signature": sig,
                 "Content-Type": "application/json"
             }
-
-            throttle_truetrade()
 
             try:
                 r = self.session.request(
@@ -419,7 +473,7 @@ class PrivateExchange:
 
     def test_connection(self):
         try:
-            self.last_positions_payload = self._request("GET", "/futures/positions")
+            self.last_positions_payload = self._request("GET", POSITIONS_ACTIVE_URI)
             return True
         except Exception:
             return False
@@ -595,28 +649,65 @@ class PrivateExchange:
             return None
 
     # ============================================================
-    # 🛡️ متد تغییر استاپ (ریسک فری) طبق مستندات TheTrueTrade
+    # 📡 دریافت پوزیشن‌های باز (با صفحه‌بندی) — GET /futures/positions?active=true
+    # ============================================================
+    def fetch_active_positions(self, symbol=None, first_payload=None, wanted_ids=None):
+        """
+        فهرست پوزیشن‌های باز. اگر first_payload داده شود (پاسخ همین آدرس پایه) صفحه‌ی اول
+        دوباره درخواست نمی‌شود. فقط وقتی wanted_ids در صفحه‌های خوانده‌شده نباشد
+        سراغ صفحه‌ی بعد (?page=N) می‌رود (حداکثر POSITIONS_MAX_EXTRA_PAGES صفحه).
+        """
+        base = POSITIONS_ACTIVE_URI + (f"&symbol={str(symbol).upper()}" if symbol else "")
+        payload = first_payload if first_payload is not None else self._request("GET", base)
+        items, page, total = _extract_positions(payload)
+
+        result, seen = [], set()
+
+        def _add(lst):
+            for p in lst:
+                if not _is_open_position(p):
+                    continue
+                pid = str(p.get("id"))
+                if pid not in seen:
+                    seen.add(pid)
+                    result.append(p)
+
+        _add(items)
+        wanted = {str(i) for i in (wanted_ids or []) if i is not None}
+        extra = 0
+        while wanted and not wanted.issubset(seen) and extra < POSITIONS_MAX_EXTRA_PAGES:
+            if total is not None and page >= total:
+                break
+            if total is None and not items:
+                break
+            page += 1
+            extra += 1
+            items, _c, _t = _extract_positions(self._request("GET", f"{base}&page={page}"))
+            before = len(seen)
+            _add(items)
+            if total is None and len(seen) == before:
+                break   # صفحه‌ی جدید چیز تازه‌ای نداشت (صفحه‌بندی وجود ندارد)
+        return result
+
+    # ============================================================
+    # 🛡️ تغییر استاپ (ریسک فری) — PATCH /futures/positions/{id}/tpsl
+    #   فقط فیلدهای مستند ارسال می‌شود:
+    #     stopLoss              (رشته‌ی decimal)
+    #     stopLossOrderType     STOP_MARKET | STOP_LIMIT
+    #     stopLossStrategy      LATEST_PRICE | MARK_PRICE
+    #   takeProfit عمداً ارسال نمی‌شود: در مستندات همه‌ی فیلدها اختیاری‌اند و حذف TP
+    #   فقط با cancelTakeProfit=true انجام می‌شود، پس TP موجود دست نمی‌خورد.
     # ============================================================
     def update_position_sl(self, pos, stop_loss):
-        """
-        تغییر استاپ‌لاس پوزیشن باز (ریسک فری).
-        PATCH /futures/positions/{id}/tpsl
-        """
         symbol = str(pos.get("symbol", "")).upper()
         prec = PRICE_PRECISION.get(symbol, 2)
         sl_str = f"{self._round_price(stop_loss, symbol):.{prec}f}"
 
-        body = {"stopLoss": sl_str}
-
-        tp = pos.get("takeProfit")
-        if tp:
-            try:
-                body["takeProfit"] = f"{self._round_price(float(tp), symbol):.{prec}f}"
-            except Exception:
-                pass
-
-        body["stopLossStrategy"] = "LATEST_PRICE"
-        body["stopLossOrderType"] = "STOP_MARKET"
+        body = {
+            "stopLoss": sl_str,
+            "stopLossOrderType": "STOP_MARKET",
+            "stopLossStrategy": "LATEST_PRICE",
+        }
 
         uri = f"/futures/positions/{pos.get('id')}/tpsl"
         logger.info(f"[RISK-FREE] update SL request: PATCH {uri} {body}")
@@ -626,6 +717,46 @@ class PrivateExchange:
         except Exception as e:
             logger.error(f"[RISK-FREE] update SL failed: {e}")
             raise
+
+    def verify_position_sl(self, pos, expected_sl):
+        """
+        بعد از PATCH، پوزیشن را دوباره می‌خواند (GET /futures/positions?active=true&symbol=...)
+        و استاپِ ثبت‌شده روی صرافی را با مقدار درخواستی مقایسه می‌کند.
+        خروجی: (status, پوزیشن_فعلی)
+          confirmed    — استاپ روی صرافی برابر مقدار درخواستی است
+          mismatch     — استاپ روی صرافی فرق دارد (یا خالی است)
+          not_found    — پوزیشن دیگر بین پوزیشن‌های باز نیست (احتمالاً بسته شده)
+          unverifiable — پاسخ صرافی فیلد stopLoss ندارد؛ فقط موفقیت HTTP را داریم
+        """
+        symbol = str(pos.get("symbol", "")).upper()
+        pid = pos.get("id")
+        positions = self.fetch_active_positions(symbol=symbol, wanted_ids=[pid])
+        cur = next((p for p in positions if str(p.get("id")) == str(pid)), None)
+        if cur is None:
+            return "not_found", None
+        if "stopLoss" not in cur:
+            return "unverifiable", cur
+        tick = TICK_SIZES.get(symbol, 0.01)
+        want = self._round_price(expected_sl, symbol)
+        return ("confirmed" if _same_price(cur.get("stopLoss"), want, tick) else "mismatch"), cur
+
+    def restore_take_profit(self, pos):
+        """
+        اگر بعد از ریسک‌فری TP روی صرافی تغییر کرد/پاک شد، همان مقدار قبلی را برمی‌گرداند.
+        نوع و استراتژی از خود پوزیشن خوانده می‌شود؛ در غیر این صورت مقادیر مجاز مستندات:
+        takeProfitOrderType=TAKE_PROFIT_MARKET ، takeProfitStrategy=LATEST_PRICE
+        """
+        symbol = str(pos.get("symbol", "")).upper()
+        prec = PRICE_PRECISION.get(symbol, 2)
+        tp = float(pos.get("takeProfit"))
+        body = {
+            "takeProfit": f"{self._round_price(tp, symbol):.{prec}f}",
+            "takeProfitOrderType": str(pos.get("takeProfitOrderType") or "TAKE_PROFIT_MARKET"),
+            "takeProfitStrategy": str(pos.get("takeProfitStrategy") or "LATEST_PRICE"),
+        }
+        uri = f"/futures/positions/{pos.get('id')}/tpsl"
+        logger.warning(f"[RISK-FREE] restoring take-profit: PATCH {uri} {body}")
+        return self._request("PATCH", uri, body)
 
 
 # ================= RAILWAY HTTP HEALTH SERVER =================
@@ -800,7 +931,7 @@ def startup_diagnostic(exchange, public):
 
     try:
         exchange._last_response = None
-        positions = exchange._request("GET", "/futures/positions")
+        positions = exchange._request("GET", POSITIONS_ACTIVE_URI)
         position_api_ok = True
     except Exception:
         position_api_ok = False
@@ -888,44 +1019,69 @@ def startup_diagnostic(exchange, public):
 # 🛡️ پایش ریسک فری
 # ============================================================
 def _is_open_position(p):
+    """
+    همه‌ی استعلام‌ها با active=true انجام می‌شوند، پس آیتم‌ها باز هستند؛ فقط اگر خودِ آیتم
+    صراحتاً بسته/غیرفعال باشد (isActive=false یا status غیر از OPEN) رد می‌شود.
+    """
     try:
-        return p.get("isActive") is True or str(p.get("status", "")).upper() == "OPEN"
+        if p.get("isActive") is False:
+            return False
+        status = str(p.get("status", "")).strip().upper()
+        if status and status != "OPEN":
+            return False
+        return True
     except Exception:
         return False
+
+
+RISK_FREE_MAX_ATTEMPTS = 8
+
+
+def _rf_register_failure(rec, symbol, side, reason):
+    """شکست یک تلاش ریسک‌فری را ثبت می‌کند؛ بعد از RISK_FREE_MAX_ATTEMPTS تلاش، رکورد failed و هشدار ارسال می‌شود."""
+    rec["rf_attempts"] = rec.get("rf_attempts", 0) + 1
+    logger.error(
+        f"[RISK-FREE] {symbol} {side}: attempt {rec['rf_attempts']}/{RISK_FREE_MAX_ATTEMPTS} failed — {reason}"
+    )
+    if rec["rf_attempts"] >= RISK_FREE_MAX_ATTEMPTS and rec.get("state") == "pending":
+        rec["state"] = "failed"
+        try:
+            send_telegram(tgm.alert_card(
+                "error", f"{symbol} · ریسک‌فری روی صرافی اجرا نشد",
+                [f"🧭 جهت: {side}",
+                 f"❌ دلیل: {reason}",
+                 f"🔁 بعد از {RISK_FREE_MAX_ATTEMPTS} تلاش متوقف شد؛ استاپ پوزیشن را دستی بررسی کنید."]))
+        except Exception as e:
+            logger.error(f"[RISK-FREE] failure alert not sent: {e}")
 
 
 def risk_free_monitor(exchange):
     """
     🛡️ پایش ریسک فری — در هر سیکل، درست بعد از test_connection صدا زده می‌شود.
+
+    مراحل (مطابق مستندات API):
+      ۱) پوزیشن‌های باز از GET /futures/positions?active=true (با صفحه‌بندی در صورت نیاز)
+      ۲) رسیدن markPrice به نقطه‌ی ریسک‌فری
+      ۳) PATCH /futures/positions/{id}/tpsl  (فقط stopLoss + نوع + استراتژی)
+      ۴) خواندن مجدد پوزیشن و تأیید اینکه stopLoss روی صرافی واقعاً عوض شده
+      ۵) فقط بعد از تأیید: همگام‌سازی دفترچه + ارسال کارت تلگرام
     """
     if not RISK_FREE_ENABLED or not RISK_FREE_PENDING:
         return
 
     payload = getattr(exchange, "last_positions_payload", None)
-    if not isinstance(payload, dict):
+    if payload is None:
         return
-
-    meta = payload.get("meta") or {}
-    total_pages = meta.get("totalPages", 1)
-    current_page = meta.get("currentPage", 1)
-    open_positions = [p for p in (payload.get("items") or []) if _is_open_position(p)]
 
     needed_ids = {
         str(r.get("position_id")) for r in RISK_FREE_PENDING.values()
         if r.get("state") == "pending" and r.get("position_id") is not None
     }
-    found_ids = {str(p.get("id")) for p in open_positions}
-    page = current_page
-    while needed_ids and not needed_ids.issubset(found_ids) and page < total_pages:
-        page += 1
-        try:
-            more = exchange._request("GET", f"/futures/positions?page={page}")
-        except Exception:
-            break
-        for p in (more.get("items") or []):
-            if _is_open_position(p):
-                open_positions.append(p)
-                found_ids.add(str(p.get("id")))
+    try:
+        open_positions = exchange.fetch_active_positions(first_payload=payload, wanted_ids=needed_ids)
+    except Exception as e:
+        logger.error(f"[RISK-FREE] fetching active positions failed: {e}")
+        return
 
     for key in list(RISK_FREE_PENDING.keys()):
         rec = RISK_FREE_PENDING[key]
@@ -981,6 +1137,10 @@ def risk_free_monitor(exchange):
         except Exception:
             open_fee = 0.0
         if open_fee <= 0:
+            logger.warning(
+                f"[RISK-FREE] {symbol} {side}: فیلد openFees در پوزیشن نیست — "
+                f"کارمزد پیش‌فرض {RISK_FREE_FEE_DEFAULT} USDT استفاده می‌شود"
+            )
             open_fee = RISK_FREE_FEE_DEFAULT
 
         if RISK_FREE_FEE_MODE == "round_trip":
@@ -995,6 +1155,7 @@ def risk_free_monitor(exchange):
             fee_total = open_fee
 
         old_sl = pos.get("stopLoss")
+        old_tp = pos.get("takeProfit")
         tick = TICK_SIZES.get(symbol, 0.01)
         if side == "LONG":
             new_sl = exchange._round_price(entry_actual + fee_total / size, symbol)
@@ -1014,13 +1175,56 @@ def risk_free_monitor(exchange):
             )
             continue
 
+        # ========== ۳) PATCH ==========
+        pos_before = dict(pos)   # عکس لحظه‌ی قبل از PATCH (برای بازگردانی TP در صورت نیاز)
         try:
             exchange.update_position_sl(pos, new_sl)
         except Exception as e:
-            logger.error(f"[RISK-FREE] {symbol} {side}: exchange update failed: {e}")
+            _rf_register_failure(rec, symbol, side, f"PATCH ناموفق: {e}")
             continue
 
-        # ========== هماهنگ‌سازی دفترچه ==========
+        # ========== ۴) تأیید با خواندن مجدد ==========
+        try:
+            vstatus, cur_pos = exchange.verify_position_sl(pos, new_sl)
+        except Exception as e:
+            vstatus, cur_pos = "unverifiable", None
+            logger.warning(f"[RISK-FREE] {symbol} {side}: verify read failed ({e}) — فقط موفقیت HTTP را داریم")
+
+        if vstatus == "not_found":
+            logger.info(f"[RISK-FREE] {symbol} {side}: پوزیشن بعد از PATCH دیگر باز نیست — record dropped")
+            RISK_FREE_PENDING.pop(key, None)
+            continue
+        if vstatus == "mismatch":
+            _rf_register_failure(
+                rec, symbol, side,
+                f"بعد از PATCH استاپ روی صرافی ({cur_pos.get('stopLoss') if cur_pos else '?'}) "
+                f"با مقدار درخواستی ({new_sl}) برابر نیست",
+            )
+            continue
+        if vstatus == "unverifiable":
+            logger.warning(
+                f"[RISK-FREE] {symbol} {side}: پاسخ صرافی فیلد stopLoss ندارد؛ "
+                f"تأیید فقط بر پایه‌ی موفقیت HTTP PATCH است"
+            )
+
+        # ========== سلامت TP بعد از PATCH ==========
+        if cur_pos is not None and old_tp not in (None, "", 0, "0", "0.0"):
+            cur_tp = cur_pos.get("takeProfit")   # قبلاً TP داشت؛ نبودنِ فیلد بعد از PATCH یعنی TP پاک شده
+            if not _same_price(old_tp, cur_tp, tick):
+                logger.error(f"[RISK-FREE] {symbol} {side}: TP قبل={old_tp} بعد={cur_tp} — تلاش برای بازگردانی")
+                try:
+                    exchange.restore_take_profit(pos_before)
+                    tp_note = "✅ تارگت قبلی دوباره ثبت شد"
+                except Exception as tp_err:
+                    tp_note = f"❌ بازگردانی تارگت ناموفق: {tp_err}"
+                try:
+                    send_telegram(tgm.alert_card(
+                        "warn", f"{symbol} · تارگت بعد از ریسک‌فری تغییر کرد",
+                        [f"🎯 قبل: {code_(old_tp)}  ·  بعد: {code_(cur_tp)}", tp_note]))
+                except Exception as e:
+                    logger.error(f"[RISK-FREE] TP alert not sent: {e}")
+
+        # ========== ۵) هماهنگ‌سازی دفترچه + کارت ==========
         try:
             trade_ledger.update_open_trade_stop(
                 symbol,
@@ -1039,7 +1243,7 @@ def risk_free_monitor(exchange):
             fee_total, old_sl, new_sl, prec,
         )
         send_telegram_long(msg)
-        logger.info(f"[RISK-FREE] {symbol} {side} | SL {old_sl} -> {new_sl:.{prec}f} | DONE")
+        logger.info(f"[RISK-FREE] {symbol} {side} | SL {old_sl} -> {new_sl:.{prec}f} | DONE ({vstatus})")
 
 def loop():
     public = PublicData()
