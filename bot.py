@@ -45,7 +45,7 @@ ENABLE_DTM_SFP_FILTER = os.getenv("ENABLE_DTM_SFP_FILTER", "1") == "1"   # فی�
 # ============================================================
 # تنظیمات تایم‌فریم‌های چندگانه
 # ============================================================
-SYMBOLS = ["LTCUSDT", "DOGEUSDT", "AAVEUSDT", "ETHUSDT", "BNBUSDT"]
+SYMBOLS = ["LTCUSDT", "DOGEUSDT", "ETHUSDT", "BNBUSDT"]
 TIMEFRAMES = ["1"]
 SFP_SYMBOLS = list(SYMBOLS)        # نمادهای SFP (پیش‌فرض: همان نمادهای DTM)
 SFP_TIMEFRAMES = list(TIMEFRAMES)  # تایم‌فریم‌های SFP (پیش‌فرض: همان تایم‌فریم‌های DTM)
@@ -60,7 +60,7 @@ CHECK_INTERVAL = {
 
 LOOP_IDLE_SECONDS = float(os.getenv("LOOP_IDLE_SECONDS", "5"))
 
-LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "AAVEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75}
+LEVERAGE_MAP = {"LTCUSDT": 75, "DOGEUSDT": 75, "ETHUSDT": 50, "BNBUSDT": 75, "PUMPUSDT": 75}
 TARGET_RISK = 2.0
 TICK_SIZES = {sym: info["mintick"] for sym, info in SYMBOL_TICK_INFO.items()}
 
