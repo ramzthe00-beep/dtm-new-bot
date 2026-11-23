@@ -9,7 +9,10 @@ import hashlib
 import logging
 import requests
 import pandas as pd
+import numpy as np
+from collections import namedtuple
 from strategy_wrapper import calculate_signals, SYMBOL_TICK_INFO
+import strategy_wrapper as sw_mod   # LAST_SIGNAL_DETAILS و _compute_stop_target (همان قانون فعلی استاپ/تارگت)
 from datetime import datetime, timezone, timedelta
 import math
 import random
@@ -93,6 +96,9 @@ RISK_FREE_ALL_TIMEFRAMES = os.getenv("RISK_FREE_ALL_TIMEFRAMES", "1") == "1"
 RISK_FREE_TIMEFRAME = os.getenv("RISK_FREE_TIMEFRAME", TIMEFRAMES[0] if TIMEFRAMES else "1")
 
 MIN_ORDER_COST_USDT = float(os.getenv("MIN_ORDER_COST_USDT", "1"))
+# نرخ کارمزد تیکر هر طرف (کسری از نوشنال) فقط برای «برآورد» کارمزد/نتیجه در پیام تلگرام؛
+# بعد از اولین پوزیشن واقعی، نرخ مشاهده‌شده از openFees جایگزین می‌شود. روی سایزینگ و سفارش اثری ندارد.
+TAKER_FEE_RATE = float(os.getenv("TAKER_FEE_RATE", "0.0005"))
 
 # ============================================================
 # Rate limiter برای درخواست‌های thetruetrade.io
@@ -113,7 +119,8 @@ def throttle_truetrade():
 
 import tg_messages as tgm
 import tg_rich
-from tg_style import plain_fallback, split_message, code as code_
+from tg_style import plain_fallback, split_message, code as code_, esc as esc_
+import exchange_diagnosis as xdiag   # تشخیص علت خطای صرافی برای پیام‌های تلگرام
 
 def send_telegram(text):
     """
@@ -361,6 +368,7 @@ class PrivateExchange:
         self.session = requests.Session()
         self._last_response = None
         self.last_positions_payload = None  # برای ریسک فری
+        self.last_error = None              # جزئیات آخرین درخواست ناموفق (برای پیام‌های خطای تلگرام)
         self.connected = False
         self._cached_balance = None
 
@@ -370,6 +378,7 @@ class PrivateExchange:
 
     def _request(self, method, uri, data=None):
         self._last_response = None
+        self.last_error = None
         url = f"{self.base}{uri}"
 
         logger.info(
@@ -467,9 +476,12 @@ class PrivateExchange:
                     repr(e)
                 )
                 self.connected = False
+                self.last_error = xdiag.capture_error(method, uri, e, self._last_response)
                 raise
 
-        raise RuntimeError(f"Exhausted {max_attempts} attempts for {method} {uri}")
+        _exhausted = RuntimeError(f"Exhausted {max_attempts} attempts for {method} {uri}")
+        self.last_error = xdiag.capture_error(method, uri, _exhausted, self._last_response)
+        raise _exhausted
 
     def test_connection(self):
         try:
@@ -638,10 +650,10 @@ class PrivateExchange:
                 local_exception
             )
 
-            failed_msg = tgm.order_failed_card(
+            err_info = self.last_error or xdiag.capture_error("POST", "/futures/positions", e, response)
+            failed_msg = xdiag.order_failed_card_full(
                 symbol.upper(), api_side, int(leverage), f"{capital:.{prec}f}",
-                od.get('stopLoss', 'N/A'), od.get('takeProfit', 'N/A'),
-                json.dumps(od, ensure_ascii=False, indent=2), complete_error, local_exception,
+                json.dumps(od, ensure_ascii=False, indent=2), err_info,
             )
             if not send_telegram_long(failed_msg):
                 logger.error("[TELEGRAM] Failed to send ORDER FAILED")
@@ -1037,7 +1049,7 @@ def _is_open_position(p):
 RISK_FREE_MAX_ATTEMPTS = 8
 
 
-def _rf_register_failure(rec, symbol, side, reason):
+def _rf_register_failure(rec, symbol, side, reason, err=None, context="risk_free_patch"):
     """شکست یک تلاش ریسک‌فری را ثبت می‌کند؛ بعد از RISK_FREE_MAX_ATTEMPTS تلاش، رکورد failed و هشدار ارسال می‌شود."""
     rec["rf_attempts"] = rec.get("rf_attempts", 0) + 1
     logger.error(
@@ -1046,11 +1058,13 @@ def _rf_register_failure(rec, symbol, side, reason):
     if rec["rf_attempts"] >= RISK_FREE_MAX_ATTEMPTS and rec.get("state") == "pending":
         rec["state"] = "failed"
         try:
-            send_telegram(tgm.alert_card(
+            _rf_card = tgm.alert_card(
                 "error", f"{symbol} · ریسک‌فری روی صرافی اجرا نشد",
                 [f"🧭 جهت: {side}",
                  f"❌ دلیل: {reason}",
-                 f"🔁 بعد از {RISK_FREE_MAX_ATTEMPTS} تلاش متوقف شد؛ استاپ پوزیشن را دستی بررسی کنید."]))
+                 f"🔁 بعد از {RISK_FREE_MAX_ATTEMPTS} تلاش متوقف شد؛ استاپ پوزیشن را دستی بررسی کنید."])
+            xdiag.append_diagnosis(_rf_card, err, context)
+            send_telegram(_rf_card)
         except Exception as e:
             logger.error(f"[RISK-FREE] failure alert not sent: {e}")
 
@@ -1180,7 +1194,8 @@ def risk_free_monitor(exchange):
         try:
             exchange.update_position_sl(pos, new_sl)
         except Exception as e:
-            _rf_register_failure(rec, symbol, side, f"PATCH ناموفق: {e}")
+            _rf_register_failure(rec, symbol, side, f"PATCH ناموفق: {e}",
+                                 err=exchange.last_error, context="risk_free_patch")
             continue
 
         # ========== ۴) تأیید با خواندن مجدد ==========
@@ -1199,6 +1214,9 @@ def risk_free_monitor(exchange):
                 rec, symbol, side,
                 f"بعد از PATCH استاپ روی صرافی ({cur_pos.get('stopLoss') if cur_pos else '?'}) "
                 f"با مقدار درخواستی ({new_sl}) برابر نیست",
+                err=xdiag.synthetic_response(
+                    "GET", f"/futures/positions?active=true&symbol={symbol}", 200, cur_pos),
+                context="rf_mismatch",
             )
             continue
         if vstatus == "unverifiable":
@@ -1218,9 +1236,12 @@ def risk_free_monitor(exchange):
                 except Exception as tp_err:
                     tp_note = f"❌ بازگردانی تارگت ناموفق: {tp_err}"
                 try:
-                    send_telegram(tgm.alert_card(
+                    _tp_card = tgm.alert_card(
                         "warn", f"{symbol} · تارگت بعد از ریسک‌فری تغییر کرد",
-                        [f"🎯 قبل: {code_(old_tp)}  ·  بعد: {code_(cur_tp)}", tp_note]))
+                        [f"🎯 قبل: {code_(old_tp)}  ·  بعد: {code_(cur_tp)}", tp_note])
+                    xdiag.append_diagnosis(_tp_card, xdiag.synthetic_response(
+                        "GET", f"/futures/positions?active=true&symbol={symbol}", 200, cur_pos), "tp_changed")
+                    send_telegram(_tp_card)
                 except Exception as e:
                     logger.error(f"[RISK-FREE] TP alert not sent: {e}")
 
@@ -1245,6 +1266,228 @@ def risk_free_monitor(exchange):
         send_telegram_long(msg)
         logger.info(f"[RISK-FREE] {symbol} {side} | SL {old_sl} -> {new_sl:.{prec}f} | DONE ({vstatus})")
 
+
+# ============================================================
+# 🔗 تعیین استاپ/تارگت روی قیمت‌های thetruetrade
+#    سیگنال و دو پیوت واگرایی فقط روی بایننس شناسایی می‌شوند؛ این توابع همان دو پیوت را با «زمان کندل»
+#    روی کندل‌های thetruetrade مشخص می‌کنند (low/high خودِ همان کندل) و استاپ/تارگت را با همان قانون فعلی
+#    استراتژی (_compute_stop_target با همان بافر جدول) از روی قیمت‌های صرافی می‌سازند. ورود = قیمت زنده‌ی صرافی.
+#    اگر کندل لازم نبود / هم‌راستایی زمان تأیید نشد / سطح‌ها قابل‌محاسبه نبود → همان روش فعلی کد.
+# ============================================================
+_FEE_RATE_OBSERVED = {"rate": None}
+
+
+def _fee_rate_now():
+    r = _FEE_RATE_OBSERVED.get("rate")
+    return (r, "مشاهده‌شده از پوزیشن قبلی") if r else (TAKER_FEE_RATE, "برآوردی (TAKER_FEE_RATE)")
+
+
+def _px(symbol, v):
+    try:
+        return f"{float(v):.{PRICE_PRECISION.get(symbol, 2)}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _usd(v, sign=False):
+    try:
+        return f"{float(v):+.4f}" if sign else f"{float(v):.4f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _ttt_feeds_aligned(closes_bin, closes_ttt):
+    """هم‌راستایی زمانی (بدون آستانه): همبستگی بازده‌ها در lag صفر باید از lag ±۱ کمتر نباشد."""
+    rb = np.diff(closes_bin) / closes_bin[:-1]
+    rt = np.diff(closes_ttt) / closes_ttt[:-1]
+    if len(rb) < 20 or rb.std() == 0 or rt.std() == 0:
+        return False, "داده‌ی کافی برای تأیید هم‌راستایی نیست"
+    c0 = float(np.corrcoef(rb, rt)[0, 1])
+    cp = float(np.corrcoef(rb[1:], rt[:-1])[0, 1])
+    cm = float(np.corrcoef(rb[:-1], rt[1:])[0, 1])
+    if c0 >= max(cp, cm):
+        return True, f"همبستگی lag صفر={c0:.3f}"
+    return False, f"همبستگی lag صفر={c0:.3f} کمتر از lag ±۱={max(cp, cm):.3f}"
+
+
+def _ttt_levels_for_signal(public, df_bin, sig, symbol, timeframe):
+    """
+    خروجی: (lv | None, دلیل_شکست, df_1m_صرافی | None). lv شامل entry/stop/target/rr/structural و قیمت پیوت‌ها است.
+    """
+    df_1m = None
+    try:
+        det = sw_mod.LAST_SIGNAL_DETAILS
+        if not (det and det.get("signal") == sig and det.get("symbol") == symbol):
+            return None, "جزئیات پیوت‌های سیگنال از strategy_wrapper در دسترس نیست (strategy_wrapper.py جدید لازم است)", None
+        df_t = public.fetch_ohlcv(symbol, timeframe)
+        if df_t is None or df_t.empty:
+            return None, "کندل‌های thetruetrade خوانده نشد", None
+        df_t = df_t[~df_t.index.duplicated(keep="last")].sort_index()
+        df_1m = df_t if str(timeframe) == "1" else public.fetch_ohlcv(symbol, "1")
+        if df_1m is None or df_1m.empty:
+            return None, "قیمت زنده‌ی thetruetrade خوانده نشد", None
+        entry_t = float(df_1m["close"].iloc[-1])
+
+        sig_ts = pd.Timestamp(int(det["signal_bar_ts_ms"]), unit="ms", tz="UTC")
+        ts1, ts2 = [pd.Timestamp(int(t), unit="ms", tz="UTC") for t in det["pivot_bar_ts_ms"]]
+        if any(t not in df_bin.index for t in (sig_ts, ts1, ts2)):
+            return None, "زمان کندل سیگنال/پیوت در دیتای بایننس پیدا نشد", df_1m
+        i_sig, p1, p2 = (int(df_bin.index.get_loc(t)) for t in (sig_ts, ts1, ts2))
+        lo = max(0, min(p1, p2) - getattr(sw_mod, "STOP_SEARCH_WINDOW", 350) - 2)   # همان بازه‌ای که قانون استاپ می‌خواند
+        ts_rng = df_bin.index[lo:i_sig + 1]
+        missing = int((~ts_rng.isin(df_t.index)).sum())
+        if missing:
+            return None, f"{missing} کندل از {len(ts_rng)} کندل لازم روی thetruetrade وجود ندارد", df_1m
+        tail = ts_rng[-61:]
+        ok, msg = _ttt_feeds_aligned(df_bin.loc[tail, "close"].to_numpy(float), df_t.loc[tail, "close"].to_numpy(float))
+        if not ok:
+            return None, f"هم‌راستایی زمان کندل‌های دو منبع تأیید نشد ({msg})", df_1m
+
+        sub = df_t.loc[ts_rng]
+        highs, lows = sub["high"].to_numpy(float), sub["low"].to_numpy(float)
+        C = namedtuple("C", "high low timestamp")
+        candles = [C(h, l, int(t.timestamp() * 1000)) for h, l, t in zip(highs, lows, sub.index)]
+        j1, j2 = p1 - lo, p2 - lo
+        lv = {"entry": entry_t}
+        if sig == "LONG":
+            pt = (float(lows[j1]), float(lows[j2]))
+            lv.update(previous_pivot_low_price=pt[0], pivot_low_price=pt[1],
+                      previous_pivot_low_index=j1, pivot_low_index=j2)
+        else:
+            pt = (float(highs[j1]), float(highs[j2]))
+            lv.update(previous_pivot_high_price=pt[0], pivot_high_price=pt[1],
+                      previous_pivot_high_index=j1, pivot_high_index=j2)
+        stop, target, rr, structural = sw_mod._compute_stop_target(
+            candles, sig, lv, det["mintick"], buffer_ticks=det["buffer_ticks"])
+        if stop is None:
+            return None, "استاپ/تارگت روی قیمت‌های thetruetrade قابل‌محاسبه نیست (قیمت فعلی از استاپ ساختاری گذشته یا داده ناقص)", df_1m
+        return {"entry": entry_t, "stop": stop, "target": target, "rr": rr, "structural": structural,
+                "pivots_ttt": pt, "pivots_bin": tuple(det["pivot_prices"])}, "", df_1m
+    except Exception as e:
+        return None, f"خطای غیرمنتظره: {e}", df_1m
+
+
+def _read_fill_info(exchange, symbol, order_result):
+    """بعد از ثبت سفارش: قیمت ورود و کارمزد واقعیِ باز شدن از پوزیشن؛ نرخ مشاهده‌شده برای برآوردهای بعدی ذخیره می‌شود."""
+    try:
+        pid = None
+        if isinstance(order_result, dict):
+            pid = (order_result.get("positionId") or order_result.get("id")
+                   or (order_result.get("position") or {}).get("id"))
+        if pid is None:
+            return None
+        for attempt in range(2):
+            try:
+                lst = exchange.fetch_active_positions(symbol=symbol, wanted_ids=[pid])
+            except Exception as e:
+                logger.warning(f"[LEVELS] خواندن پوزیشن برای کارمزد واقعی ناموفق: {e}")
+                lst = []
+            pos = next((p for p in lst if str(p.get("id")) == str(pid)), None)
+            if pos is not None:
+                entry_a = float(pos.get("entryPrice"))
+                qty = abs(float(pos.get("size")))
+                open_fee = float(pos.get("openFees") or 0)
+                out = {"entry": entry_a, "qty": qty, "open_fee": open_fee if open_fee > 0 else None}
+                if open_fee > 0 and entry_a > 0 and qty > 0:
+                    rate = open_fee / (entry_a * qty)
+                    if 0 < rate < 0.01:
+                        _FEE_RATE_OBSERVED["rate"] = rate
+                        out["rate"] = rate
+                return out
+            if attempt == 0:
+                time.sleep(1.0)
+    except Exception as e:
+        logger.warning(f"[LEVELS] fill info error: {e}")
+    return None
+
+
+def _send_ttt_signal_card(exchange, symbol, sig, timeframe, ttt_lv, ttt_reason, entry_px, entry_src,
+                          stop_px, target_px, capital, leverage, mode, rf_pct, order_result):
+    """پیام سیگنال دوباره، این‌بار با اطلاعات thetruetrade: ورود، استاپ، تارگت، ریسک‌فری، کارمزد و سود/زیان بعد از کارمزد."""
+    stop_px = float(exchange._round_price(stop_px, symbol))
+    target_px = float(exchange._round_price(target_px, symbol)) if target_px else None
+    capital = float(f"{capital:.{PRICE_PRECISION.get(symbol, 2)}f}")   # مارجینِ واقعاً ارسال‌شده (گرد به دقت create_order)
+    fee_rate, fee_src = _fee_rate_now()                       # نرخ در لحظه‌ی سفارش (قبل از به‌روزشدن با این پوزیشن)
+    fill = _read_fill_info(exchange, symbol, order_result) if order_result is not None else None
+
+    notional = capital * leverage
+    qty = notional / entry_px
+    fee_open = notional * fee_rate
+    fee_stop = qty * stop_px * fee_rate
+    fee_tp = qty * target_px * fee_rate if target_px else None
+    loss_px = qty * abs(entry_px - stop_px)
+    loss_net = loss_px + fee_open + fee_stop
+    gain_px = qty * abs(target_px - entry_px) if target_px else None
+    gain_net = (gain_px - fee_open - fee_tp) if target_px else None
+    stop_pct = abs(entry_px - stop_px) / entry_px * 100
+    tgt_pct = abs(target_px - entry_px) / entry_px * 100 if target_px else None
+    rr_g = (abs(target_px - entry_px) / abs(entry_px - stop_px)) if target_px else None
+    rr_net = (gain_net / loss_net) if (gain_net is not None and loss_net > 0) else None
+
+    icon = "🔻" if sig == "LONG" else "🔺"
+    if ttt_lv is not None:
+        method = "✅ استاپ/تارگت از روی دو پیوت واگرایی روی خودِ thetruetrade (همان قانون فعلی استراتژی)"
+    else:
+        method = "⚠️ روش فعلی (قیمت زنده‌ی صرافی + درصدهای بایننس): " + str(ttt_reason)
+    card = tg_rich.Card([
+        ("title", "🏹", f"{symbol} | SIGNAL · THETRUETRADE", f"{sig} · {timeframe}m"),
+        ("p", esc_(method)),
+        ("h", "📍 سطح‌ها"),
+    ])
+    lv_lines = [
+        f"قیمت ورود: {code_(_px(symbol, entry_px))} ({esc_(entry_src)})",
+        f"استاپ: {code_(_px(symbol, stop_px))} · فاصله {code_(format(stop_pct, '.3f'))}٪",
+        (f"تارگت: {code_(_px(symbol, target_px))} · فاصله {code_(format(tgt_pct, '.3f'))}٪ · RR {code_(format(rr_g, '.2f'))}"
+         if target_px else "تارگت: —"),
+    ]
+    if ttt_lv is not None:
+        lv_lines += [
+            f"{icon} پیوت قدیمی‌تر: بایننس {code_(_px(symbol, ttt_lv['pivots_bin'][0]))} → thetruetrade {code_(_px(symbol, ttt_lv['pivots_ttt'][0]))}",
+            f"{icon} پیوت جدیدتر: بایننس {code_(_px(symbol, ttt_lv['pivots_bin'][1]))} → thetruetrade {code_(_px(symbol, ttt_lv['pivots_ttt'][1]))}",
+        ]
+    card.add(("list", lv_lines))
+    card.add(("h", "🧮 اندازه‌ی معامله"))
+    card.add(("list", [
+        f"مارجین (cost): {code_(_usd(capital))} USDT · اهرم {code_(leverage)}x · حالت {esc_(str(mode))}",
+        f"نوشنال: {code_(_usd(notional))} USDT · حجم: {code_(format(qty, '.6g'))}",
+    ]))
+    card.add(("h", "🛡️ ریسک‌فری"))
+    if RISK_FREE_ENABLED and rf_pct is not None:
+        trig = entry_px * (1 + rf_pct) if sig == "LONG" else entry_px * (1 - abs(rf_pct))
+        fee_rf = fee_open * (2 if RISK_FREE_FEE_MODE == "round_trip" else 1)
+        be = entry_px + fee_rf / qty if sig == "LONG" else entry_px - fee_rf / qty
+        card.add(("list", [
+            f"فعال‌سازی وقتی قیمت به {code_(_px(symbol, trig))} برسد ({code_(format(abs(rf_pct) * 100, '.3f'))}٪ از ورود)",
+            f"استاپ جدید (سربه‌سر با کارمزد): {code_(_px(symbol, be))}",
+        ]))
+    else:
+        card.add(("p", "برای این سیگنال نقطه‌ی ریسک‌فری محاسبه نشده یا ریسک‌فری خاموش است."))
+    card.add(("h", "💸 کارمزد"))
+    fee_lines = [
+        f"نرخ هر طرف: {code_(format(fee_rate * 100, '.4f'))}٪ ({esc_(fee_src)})",
+        f"کارمزد باز شدن: {code_(_usd(fee_open))} USDT",
+        (f"کارمزد بستن: در استاپ {code_(_usd(fee_stop))} · در تارگت {code_(_usd(fee_tp))} USDT" if target_px
+         else f"کارمزد بستن در استاپ: {code_(_usd(fee_stop))} USDT"),
+    ]
+    card.add(("list", fee_lines))
+    card.add(("h", "📊 نتیجه‌ی احتمالی بعد از کسر کارمزد"))
+    res = [f"اگر استاپ بخورد: {code_(_usd(-loss_net, True))} USDT (قیمت {code_(_usd(-loss_px, True))} − کارمزد {code_(_usd(fee_open + fee_stop))})"]
+    if target_px:
+        res.append(f"اگر تارگت بخورد: {code_(_usd(gain_net, True))} USDT (قیمت {code_(_usd(gain_px, True))} − کارمزد {code_(_usd(fee_open + fee_tp))})")
+        res.append(f"RR خالص بعد از کارمزد: {code_(format(rr_net, '.2f'))}")
+    card.add(("list", res))
+    if fill is not None:
+        fl = [f"قیمت ورود واقعی: {code_(_px(symbol, fill['entry']))} (اختلاف با لنگر {code_(format((fill['entry'] - entry_px) / entry_px * 100, '+.4f'))}٪)"]
+        if fill.get("open_fee") is not None:
+            fl.append(f"کارمزد باز شدن واقعی: {code_(_usd(fill['open_fee']))} USDT (برآورد {code_(_usd(fee_open))})")
+        if fill.get("rate"):
+            fl.append(f"نرخ واقعی هر طرف: {code_(format(fill['rate'] * 100, '.4f'))}٪ — برای معامله‌های بعدی استفاده می‌شود")
+        card.add(("h", "✅ بعد از پر شدن"))
+        card.add(("list", fl))
+    card.add(("p", "سفارش: ✅ ثبت شد" if order_result is not None else "سفارش: ❌ ثبت نشد (پیام خطا جداگانه آمده است)"))
+    send_telegram(card)
+
+
 def loop():
     public = PublicData()
     exchange = PrivateExchange()
@@ -1266,10 +1509,12 @@ def loop():
     while not STOP_EVENT.is_set():
         try:
             if not exchange.test_connection():
-                send_telegram(tgm.alert_card(
+                _conn_card = tgm.alert_card(
                     "stop", "اتصال صرافی قطع است",
                     ["🏦 تست اتصال ناموفق بود؛ سفارش‌گذاری و پایش ریسک‌فری موقتاً متوقف شد.",
-                     "🔁 تلاش مجدد هر ۶۰ ثانیه ادامه دارد."]))
+                     "🔁 تلاش مجدد هر ۶۰ ثانیه ادامه دارد."])
+                xdiag.append_diagnosis(_conn_card, exchange.last_error, "connection")
+                send_telegram(_conn_card)
                 STOP_EVENT.wait(60)
                 continue
 
@@ -1429,28 +1674,64 @@ def loop():
                                 f"[{timeframe}m][{symbol}] سیگنال {sig} تأیید شد ولی سفارش ارسال نشد: "
                                 f"balance={balance} stop={stop_price} entry={entry}"
                             )
-                            send_telegram(tgm.not_executed_card(
+                            _ne_card = tgm.not_executed_card(
                                 "DTM", sig, symbol, f"{timeframe}m", "موجودی یا داده‌ی سیگنال نامعتبر",
-                                [f"💰 موجودی: {code_(balance)}", f"🛑 استاپ: {code_(stop_price)}", f"📍 ورود: {code_(entry)}"]))
+                                [f"💰 موجودی: {code_(balance)}", f"🛑 استاپ: {code_(stop_price)}", f"📍 ورود: {code_(entry)}"])
+                            _ne_reasons, _ne_steps, _ne_err = [], [], None
+                            if balance <= 0:
+                                _ne_reasons.append("موجودی قابل‌استفاده‌ی USDT در کیف futures صفر یا نامعتبر خوانده شد.")
+                                _ne_steps += [
+                                    "availableBalance حساب futures (walletType: debit) را در TheTrueTrade ببین؛ اگر صفر است به futures واریز/انتقال بده.",
+                                    "اگر موجودی کافی است ولی ربات صفر دید، لاگ [BALANCE] و [EXCHANGE RESPONSE] GET /futures/assets را چک کن (خطای شبکه باعث مقدار صفر یا کش‌شده می‌شود).",
+                                ]
+                                _le = getattr(exchange, "last_error", None)
+                                if _le and "assets" in str(_le.get("uri", "")):
+                                    _ne_err = _le   # خواندن موجودی خودش خطا داده؛ پاسخ واقعی صرافی نشان داده شود
+                            if stop_price is None or entry is None:
+                                _ne_reasons.append("استراتژی برای این سیگنال استاپ یا قیمت ورود معتبر نساخت.")
+                                _ne_steps += [
+                                    "لاگ [SIGNAL_TRACE] و محاسبه‌ی استاپ همین سیگنال را ببین؛ سیگنال بدون استاپ عمداً رد می‌شود چون سفارش بدون محافظ ریسک نامحدود دارد.",
+                                    "اگر تکرار شد strategy_wrapper (_compute_stop_target) را برای همین نماد بررسی کن.",
+                                ]
+                            xdiag.append_diagnosis(
+                                _ne_card, _ne_err, "local", reason=" ".join(_ne_reasons), steps=_ne_steps,
+                                response_note="درخواستی برای ثبت سفارش به صرافی ارسال نشد؛ رد در سمت ربات انجام شد.")
+                            send_telegram(_ne_card)
                             continue
 
                         allowed_leverage = LEVERAGE_MAP.get(symbol, 50)
 
-                        if sig == "LONG":
-                            stop_pct = abs(entry - stop_price) / entry if entry > 0 else 0
+                        # 🔗 تعیین ورود/استاپ/تارگت روی thetruetrade؛ اگر ممکن نبود همان روش فعلی (ورودی‌های بایننس)
+                        ttt_lv, ttt_reason, ttt_df1 = _ttt_levels_for_signal(public, df_signal, sig, symbol, timeframe)
+                        if ttt_lv is not None:
+                            _sz_entry, _sz_stop, _sz_target = ttt_lv["entry"], ttt_lv["stop"], ttt_lv["target"]
+                            logger.info(
+                                f"[LEVELS] {symbol} {sig}: سطح‌ها روی thetruetrade تعیین شد | "
+                                f"ورود={_sz_entry} استاپ={_sz_stop} تارگت={_sz_target} | "
+                                f"(بایننس: ورود={entry} استاپ={stop_price} تارگت={target_price})"
+                            )
                         else:
-                            stop_pct = abs(stop_price - entry) / entry if entry > 0 else 0
+                            _sz_entry, _sz_stop, _sz_target = entry, stop_price, target_price
+                            logger.warning(
+                                f"[LEVELS] {symbol} {sig}: روی thetruetrade تعیین نشد ({ttt_reason}) — "
+                                f"روش فعلی (قیمت زنده‌ی صرافی + درصدهای بایننس)"
+                            )
+
+                        if sig == "LONG":
+                            stop_pct = abs(_sz_entry - _sz_stop) / _sz_entry if _sz_entry > 0 else 0
+                        else:
+                            stop_pct = abs(_sz_stop - _sz_entry) / _sz_entry if _sz_entry > 0 else 0
 
                         # (کامنت‌شده طبق درخواست — فیلتر stop_pct <= 0)
                         # if stop_pct <= 0:
                         #     logger.warning(f"{symbol}: invalid stop_pct={stop_pct}, skip")
                         #     continue
 
-                        if target_price is not None and not math.isnan(target_price) and target_price > 0:
+                        if _sz_target is not None and not math.isnan(_sz_target) and _sz_target > 0:
                             if sig == "LONG":
-                                target_pct = abs(target_price - entry) / entry
+                                target_pct = abs(_sz_target - _sz_entry) / _sz_entry
                             else:
-                                target_pct = abs(entry - target_price) / entry
+                                target_pct = abs(_sz_entry - _sz_target) / _sz_entry
                         else:
                             target_pct = 0
 
@@ -1506,19 +1787,48 @@ def loop():
                                 f"{capital:.4f} USDT کمتر از حداقل مجاز ({MIN_ORDER_COST_USDT} "
                                 f"USDT) است — سفارش ارسال نشد (صرافی حتماً رد می‌کرد)."
                             )
-                            send_telegram(tgm.not_executed_card(
+                            _ne_card = tgm.not_executed_card(
                                 "DTM", sig, symbol, f"{timeframe}m", "سرمایه کمتر از حداقل سفارش صرافی",
                                 [f"💵 سرمایه محاسبه‌شده: {code_(format(capital, '.4f'))} USDT",
                                  f"📏 حداقل مجاز: {code_(MIN_ORDER_COST_USDT)} USDT",
                                  f"💰 موجودی حساب: {code_(format(balance, '.4f'))} USDT",
-                                 "❗ تا افزایش موجودی، این سیگنال‌ها معامله نمی‌شوند."]))
+                                 "❗ تا افزایش موجودی، این سیگنال‌ها معامله نمی‌شوند."])
+                            if mode == "REDUCED_98":
+                                _min_bal = MIN_ORDER_COST_USDT / BALANCE_USE_RATIO if BALANCE_USE_RATIO > 0 else float("nan")
+                                _ne_why = (
+                                    f"موجودی ({balance:.4f}) از سرمایه‌ی موردنیاز این سیگنال ({required_capital:.4f}) کمتر است؛ "
+                                    f"پس فقط {BALANCE_USE_RATIO * 100:.0f}٪ موجودی ({capital:.4f}) به‌کار رفت و این مقدار "
+                                    f"از حداقل سفارش صرافی ({MIN_ORDER_COST_USDT}) کمتر درآمد."
+                                )
+                                _ne_how = [
+                                    f"برای باز شدن سفارش کامل، موجودی futures را حداقل به {required_capital:.2f} USDT برسان.",
+                                    f"حداقل موجودی برای رد شدن از حداقل سفارش حتی در حالت کاهش‌یافته: {_min_bal:.2f} USDT "
+                                    f"(= {MIN_ORDER_COST_USDT} ÷ {BALANCE_USE_RATIO}).",
+                                    f"یا BALANCE_USE_RATIO (الان {BALANCE_USE_RATIO}) را بالاتر ببر تا سهم بیشتری از موجودی به‌کار رود.",
+                                    "BASE_CAPITAL را پایین نیاور، مگر ریسک دلاریِ کمتر را عمداً بپذیری.",
+                                ]
+                                if leverage_mode == "INCREASED":
+                                    _ne_why += " (این سیگنال چون استاپ تنگ دارد، سرمایه‌ی بیشتری از BASE_CAPITAL می‌خواهد.)"
+                            else:
+                                _ne_why = (
+                                    f"سرمایه‌ی محاسبه‌شده ({capital:.4f}) از حداقل سفارش صرافی ({MIN_ORDER_COST_USDT}) کمتر است "
+                                    f"(BASE_CAPITAL کمتر از MIN_ORDER_COST_USDT)."
+                                )
+                                _ne_how = [
+                                    "BASE_CAPITAL را حداقل به MIN_ORDER_COST_USDT برسان.",
+                                    "یا MIN_ORDER_COST_USDT را فقط وقتی پایین بیاور که صرافی واقعاً سفارش کوچک‌تر را می‌پذیرد.",
+                                ]
+                            xdiag.append_diagnosis(
+                                _ne_card, None, "local", reason=_ne_why, steps=_ne_how,
+                                response_note="درخواستی برای ثبت سفارش به صرافی ارسال نشد؛ رد در سمت ربات انجام شد.")
+                            send_telegram(_ne_card)
                             continue
 
                         exec_stop_price = stop_price
                         exec_target_price = target_price
                         exec_anchor_price = None
                         try:
-                            df_anchor = public.fetch_ohlcv(symbol, "1")
+                            df_anchor = ttt_df1 if ttt_df1 is not None else public.fetch_ohlcv(symbol, "1")
                             if not df_anchor.empty:
                                 exec_anchor_price = float(df_anchor['close'].iloc[-1])
                                 if sig == "LONG":
@@ -1592,6 +1902,27 @@ def loop():
                                 exec_target_price = target_price
 
                         # ============================================================
+                        # 🔗 اگر استاپ/تارگت روی thetruetrade تعیین شده بود، همان‌ها ملاک سفارش‌اند؛
+                        #    نقطه‌ی ریسک‌فری هم با همان قانون استراتژی روی قیمت‌های صرافی بازمحاسبه می‌شود
+                        # ============================================================
+                        rf_pct_order = risk_free_pct
+                        if ttt_lv is not None:
+                            exec_stop_price = ttt_lv["stop"]
+                            exec_target_price = ttt_lv["target"]
+                            exec_anchor_price = ttt_lv["entry"]
+                            if risk_free_pct is not None and ttt_lv["structural"] is not None and ttt_lv["entry"] > 0:
+                                _risk_pct = abs(ttt_lv["entry"] - ttt_lv["stop"]) / ttt_lv["entry"]
+                                if sig == "LONG":
+                                    rf_pct_order = max((ttt_lv["structural"] - ttt_lv["entry"]) / ttt_lv["entry"], _risk_pct)
+                                else:
+                                    rf_pct_order = -max((ttt_lv["entry"] - ttt_lv["structural"]) / ttt_lv["entry"], _risk_pct)
+                            logger.info(
+                                f"[LEVELS] {symbol} {sig}: سفارش با سطح‌های thetruetrade | "
+                                f"stop={exec_stop_price} target={exec_target_price} entry={exec_anchor_price} | "
+                                f"rf_pct: بایننس={risk_free_pct} → thetruetrade={rf_pct_order}"
+                            )
+
+                        # ============================================================
                         # ارسال سفارش
                         # ============================================================
                         order_result = exchange.create_order(
@@ -1624,7 +1955,7 @@ def loop():
                                 "timeframe": timeframe,
                                 "position_id": position_id,
                                 "entry_est": float(entry_est_val),
-                                "rf_pct": float(risk_free_pct),
+                                "rf_pct": float(rf_pct_order),
                                 "signal_bar_ts_ms": signal_bar_ts_ms,
                                 "opened_at": time.time(),
                                 "state": "pending",
@@ -1639,6 +1970,18 @@ def loop():
                                 f"[RISK-FREE] {symbol} {sig} on tf={timeframe} — skipped "
                                 f"(RISK_FREE_ALL_TIMEFRAMES=0, target tf={RISK_FREE_TIMEFRAME})"
                             )
+
+                        # پیام سیگنال دوباره، این‌بار با اطلاعات thetruetrade (بعد از سفارش تا ثبت سفارش دیر نشود)
+                        try:
+                            _entry_card = exec_anchor_price if exec_anchor_price else float(df_signal['close'].iloc[-1])
+                            _entry_src = ("قیمت زنده‌ی thetruetrade" if exec_anchor_price
+                                          else "قیمت لنگر بایننس (قیمت صرافی در دسترس نبود)")
+                            _send_ttt_signal_card(
+                                exchange, symbol, sig, timeframe, ttt_lv, ttt_reason, _entry_card, _entry_src,
+                                exec_stop_price, exec_target_price, capital, allowed_leverage, mode,
+                                rf_pct_order, order_result)
+                        except Exception as _card_err:
+                            logger.error(f"[LEVELS] {symbol}: telegram card failed: {_card_err}")
 
                         balance = exchange.fetch_balance()
 
