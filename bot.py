@@ -1333,7 +1333,11 @@ def _ttt_levels_for_signal(public, df_bin, sig, symbol, timeframe):
         if any(t not in df_bin.index for t in (sig_ts, ts1, ts2)):
             return None, "زمان کندل سیگنال/پیوت در دیتای بایننس پیدا نشد", df_1m
         i_sig, p1, p2 = (int(df_bin.index.get_loc(t)) for t in (sig_ts, ts1, ts2))
-        lo = max(0, min(p1, p2) - getattr(sw_mod, "STOP_SEARCH_WINDOW", 350) - 2)   # همان بازه‌ای که قانون استاپ می‌خواند
+        older = min(p1, p2)
+        if getattr(sw_mod, "STOP_MODE", "simple") == "extended":
+            lo = max(0, older - getattr(sw_mod, "STOP_SEARCH_WINDOW", 350) - 2)   # extended: بازه‌ی جستجوی پیوت گسترده
+        else:
+            lo = max(0, min(older, i_sig - 60))   # simple: از پیوت قدیمی‌تر تا کندل سیگنال (حداقل ۶۱ کندل برای تأیید هم‌راستایی)
         ts_rng = df_bin.index[lo:i_sig + 1]
         missing = int((~ts_rng.isin(df_t.index)).sum())
         if missing:
